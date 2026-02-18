@@ -7,6 +7,7 @@ import {
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
+  buildToolPanelButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseQueueDismissCustomId,
@@ -14,6 +15,7 @@ import {
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
   parseToolInspectCustomId,
+  parseToolPanelCustomId,
 } from "../src/discord/buttons";
 
 describe("discord buttons", () => {
@@ -79,6 +81,26 @@ describe("discord buttons", () => {
     });
   });
 
+  test("builds and parses tool panel refresh buttons", () => {
+    const rows = buildToolPanelButtons("chan-9", "user-5");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(1);
+
+    const refresh = components[0]?.toJSON();
+    const refreshId = refresh && "custom_id" in refresh ? refresh.custom_id : undefined;
+    const refreshStyle = refresh && "style" in refresh ? refresh.style : undefined;
+    expect(refreshId).toBe("run:tools:refresh:chan-9:user-5");
+    expect(refreshStyle).toBe(ButtonStyle.Secondary);
+
+    expect(parseToolPanelCustomId("run:tools:refresh:chan-9:user-5")).toEqual({
+      action: "refresh",
+      channelId: "chan-9",
+      userId: "user-5",
+    });
+  });
+
   test("builds and parses project switch buttons", () => {
     const rows = buildProjectSwitchButtons("req-1");
     expect(rows).toHaveLength(1);
@@ -109,6 +131,8 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("run:interrupt:")).toBeNull();
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
     expect(parseToolInspectCustomId("run:tools:")).toBeNull();
+    expect(parseToolPanelCustomId("run:tools:refresh:")).toBeNull();
+    expect(parseToolPanelCustomId("run:tools:refresh:chan-only")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:chan-only")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss::user-only")).toBeNull();

@@ -16,6 +16,7 @@ import {
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
+  buildToolPanelButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseQueueDismissCustomId,
@@ -23,6 +24,7 @@ import {
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
   parseToolInspectCustomId,
+  parseToolPanelCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
@@ -410,12 +412,25 @@ type SendableChannel = {
   send: (options: unknown) => Promise<unknown>;
 };
 
+type EditableSentMessage = {
+  edit: (options: unknown) => Promise<unknown>;
+};
+
 function canSendMessage(channel: unknown): channel is SendableChannel {
   return (
     typeof channel === "object" &&
     channel !== null &&
     "send" in channel &&
     typeof (channel as SendableChannel).send === "function"
+  );
+}
+
+function canEditSentMessage(message: unknown): message is EditableSentMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "edit" in message &&
+    typeof (message as EditableSentMessage).edit === "function"
   );
 }
 
@@ -1292,12 +1307,16 @@ type LiveToolEntry = {
 type LiveToolTrace = {
   order: string[];
   byId: Map<string, LiveToolEntry>;
+  indexToToolId: Map<number, string>;
+  inputJsonBufferByToolId: Map<string, string>;
 };
 
 function createLiveToolTrace(): LiveToolTrace {
   return {
     order: [],
     byId: new Map<string, LiveToolEntry>(),
+    indexToToolId: new Map<number, string>(),
+    inputJsonBufferByToolId: new Map<string, string>(),
   };
 }
 
@@ -1371,12 +1390,13 @@ function ensureLiveToolEntry(
 
 function extractToolStartFromStreamEvent(
   message: ClaudeSDKMessage,
-): { id: string; name?: string; inputPreview?: string } | null {
+): { id: string; index?: number; name?: string; inputPreview?: string } | null {
   if (message.type !== "stream_event") {
     return null;
   }
   const event = message.event as {
     type?: string;
+    index?: number;
     content_block?: {
       type?: string;
       id?: string;
@@ -1398,9 +1418,64 @@ function extractToolStartFromStreamEvent(
   }
   return {
     id,
+    index: typeof event.index === "number" ? event.index : undefined,
     name: block.name,
     inputPreview: stringifyToolInput(block.input),
   };
+}
+
+function collectToolIdsFromMessage(trace: LiveToolTrace, message: ClaudeSDKMessage): string[] {
+  const ids = new Set<string>();
+  const streamStart = extractToolStartFromStreamEvent(message);
+  if (streamStart?.id) {
+    ids.add(streamStart.id);
+  }
+  if (message.type === "tool_progress") {
+    ids.add(message.tool_use_id);
+  }
+  if (message.type === "system" && message.subtype === "task_started" && message.tool_use_id) {
+    ids.add(message.tool_use_id);
+  }
+  if (message.type === "tool_use_summary") {
+    for (const toolUseId of message.preceding_tool_use_ids) {
+      ids.add(toolUseId);
+    }
+  }
+  if (message.type === "result" && message.is_error) {
+    for (const toolId of trace.order) {
+      ids.add(toolId);
+    }
+  }
+  return [...ids];
+}
+
+function extractToolInputDelta(
+  message: ClaudeSDKMessage,
+): { index: number; partialJson: string } | null {
+  if (message.type !== "stream_event") {
+    return null;
+  }
+  const event = message.event as {
+    type?: string;
+    index?: number;
+    delta?: { type?: string; partial_json?: string };
+  };
+  if (event.type !== "content_block_delta" || typeof event.index !== "number") {
+    return null;
+  }
+  const delta = event.delta;
+  if (!delta || delta.type !== "input_json_delta" || typeof delta.partial_json !== "string") {
+    return null;
+  }
+  return { index: event.index, partialJson: delta.partial_json };
+}
+
+function parsePossiblyPartialJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage): boolean {
@@ -1415,6 +1490,30 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       changed = true;
     }
     entry.updatedAtMs = now;
+    if (typeof streamStart.index === "number") {
+      trace.indexToToolId.set(streamStart.index, streamStart.id);
+    }
+  }
+
+  const toolInputDelta = extractToolInputDelta(message);
+  if (toolInputDelta) {
+    const toolId = trace.indexToToolId.get(toolInputDelta.index);
+    if (toolId) {
+      const currentBuffer = trace.inputJsonBufferByToolId.get(toolId) ?? "";
+      const nextBuffer = `${currentBuffer}${toolInputDelta.partialJson}`;
+      trace.inputJsonBufferByToolId.set(toolId, nextBuffer);
+      const entry = ensureLiveToolEntry(trace, { id: toolId });
+      const parsed = parsePossiblyPartialJson(nextBuffer);
+      const preview =
+        parsed !== null
+          ? stringifyToolInput(parsed)
+          : clipText(nextBuffer.replace(/\s+/g, " "), 90);
+      if (preview && entry.inputPreview !== preview) {
+        entry.inputPreview = preview;
+        entry.updatedAtMs = now;
+        changed = true;
+      }
+    }
   }
 
   if (message.type === "tool_progress") {
@@ -1522,41 +1621,16 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
   return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
 }
 
-function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string | null {
-  const allEntries = trace.order
-    .map((id) => trace.byId.get(id))
-    .filter((entry): entry is LiveToolEntry => Boolean(entry));
-  if (allEntries.length === 0) {
-    return null;
+function buildSingleLiveToolMessage(entry: LiveToolEntry): string {
+  const elapsed = formatElapsedSeconds(entry);
+  const header = [`${toolStatusIcon(entry.status)} ${entry.name}`, elapsed ? `(${elapsed})` : ""]
+    .filter(Boolean)
+    .join(" ");
+  const detail = entry.summary ?? entry.inputPreview;
+  if (!detail) {
+    return header;
   }
-
-  const running = allEntries.filter(
-    (entry) => entry.status === "running" || entry.status === "queued",
-  );
-  const finished = allEntries.filter(
-    (entry) => entry.status !== "running" && entry.status !== "queued",
-  );
-  const selected = [
-    ...running.slice(-maxLines),
-    ...finished.slice(-(maxLines - Math.min(maxLines, running.length))),
-  ].slice(-maxLines);
-
-  const lines = selected.map((entry) => {
-    const elapsed = formatElapsedSeconds(entry);
-    const descriptor = entry.summary ?? entry.inputPreview;
-    const tokens = [
-      `${toolStatusIcon(entry.status)} ${entry.name}`,
-      elapsed ? `(${elapsed})` : "",
-      descriptor ? `- ${clipText(descriptor, 70)}` : "",
-    ].filter(Boolean);
-    return tokens.join(" ");
-  });
-
-  const hidden = allEntries.length - selected.length;
-  if (hidden > 0) {
-    lines.push(`... +${hidden} more tool call(s)`);
-  }
-  return ["Tools:", ...lines].join("\n");
+  return [header, "```bash", clipText(detail, 1800), "```"].join("\n");
 }
 
 function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
@@ -1605,14 +1679,13 @@ function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
 function toStreamingPreview(
   text: string,
   thinking: string,
-  toolPanel?: string | null,
   thinkingSpinnerFrame?: string,
   maxChars = 1800,
 ): string {
   const spinnerSuffix = thinkingSpinnerFrame ? ` ${thinkingSpinnerFrame}` : "";
   const trimmedText = text.trim();
   const trimmedThinking = thinking.trim();
-  if (!trimmedText && !trimmedThinking && !toolPanel) {
+  if (!trimmedText && !trimmedThinking) {
     return `_Thinking${spinnerSuffix}..._`;
   }
 
@@ -1622,11 +1695,8 @@ function toStreamingPreview(
   } else if (!trimmedText) {
     parts.push(`_Thinking${spinnerSuffix}..._`);
   }
-  if (toolPanel) {
-    parts.push(toolPanel);
-  }
   if (trimmedText) {
-    if (trimmedThinking || toolPanel) {
+    if (trimmedThinking) {
       parts.push("---");
     }
     parts.push(trimmedText);
@@ -2162,6 +2232,33 @@ export async function startApp(
               ? buildLiveToolDetails(trace)
               : "No tool calls captured yet for this channel.",
             flags: MessageFlags.Ephemeral,
+            components: buildToolPanelButtons(toolInspect.channelId, interaction.user.id),
+          });
+          return;
+        }
+
+        const toolPanel = parseToolPanelCustomId(interaction.customId);
+        if (toolPanel) {
+          if (interaction.channelId !== toolPanel.channelId) {
+            await interaction.reply({
+              content: "This tools panel belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          if (interaction.user.id !== toolPanel.userId) {
+            await interaction.reply({
+              content: "Only the requesting user can refresh this tools panel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          const trace = liveToolTracesByChannel.get(toolPanel.channelId);
+          await interaction.update({
+            content: trace
+              ? buildLiveToolDetails(trace)
+              : "No tool calls captured yet for this channel.",
+            components: buildToolPanelButtons(toolPanel.channelId, toolPanel.userId),
           });
           return;
         }
@@ -3133,12 +3230,7 @@ export async function startApp(
 
             await addReaction(message, "🧠");
             const status = await message.reply({
-              content: toStreamingPreview(
-                "",
-                "",
-                buildLiveToolPanel(runToolTrace),
-                THINKING_SPINNER_FRAMES[0],
-              ),
+              content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
               components: buildStopButtons(channelId),
             });
             const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
@@ -3158,6 +3250,10 @@ export async function startApp(
             let statusEditQueue: Promise<void> = Promise.resolve();
             let statusEditInFlight = false;
             let pendingStatusEdit: { content: string; includeButtons: boolean } | null = null;
+            const toolSendTarget = canSendMessage(message.channel) ? message.channel : null;
+            const toolMessagesById = new Map<string, EditableSentMessage>();
+            const pendingToolMessageContent = new Map<string, string>();
+            const toolMessageEditInFlight = new Set<string>();
 
             const queueStatusEdit = (content: string, includeButtons: boolean): Promise<void> => {
               pendingStatusEdit = { content, includeButtons };
@@ -3193,7 +3289,6 @@ export async function startApp(
                 toStreamingPreview(
                   streamedText,
                   streamedThinking,
-                  buildLiveToolPanel(runToolTrace),
                   THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
                 ),
                 true,
@@ -3225,12 +3320,46 @@ export async function startApp(
                 toStreamingPreview(
                   streamedText,
                   streamedThinking,
-                  buildLiveToolPanel(runToolTrace),
                   THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
                 ),
                 true,
               );
             }, 900);
+
+            const queueToolMessageRender = (toolId: string) => {
+              const entry = runToolTrace.byId.get(toolId);
+              if (!entry || !toolSendTarget) {
+                return;
+              }
+              pendingToolMessageContent.set(toolId, buildSingleLiveToolMessage(entry));
+              if (toolMessageEditInFlight.has(toolId)) {
+                return;
+              }
+              toolMessageEditInFlight.add(toolId);
+              void (async () => {
+                while (pendingToolMessageContent.has(toolId)) {
+                  const nextContent = pendingToolMessageContent.get(toolId);
+                  pendingToolMessageContent.delete(toolId);
+                  if (!nextContent) {
+                    continue;
+                  }
+                  try {
+                    const existing = toolMessagesById.get(toolId);
+                    if (existing) {
+                      await existing.edit({ content: nextContent });
+                    } else {
+                      const sent = await toolSendTarget.send({ content: nextContent });
+                      if (canEditSentMessage(sent)) {
+                        toolMessagesById.set(toolId, sent);
+                      }
+                    }
+                  } catch {
+                    // Ignore tool message send/edit failures to keep primary run stable.
+                  }
+                }
+                toolMessageEditInFlight.delete(toolId);
+              })();
+            };
 
             try {
               sessions.appendTurn(channelId, {
@@ -3265,7 +3394,9 @@ export async function startApp(
                     }
                   }
                   if (applyToolMessageToTrace(runToolTrace, sdkMessage)) {
-                    scheduleStreamPreview();
+                    for (const toolId of collectToolIdsFromMessage(runToolTrace, sdkMessage)) {
+                      queueToolMessageRender(toolId);
+                    }
                   }
                 },
               });
@@ -3287,6 +3418,9 @@ export async function startApp(
               const cleanedOutputText = structuredAttachments.cleanedText.trim();
               const interrupted = stopController.wasInterrupted(channelId);
               finalizeLiveToolTrace(runToolTrace, interrupted ? "interrupted" : "success");
+              for (const toolId of runToolTrace.order) {
+                queueToolMessageRender(toolId);
+              }
               const finalText =
                 cleanedOutputText.length > 0
                   ? cleanedOutputText
@@ -3300,8 +3434,7 @@ export async function startApp(
                 content: finalText,
               });
 
-              const finalToolPanel = buildLiveToolPanel(runToolTrace);
-              const finalPreview = toStreamingPreview(finalText, streamedThinking, finalToolPanel);
+              const finalPreview = toStreamingPreview(finalText, streamedThinking);
               await status.edit({
                 content: finalPreview,
                 components: [],
@@ -3344,6 +3477,9 @@ export async function startApp(
                 runToolTrace,
                 stopController.wasInterrupted(channelId) ? "interrupted" : "failed",
               );
+              for (const toolId of runToolTrace.order) {
+                queueToolMessageRender(toolId);
+              }
 
               const msg = error instanceof Error ? error.message : "Unknown failure";
               await status.edit({
