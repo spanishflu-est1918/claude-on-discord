@@ -59,6 +59,77 @@ describe("Discord client integration routing", () => {
     client.destroy();
   });
 
+  test("requires explicit mention in multi-user guild channels when enabled", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: true,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    const makeMessage = (authorId: string, content: string, mentionBot: boolean) => ({
+      author: { bot: false, id: authorId },
+      guildId: "guild-1",
+      content,
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1" } },
+      mentions: {
+        has: () => mentionBot,
+        users: { has: (id: string) => mentionBot && id === "bot-1" },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", makeMessage("u1", "hello", false));
+    emitEvent(client, "messageCreate", makeMessage("u2", "no mention yet", false));
+    emitEvent(client, "messageCreate", makeMessage("u2", "<@bot-1> mentioned", true));
+    emitEvent(client, "messageCreate", makeMessage("u1", "<@!bot-1> mentioned too", false));
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["hello", "<@bot-1> mentioned", "<@!bot-1> mentioned too"]);
+    client.destroy();
+  });
+
+  test("uses per-message mention policy callback when provided", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: true,
+      shouldRequireMentionForMessage: () => false,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    const makeMessage = (authorId: string, content: string) => ({
+      author: { bot: false, id: authorId },
+      guildId: "guild-1",
+      content,
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1" } },
+      mentions: {
+        has: () => false,
+        users: { has: () => false },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", makeMessage("u1", "first"));
+    emitEvent(client, "messageCreate", makeMessage("u2", "second"));
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["first", "second"]);
+    client.destroy();
+  });
+
   test("replies with failure text when user message handler throws", async () => {
     const replies: string[] = [];
     const client = createDiscordClient({

@@ -28,6 +28,9 @@ export type UpsertChannelInput = {
 
 const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
 const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
+const CHANNEL_MENTIONS_MODE_PREFIX = "channel_mentions_mode:";
+
+export type ChannelMentionsMode = "default" | "required" | "off";
 
 function channelSystemPromptKey(channelId: string): string {
   return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
@@ -35,6 +38,10 @@ function channelSystemPromptKey(channelId: string): string {
 
 function channelThreadBranchKey(channelId: string): string {
   return `${CHANNEL_THREAD_BRANCH_PREFIX}${channelId}`;
+}
+
+function channelMentionsModeKey(channelId: string): string {
+  return `${CHANNEL_MENTIONS_MODE_PREFIX}${channelId}`;
 }
 
 function mapChannelRow(row: ChannelRow): ChannelRecord {
@@ -226,6 +233,22 @@ export class Repository {
 
   clearThreadBranchMeta(channelId: string): void {
     this.deleteSetting(channelThreadBranchKey(channelId));
+  }
+
+  getChannelMentionsMode(channelId: string): ChannelMentionsMode | null {
+    const raw = this.getSetting(channelMentionsModeKey(channelId));
+    if (raw === "default" || raw === "required" || raw === "off") {
+      return raw;
+    }
+    return null;
+  }
+
+  setChannelMentionsMode(channelId: string, mode: ChannelMentionsMode): void {
+    this.setSetting(channelMentionsModeKey(channelId), mode);
+  }
+
+  clearChannelMentionsMode(channelId: string): void {
+    this.deleteSetting(channelMentionsModeKey(channelId));
   }
 
   listThreadBranchMetaEntries(): Array<{ channelId: string; value: string }> {

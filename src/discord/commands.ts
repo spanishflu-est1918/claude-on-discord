@@ -78,6 +78,33 @@ const slashCommands = [
     .addSubcommand((subcommand) =>
       subcommand.setName("clear").setDescription("Clear current channel system prompt"),
     ),
+  new SlashCommandBuilder()
+    .setName("mentions")
+    .setDescription("Manage mention requirement policy for this channel")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("set")
+        .setDescription("Set per-channel mention policy")
+        .addStringOption((option) =>
+          option
+            .setName("mode")
+            .setDescription("Mention policy mode")
+            .setRequired(true)
+            .addChoices(
+              { name: "default", value: "default" },
+              { name: "required", value: "required" },
+              { name: "off", value: "off" },
+            ),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("show").setDescription("Show effective mention policy for this channel"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("clear")
+        .setDescription("Clear per-channel mention policy override (use global default)"),
+    ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
   new SlashCommandBuilder()
     .setName("pr")

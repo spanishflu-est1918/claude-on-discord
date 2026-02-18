@@ -10,6 +10,7 @@ export type SetupValues = {
   databasePath: string;
   defaultModel: string;
   autoThreadWorktree: string;
+  requireMentionInMultiUserChannels: string;
   worktreeBootstrap: string;
   worktreeBootstrapCommand?: string;
   claudePermissionMode: string;
@@ -65,6 +66,7 @@ export function renderEnvFile(values: SetupValues): string {
     `DATABASE_PATH=${values.databasePath}`,
     `DEFAULT_MODEL=${values.defaultModel}`,
     `AUTO_THREAD_WORKTREE=${values.autoThreadWorktree}`,
+    `REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=${values.requireMentionInMultiUserChannels}`,
     `WORKTREE_BOOTSTRAP=${values.worktreeBootstrap}`,
     `WORKTREE_BOOTSTRAP_COMMAND=${values.worktreeBootstrapCommand ?? ""}`,
     `CLAUDE_PERMISSION_MODE=${values.claudePermissionMode}`,

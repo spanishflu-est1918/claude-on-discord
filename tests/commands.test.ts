@@ -29,4 +29,14 @@ describe("slash commands", () => {
       .filter(Boolean);
     expect(subcommands).toEqual(["open", "draft", "status", "view", "checks", "merge"]);
   });
+
+  test("/mentions exposes set/show/clear subcommands", () => {
+    const commands = getSlashCommandDefinitions();
+    const mentions = commands.find((command) => command.name === "mentions");
+    expect(mentions).toBeDefined();
+    const subcommands = (mentions?.options ?? [])
+      .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
+      .filter(Boolean);
+    expect(subcommands).toEqual(["set", "show", "clear"]);
+  });
 });

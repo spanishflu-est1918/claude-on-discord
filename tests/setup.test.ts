@@ -38,6 +38,7 @@ describe("bootstrap setup helpers", () => {
       databasePath: "./data/db.sqlite",
       defaultModel: "sonnet",
       autoThreadWorktree: "false",
+      requireMentionInMultiUserChannels: "true",
       worktreeBootstrap: "true",
       worktreeBootstrapCommand: "",
       claudePermissionMode: "bypassPermissions",
@@ -47,6 +48,7 @@ describe("bootstrap setup helpers", () => {
     expect(content).toContain("APPLICATION_ID=app");
     expect(content).toContain("DISCORD_GUILD_ID=guild");
     expect(content).toContain("AUTO_THREAD_WORKTREE=false");
+    expect(content).toContain("REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=true");
     expect(content).toContain("WORKTREE_BOOTSTRAP=true");
   });
 });

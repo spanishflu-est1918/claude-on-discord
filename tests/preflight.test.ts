@@ -14,6 +14,7 @@ function createConfig(overrides: Partial<AppConfig>): AppConfig {
     databasePath: "/tmp/bot.sqlite",
     defaultModel: "sonnet",
     autoThreadWorktree: false,
+    requireMentionInMultiUserChannels: false,
     worktreeBootstrap: true,
     claudePermissionMode: "bypassPermissions",
     ...overrides,

@@ -7,7 +7,7 @@ import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
 import type { AppConfig } from "./config";
-import { Repository } from "./db/repository";
+import { type ChannelMentionsMode, Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
 import {
   buildDiffViewButtons,
@@ -206,6 +206,29 @@ function buildSeededPrompt(
     "Current user message:",
     userPrompt,
   ].join("\n");
+}
+
+function parseDirectBashCommand(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("!")) {
+    return null;
+  }
+  return trimmed.slice(1).trim();
+}
+
+function resolveMentionRequirementForChannel(input: {
+  repository: Repository;
+  channelId: string;
+  defaultRequireMention: boolean;
+}): { requireMention: boolean; mode: ChannelMentionsMode } {
+  const mode = input.repository.getChannelMentionsMode(input.channelId) ?? "default";
+  if (mode === "required") {
+    return { requireMention: true, mode };
+  }
+  if (mode === "off") {
+    return { requireMention: false, mode };
+  }
+  return { requireMention: input.defaultRequireMention, mode };
 }
 
 function compactHistory(
@@ -1005,7 +1028,7 @@ async function resolvePersistedFilename(
     return existsSync(filename) ? filename : null;
   }
 
-  const direct = path.resolve(workingDir, filename);
+  const direct = resolvePath(filename, workingDir);
   if (existsSync(direct)) {
     return direct;
   }
@@ -1016,6 +1039,136 @@ async function resolvePersistedFilename(
     return null;
   }
   return findFileByBasename({ rootDir: workingDir, basename });
+}
+
+function normalizeAttachmentCandidate(candidate: string): string {
+  return candidate
+    .trim()
+    .replace(/^[("']+/, "")
+    .replace(/[)"'.,;:!?]+$/, "");
+}
+
+function looksLikeAttachmentPath(candidate: string): boolean {
+  if (!candidate || candidate.includes("\n") || candidate.includes("\r")) {
+    return false;
+  }
+  if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
+    return false;
+  }
+  if (
+    candidate.startsWith("~/") ||
+    candidate.startsWith("./") ||
+    candidate.startsWith("../") ||
+    candidate.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(candidate)
+  ) {
+    return true;
+  }
+  if (candidate.includes("/")) {
+    return true;
+  }
+  return /^[^/\s]+\.[A-Za-z0-9]{1,12}$/.test(candidate);
+}
+
+function extractAttachmentPathCandidates(text: string, maxCandidates = 40): string[] {
+  if (!text.trim()) {
+    return [];
+  }
+
+  const results = new Set<string>();
+  const capture = (value: string) => {
+    const normalized = normalizeAttachmentCandidate(value);
+    if (!normalized || !looksLikeAttachmentPath(normalized)) {
+      return;
+    }
+    if (normalized.length > 512) {
+      return;
+    }
+    if (results.size < maxCandidates) {
+      results.add(normalized);
+    }
+  };
+
+  const backtickRegex = /`([^`\n]+)`/g;
+  for (const match of text.matchAll(backtickRegex)) {
+    const candidate = match[1];
+    if (candidate) {
+      capture(candidate);
+    }
+  }
+
+  const absoluteRegex = /(?:^|\s)(~\/[^\s`"'(){}[\]<>]+|\/[^\s`"'(){}[\]<>]+)/g;
+  for (const match of text.matchAll(absoluteRegex)) {
+    const candidate = match[1];
+    if (candidate) {
+      capture(candidate);
+    }
+  }
+
+  const relativeRegex =
+    /(?:^|\s)(\.{1,2}\/[^\s`"'(){}[\]<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g;
+  for (const match of text.matchAll(relativeRegex)) {
+    const candidate = match[1];
+    if (candidate) {
+      capture(candidate);
+    }
+  }
+
+  return Array.from(results);
+}
+
+function extractStructuredAttachmentDirectives(
+  text: string,
+  maxCandidates = 20,
+): {
+  filenames: string[];
+  cleanedText: string;
+} {
+  if (!text.trim()) {
+    return { filenames: [], cleanedText: text };
+  }
+
+  const filenames = new Set<string>();
+  const keptLines: string[] = [];
+  let inCodeFence = false;
+  const directiveRegex = /^\s*(?:[-*]\s*)?(?:attach|media|file)\s*:\s*(.+?)\s*$/i;
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      keptLines.push(line);
+      continue;
+    }
+    if (inCodeFence) {
+      keptLines.push(line);
+      continue;
+    }
+
+    const match = line.match(directiveRegex);
+    if (!match) {
+      keptLines.push(line);
+      continue;
+    }
+
+    const candidate = normalizeAttachmentCandidate(match[1] ?? "");
+    if (
+      candidate &&
+      looksLikeAttachmentPath(candidate) &&
+      candidate.length <= 512 &&
+      filenames.size < maxCandidates
+    ) {
+      filenames.add(candidate);
+      continue;
+    }
+
+    keptLines.push(line);
+  }
+
+  return {
+    filenames: Array.from(filenames),
+    cleanedText: keptLines.join("\n"),
+  };
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -1039,7 +1192,6 @@ async function sendGeneratedFilesToChannel(input: {
   for (const filename of input.filenames) {
     const resolved = await resolvePersistedFilename(input.workingDir, filename);
     if (!resolved) {
-      failures.push(`- \`${filename}\`: not found under \`${input.workingDir}\``);
       continue;
     }
     if (sentPaths.has(resolved)) {
@@ -1208,6 +1360,12 @@ export async function startApp(
 
     discordClient = await startDiscordClientImpl({
       token: config.discordToken,
+      shouldRequireMentionForMessage: (message) =>
+        resolveMentionRequirementForChannel({
+          repository,
+          channelId: message.channel.id,
+          defaultRequireMention: config.requireMentionInMultiUserChannels,
+        }).requireMention,
       onGatewayDisconnect: (code) => {
         if (shuttingDown) {
           return;
@@ -1648,6 +1806,11 @@ export async function startApp(
             const totalCost = repository.getChannelCostTotal(channelId);
             const turns = state.history.length;
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+            const mentionPolicy = resolveMentionRequirementForChannel({
+              repository,
+              channelId,
+              defaultRequireMention: config.requireMentionInMultiUserChannels,
+            });
             const threadStatusLines = buildThreadBranchStatusLines({
               currentChannelId: channelId,
               entries: repository.listThreadBranchMetaEntries(),
@@ -1657,6 +1820,7 @@ export async function startApp(
               `Model: \`${state.channel.model}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
+              `Mentions: mode=\`${mentionPolicy.mode}\`, effective=\`${mentionPolicy.requireMention ? "required" : "off"}\``,
               ...threadStatusLines,
               `In-memory turns: \`${turns}\``,
               `Total channel cost: \`$${totalCost.toFixed(4)}\``,
@@ -2236,6 +2400,59 @@ export async function startApp(
             );
             break;
           }
+          case "mentions": {
+            const action = interaction.options.getSubcommand(true);
+
+            if (action === "set") {
+              const modeRaw = interaction.options.getString("mode", true).trim().toLowerCase();
+              if (modeRaw !== "default" && modeRaw !== "required" && modeRaw !== "off") {
+                await interaction.reply({
+                  content: "Invalid mode. Use one of: `default`, `required`, `off`.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                break;
+              }
+              const mode = modeRaw as ChannelMentionsMode;
+              repository.setChannelMentionsMode(channelId, mode);
+              const effective = resolveMentionRequirementForChannel({
+                repository,
+                channelId,
+                defaultRequireMention: config.requireMentionInMultiUserChannels,
+              });
+              await interaction.reply(
+                `Mentions mode for this channel set to \`${mode}\` (effective: \`${effective.requireMention ? "required" : "off"}\`).`,
+              );
+              break;
+            }
+
+            if (action === "show") {
+              const effective = resolveMentionRequirementForChannel({
+                repository,
+                channelId,
+                defaultRequireMention: config.requireMentionInMultiUserChannels,
+              });
+              const globalDefault = config.requireMentionInMultiUserChannels ? "required" : "off";
+              await interaction.reply({
+                content:
+                  `Mentions mode: \`${effective.mode}\`\n` +
+                  `Effective policy: \`${effective.requireMention ? "required" : "off"}\`\n` +
+                  `Global default: \`${globalDefault}\``,
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            repository.clearChannelMentionsMode(channelId);
+            const effective = resolveMentionRequirementForChannel({
+              repository,
+              channelId,
+              defaultRequireMention: config.requireMentionInMultiUserChannels,
+            });
+            await interaction.reply(
+              `Mentions mode override cleared (effective: \`${effective.requireMention ? "required" : "off"}\`).`,
+            );
+            break;
+          }
           case "cost": {
             const totalCost = repository.getChannelCostTotal(channelId);
             const totalTurns = repository.getChannelTurnCount(channelId);
@@ -2426,6 +2643,29 @@ export async function startApp(
           worktreeBootstrapCommand: config.worktreeBootstrapCommand,
         });
         const state = sessions.getState(channelId, guildId);
+        const directBash = parseDirectBashCommand(message.content);
+        if (directBash !== null) {
+          if (!directBash) {
+            await message.reply(
+              "Direct shell mode expects a command after `!` (example: `!git status`).",
+            );
+            return;
+          }
+
+          const result = await runBashCommand(directBash, state.channel.workingDir);
+          const outputText = result.output || "(no output)";
+          const payload = `\`\`\`bash\n$ ${directBash}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
+          const chunks = chunkDiscordText(payload);
+          const firstChunk = chunks[0] ?? "(no output)";
+          await message.reply(firstChunk);
+          for (let i = 1; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            if (chunk && "send" in message.channel && typeof message.channel.send === "function") {
+              await message.channel.send(chunk);
+            }
+          }
+          return;
+        }
         const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
         const stagedAttachments = await stageAttachments(message);
         const threadBranchContext = buildThreadBranchAwarenessPrompt({
@@ -2525,12 +2765,16 @@ export async function startApp(
           }
 
           const outputText = result.text.trim();
+          const structuredAttachments = extractStructuredAttachmentDirectives(outputText);
+          const cleanedOutputText = structuredAttachments.cleanedText.trim();
           const finalText =
-            outputText.length > 0
-              ? outputText
-              : stopController.wasInterrupted(channelId)
-                ? "Interrupted."
-                : "(No response text)";
+            cleanedOutputText.length > 0
+              ? cleanedOutputText
+              : structuredAttachments.filenames.length > 0
+                ? "Attached generated file(s)."
+                : stopController.wasInterrupted(channelId)
+                  ? "Interrupted."
+                  : "(No response text)";
           sessions.appendTurn(channelId, {
             role: "assistant",
             content: finalText,
@@ -2561,7 +2805,11 @@ export async function startApp(
           await sendGeneratedFilesToChannel({
             channel: message.channel,
             workingDir: state.channel.workingDir,
-            filenames: persistedFilenames,
+            filenames: new Set([
+              ...persistedFilenames,
+              ...structuredAttachments.filenames,
+              ...extractAttachmentPathCandidates(outputText),
+            ]),
           });
 
           await removeReaction(message, "🧠");

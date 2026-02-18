@@ -97,6 +97,20 @@ describe("Repository", () => {
     expect(repo.getChannelSystemPrompt("c1")).toBeNull();
   });
 
+  test("stores and clears channel mention mode", () => {
+    const repo = createRepository();
+
+    expect(repo.getChannelMentionsMode("c1")).toBeNull();
+    repo.setChannelMentionsMode("c1", "required");
+    expect(repo.getChannelMentionsMode("c1")).toBe("required");
+
+    repo.setChannelMentionsMode("c1", "off");
+    expect(repo.getChannelMentionsMode("c1")).toBe("off");
+
+    repo.clearChannelMentionsMode("c1");
+    expect(repo.getChannelMentionsMode("c1")).toBeNull();
+  });
+
   test("stores, lists, and clears thread branch metadata", () => {
     const repo = createRepository();
 

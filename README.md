@@ -35,6 +35,10 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 - GitHub PR creation via `/pr open|draft` (requires `gh` CLI)
 - Cost tracking via `/cost`
 - Attachment input staging and generated file output back into Discord
+- Attachment directive support in model output (`ATTACH: <path>`) for reliable file delivery
+- Multi-user mention policy controls:
+  - global default via `REQUIRE_MENTION_IN_MULTI_USER_CHANNELS`
+  - per-channel override via `/mentions`
 - MCP config loading from project `.claude/mcp.json`
 - Recovery ladder for `Claude Code process exited with code 1` failure modes
 
@@ -111,6 +115,7 @@ Common optional variables:
 - `DATABASE_PATH`: sqlite path (default: `./data/claude-on-discord.sqlite`)
 - `DEFAULT_MODEL`: Claude model alias/name (default: `sonnet`)
 - `AUTO_THREAD_WORKTREE`: auto-provision per-thread git worktrees (default: `false`)
+- `REQUIRE_MENTION_IN_MULTI_USER_CHANNELS`: require explicit `@bot` mention once a guild channel has multiple human participants (default: `false`)
 - `WORKTREE_BOOTSTRAP`: run setup automatically after creating worktrees (default: `true`)
 - `WORKTREE_BOOTSTRAP_COMMAND`: optional custom setup command for new worktrees
 - `CLAUDE_PERMISSION_MODE`: SDK permission mode (default: `bypassPermissions`)
@@ -130,7 +135,11 @@ Common optional variables:
 - `/systemprompt set <text>`: set per-channel system prompt (session restarts)
 - `/systemprompt show`: view current per-channel system prompt
 - `/systemprompt clear`: clear per-channel system prompt (session restarts)
+- `/mentions set <mode>`: set per-channel mention policy (`default`, `required`, `off`)
+- `/mentions show`: show current channel mention mode and effective policy
+- `/mentions clear`: clear per-channel mention policy override (back to global default)
 - `/bash <command>`: run shell command directly in current project
+- `!<command>` in channel messages: direct shell execution bypassing Claude/session
 - `/screenshot [url] [full]`: capture a webpage screenshot through `agent-browser`
 - `/pr open|draft [base] [title] [body]`: create a GitHub PR from current branch
   - default base resolves from thread root branch or origin default branch
@@ -153,11 +162,15 @@ Common optional variables:
 - If project changes with context kept, session ID is reset to avoid stale resume failures.
 - During active runs, the bot streams partial answer/thinking previews and shows stop buttons.
 - Interrupted runs with no final text are rendered as `Interrupted.`.
+- Multi-user guild channels can require explicit `@bot` mention before response (global + per-channel override).
 
 ## Attachments
 
 - Input attachments are downloaded to temp files and added to Claude prompt context.
-- Generated files can be sent back to Discord automatically when persisted by Claude.
+- Generated files can be sent back to Discord automatically via:
+  - SDK `files_persisted` events
+  - explicit model directives like `ATTACH: /absolute/or/relative/path`
+  - path extraction fallback from final model text
 
 Known limitation:
 

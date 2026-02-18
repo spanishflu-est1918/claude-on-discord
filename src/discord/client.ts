@@ -14,6 +14,8 @@ export interface DiscordClientOptions {
   onUserMessage: (message: Message) => Promise<void>;
   onSlashCommand: (interaction: ChatInputCommandInteraction) => Promise<void>;
   onButtonInteraction: (interaction: ButtonInteraction) => Promise<void>;
+  requireMentionInMultiUserChannels?: boolean;
+  shouldRequireMentionForMessage?: (message: Message) => boolean;
   onGatewayDisconnect?: (code: number) => void;
   onGatewayReconnecting?: () => void;
   onGatewayResume?: (replayedEvents: number) => void;
@@ -26,6 +28,40 @@ export interface ThreadLifecycleEvent {
   parentId: string | null;
   threadName: string;
   thread: AnyThreadChannel;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasExplicitBotMention(message: Message, botId: string | null): boolean {
+  const mentions = message.mentions as unknown as {
+    has?: (user: unknown) => boolean;
+    users?: { has?: (id: string) => boolean };
+  };
+  if (mentions && typeof mentions.has === "function" && message.client.user) {
+    try {
+      if (mentions.has(message.client.user)) {
+        return true;
+      }
+    } catch {
+      // Fall through to alternate mention checks.
+    }
+  }
+  if (botId && mentions?.users && typeof mentions.users.has === "function") {
+    try {
+      if (mentions.users.has(botId)) {
+        return true;
+      }
+    } catch {
+      // Fall through to raw content pattern check.
+    }
+  }
+  if (!botId) {
+    return false;
+  }
+  const mentionPattern = new RegExp(`<@!?${escapeRegExp(botId)}>`);
+  return mentionPattern.test(message.content);
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -64,6 +100,8 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
     console.error("Discord client error", error);
   });
 
+  const observedHumanSendersByChannel = new Map<string, Set<string>>();
+
   client.on("messageCreate", async (message) => {
     if (message.author.bot) {
       return;
@@ -71,6 +109,29 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
     const content = message.content.trim();
     if (!content && message.attachments.size === 0) {
       return;
+    }
+    const requireMention =
+      options.shouldRequireMentionForMessage?.(message) ??
+      options.requireMentionInMultiUserChannels;
+    if (requireMention && message.guildId) {
+      const senderId = typeof message.author.id === "string" ? message.author.id : "";
+      if (senderId) {
+        const seenInChannel = observedHumanSendersByChannel.get(message.channel.id) ?? new Set();
+        seenInChannel.add(senderId);
+        observedHumanSendersByChannel.set(message.channel.id, seenInChannel);
+
+        if (seenInChannel.size > 1) {
+          const botId =
+            typeof client.user?.id === "string"
+              ? client.user.id
+              : typeof message.client.user?.id === "string"
+                ? message.client.user.id
+                : null;
+          if (!hasExplicitBotMention(message, botId)) {
+            return;
+          }
+        }
+      }
     }
 
     try {

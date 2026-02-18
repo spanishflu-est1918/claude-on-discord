@@ -102,6 +102,11 @@ async function main(): Promise<void> {
         "Auto thread worktree (true/false)",
         current.AUTO_THREAD_WORKTREE ?? "false",
       ),
+      requireMentionInMultiUserChannels: await ask(
+        rl,
+        "Require @mention in multi-user channels (true/false)",
+        current.REQUIRE_MENTION_IN_MULTI_USER_CHANNELS ?? "false",
+      ),
       worktreeBootstrap: await ask(
         rl,
         "Bootstrap new worktrees automatically (true/false)",

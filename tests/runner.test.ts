@@ -142,6 +142,7 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.includePartialMessages).toBe(true);
     expect(capturedInput?.options.thinking).toEqual({ type: "adaptive" });
     expect(capturedInput?.options.systemPrompt).toContain("you CAN return files/images");
+    expect(capturedInput?.options.systemPrompt).toContain("ATTACH:");
     expect(capturedInput?.options.systemPrompt).toContain("Respond in terse style.");
   });
 
