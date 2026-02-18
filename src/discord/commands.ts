@@ -13,6 +13,12 @@ const slashCommands = [
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
+    .setName("bash")
+    .setDescription("Run a shell command directly in this channel's working directory")
+    .addStringOption((option) =>
+      option.setName("command").setDescription("Shell command to execute").setRequired(true),
+    ),
+  new SlashCommandBuilder()
     .setName("model")
     .setDescription("Set Claude model for this channel")
     .addStringOption((option) =>

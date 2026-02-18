@@ -46,6 +46,30 @@ function resolvePath(inputPath: string): string {
   return path.resolve(inputPath);
 }
 
+async function runBashCommand(
+  command: string,
+  cwd: string,
+): Promise<{ exitCode: number; output: string }> {
+  const process = Bun.spawn({
+    cmd: ["/bin/zsh", "-lc", command],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+
+  const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+  return {
+    exitCode,
+    output,
+  };
+}
+
 export async function startApp(config: AppConfig): Promise<void> {
   const database = openDatabase(config.databasePath);
   const repository = new Repository(database);
@@ -86,6 +110,26 @@ export async function startApp(config: AppConfig): Promise<void> {
             `Total channel cost: \`$${totalCost.toFixed(4)}\``,
           ];
           await interaction.reply(lines.join("\n"));
+          break;
+        }
+        case "bash": {
+          const command = interaction.options.getString("command", true);
+          const state = sessions.getState(channelId, guildId);
+          await interaction.deferReply();
+
+          const result = await runBashCommand(command, state.channel.workingDir);
+          const outputText = result.output || "(no output)";
+          const payload = `\`\`\`bash\n$ ${command}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
+          const chunks = chunkDiscordText(payload);
+          const firstChunk = chunks[0] ?? "(no output)";
+          await interaction.editReply(firstChunk);
+
+          for (let i = 1; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            if (chunk) {
+              await interaction.followUp(chunk);
+            }
+          }
           break;
         }
         case "project": {
