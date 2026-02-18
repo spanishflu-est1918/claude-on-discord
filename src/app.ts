@@ -1492,12 +1492,12 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
   return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
 }
 
-function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string {
+function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string | null {
   const allEntries = trace.order
     .map((id) => trace.byId.get(id))
     .filter((entry): entry is LiveToolEntry => Boolean(entry));
   if (allEntries.length === 0) {
-    return "Tools:\n(waiting for first tool call)";
+    return null;
   }
 
   const running = allEntries.filter(
@@ -1576,11 +1576,13 @@ function toStreamingPreview(
   }
 
   const parts: string[] = [];
-  if (toolPanel) {
-    parts.push(toolPanel);
-  }
   if (trimmedThinking) {
     parts.push(`Thinking:\n${trimmedThinking}`);
+  } else if (!trimmedText) {
+    parts.push("Thinking...");
+  }
+  if (toolPanel) {
+    parts.push(toolPanel);
   }
   if (trimmedText) {
     parts.push(`Answer so far:\n${trimmedText}`);

@@ -228,6 +228,57 @@ describe("ClaudeRunner", () => {
     expect(result.text).toBe("AB");
   });
 
+  test("falls back to assistant thinking blocks when no thinking deltas are streamed", async () => {
+    const thinkingDeltas: string[] = [];
+    const runner = new ClaudeRunner(() =>
+      createMockQuery([
+        {
+          type: "assistant",
+          session_id: "session-think-fallback",
+          parent_tool_use_id: null,
+          uuid: "assist-1",
+          message: {
+            id: "msg-1",
+            type: "message",
+            role: "assistant",
+            model: "test-model",
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 },
+            content: [{ type: "thinking", thinking: "Fallback think block." }],
+          },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-think-fallback",
+          duration_ms: 1,
+          total_cost_usd: 0,
+          num_turns: 1,
+          result: "ok",
+          is_error: false,
+          duration_api_ms: 1,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "res-1",
+        },
+      ]),
+    );
+
+    await runner.run({
+      channelId: "channel-1",
+      prompt: "Think",
+      cwd: "/tmp",
+      onThinkingDelta: (thinking) => {
+        thinkingDeltas.push(thinking);
+      },
+    });
+
+    expect(thinkingDeltas).toEqual(["Fallback think block."]);
+  });
+
   test("keeps one streaming worker per channel and serializes concurrent turns", async () => {
     let queryFactoryCalls = 0;
     let concurrentTurns = 0;

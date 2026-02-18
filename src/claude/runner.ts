@@ -89,6 +89,7 @@ interface PendingRun {
   messages: ClaudeSDKMessage[];
   text: string;
   sawStreamText: boolean;
+  sawStreamThinking: boolean;
   costUsd?: number;
   durationMs?: number;
   turnCount?: number;
@@ -254,6 +255,7 @@ class ChannelWorker {
         messages: [],
         text: "",
         sawStreamText: false,
+        sawStreamThinking: false,
         cleanupAbortListener: () => {},
       };
 
@@ -324,6 +326,7 @@ class ChannelWorker {
         }
         const thinkingChunk = extractStreamThinkingDelta(message);
         if (thinkingChunk) {
+          current.sawStreamThinking = true;
           current.request.onThinkingDelta?.(thinkingChunk);
         }
 
@@ -341,6 +344,12 @@ class ChannelWorker {
           const assistantText = extractAssistantText(message);
           if (assistantText) {
             current.text += assistantText;
+          }
+          if (!current.sawStreamThinking) {
+            const assistantThinking = extractAssistantThinking(message);
+            if (assistantThinking) {
+              current.request.onThinkingDelta?.(assistantThinking);
+            }
           }
         }
       }
@@ -710,6 +719,34 @@ function extractAssistantText(message: Extract<ClaudeSDKMessage, { type: "assist
     if (block.type === "text" && typeof block.text === "string") {
       parts.push(block.text);
     }
+  }
+  return parts.join("");
+}
+
+function extractAssistantThinking(
+  message: Extract<ClaudeSDKMessage, { type: "assistant" }>,
+): string | null {
+  const blocks = message.message.content;
+  if (!Array.isArray(blocks)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (
+      block &&
+      typeof block === "object" &&
+      "type" in block &&
+      (block as { type?: string }).type === "thinking" &&
+      "thinking" in block &&
+      typeof (block as { thinking?: unknown }).thinking === "string"
+    ) {
+      parts.push((block as { thinking: string }).thinking);
+    }
+  }
+
+  if (parts.length === 0) {
+    return null;
   }
   return parts.join("");
 }
