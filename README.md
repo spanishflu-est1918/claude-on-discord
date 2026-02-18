@@ -122,6 +122,7 @@ Full reference: [.env.example](.env.example)
 
 ## Roadmap
 
+- `→` Plan mode — proposal-first workflow with explicit approval before tool execution
 - `→` Thinking mode — extended thinking per channel for deep analysis and architectural work
 - `→` `npx` distribution — `npx claude-on-discord setup`, no clone required
 - `→` tmux attach — attach to running tmux sessions from Discord, monitor builds and dev servers from your phone
