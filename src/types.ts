@@ -66,6 +66,10 @@ export interface ThreadBranchMeta {
   createdAt: number;
   worktreePath?: string;
   worktreeMode?: "prompt" | "inherited" | "worktree";
+  lifecycleState?: "active" | "archived" | "deleted";
+  cleanupState?: "none" | "pending" | "kept" | "removed";
+  archivedAt?: number;
+  deletedAt?: number;
 }
 
 export interface RingBufferSnapshot<T> {

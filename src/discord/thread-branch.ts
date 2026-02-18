@@ -17,7 +17,18 @@ function isThreadBranchMeta(value: unknown): value is ThreadBranchMeta {
     (candidate.worktreeMode === "prompt" ||
       candidate.worktreeMode === "inherited" ||
       candidate.worktreeMode === "worktree" ||
-      typeof candidate.worktreeMode === "undefined")
+      typeof candidate.worktreeMode === "undefined") &&
+    (candidate.lifecycleState === "active" ||
+      candidate.lifecycleState === "archived" ||
+      candidate.lifecycleState === "deleted" ||
+      typeof candidate.lifecycleState === "undefined") &&
+    (candidate.cleanupState === "none" ||
+      candidate.cleanupState === "pending" ||
+      candidate.cleanupState === "kept" ||
+      candidate.cleanupState === "removed" ||
+      typeof candidate.cleanupState === "undefined") &&
+    (typeof candidate.archivedAt === "number" || typeof candidate.archivedAt === "undefined") &&
+    (typeof candidate.deletedAt === "number" || typeof candidate.deletedAt === "undefined")
   );
 }
 
@@ -125,10 +136,12 @@ export function buildThreadBranchStatusLines(input: {
 
   const current = byChannel.get(input.currentChannelId);
   if (current) {
+    const lifecycleState = current.lifecycleState ?? "active";
     const lines = [
       `Thread branch: \`${current.name}\` (\`${current.channelId}\`)`,
       `Thread root: \`${current.rootChannelId}\``,
       `Thread parent: ${current.parentChannelId ? `\`${current.parentChannelId}\`` : "none"}`,
+      `Thread lifecycle: \`${lifecycleState}\``,
     ];
     if (current.worktreePath) {
       lines.push(`Thread worktree: \`${current.worktreePath}\``);
@@ -136,6 +149,9 @@ export function buildThreadBranchStatusLines(input: {
       lines.push("Thread worktree: pending choice (`Keep Parent Project` or `Create Worktree`).");
     } else {
       lines.push("Thread worktree: inherited parent/root project.");
+    }
+    if (current.cleanupState && current.cleanupState !== "none") {
+      lines.push(`Thread cleanup: \`${current.cleanupState}\``);
     }
     return lines;
   }

@@ -179,4 +179,49 @@ describe("Discord client integration routing", () => {
     expect(calls).toEqual(["disconnect:1000", "reconnecting", "resume:17"]);
     client.destroy();
   });
+
+  test("emits thread lifecycle callbacks for archive/unarchive/delete", async () => {
+    const calls: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      onUserMessage: async () => {},
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+      onThreadLifecycle: async (event) => {
+        calls.push(`${event.type}:${event.threadId}`);
+      },
+    });
+
+    emitEvent(
+      client,
+      "threadUpdate",
+      { archived: false },
+      {
+        archived: true,
+        id: "t1",
+        parentId: "p1",
+        name: "thread-1",
+      },
+    );
+    emitEvent(
+      client,
+      "threadUpdate",
+      { archived: true },
+      {
+        archived: false,
+        id: "t1",
+        parentId: "p1",
+        name: "thread-1",
+      },
+    );
+    emitEvent(client, "threadDelete", {
+      id: "t1",
+      parentId: "p1",
+      name: "thread-1",
+    });
+
+    await Bun.sleep(0);
+    expect(calls).toEqual(["archived:t1", "unarchived:t1", "deleted:t1"]);
+    client.destroy();
+  });
 });

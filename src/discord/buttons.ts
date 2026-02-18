@@ -6,10 +6,13 @@ const PROJECT_KEEP_PREFIX = "project:keep:";
 const PROJECT_FRESH_PREFIX = "project:fresh:";
 const THREAD_WORKTREE_KEEP_PREFIX = "thread:worktree:keep:";
 const THREAD_WORKTREE_CREATE_PREFIX = "thread:worktree:create:";
+const THREAD_CLEANUP_KEEP_PREFIX = "thread:cleanup:keep:";
+const THREAD_CLEANUP_REMOVE_PREFIX = "thread:cleanup:remove:";
 
 export type RunControlAction = "interrupt" | "abort";
 export type ProjectSwitchAction = "keep" | "fresh";
 export type ThreadWorktreeAction = "keep" | "create";
+export type ThreadCleanupAction = "keep" | "remove";
 
 export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
   const interruptButton = new ButtonBuilder()
@@ -111,6 +114,40 @@ export function parseThreadWorktreeChoiceCustomId(
     const channelId = customId.slice(THREAD_WORKTREE_CREATE_PREFIX.length);
     if (channelId) {
       return { action: "create", channelId };
+    }
+  }
+
+  return null;
+}
+
+export function buildThreadCleanupButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
+  const keepButton = new ButtonBuilder()
+    .setCustomId(`${THREAD_CLEANUP_KEEP_PREFIX}${channelId}`)
+    .setLabel("Keep Worktree")
+    .setStyle(ButtonStyle.Secondary);
+
+  const removeButton = new ButtonBuilder()
+    .setCustomId(`${THREAD_CLEANUP_REMOVE_PREFIX}${channelId}`)
+    .setLabel("Remove Worktree")
+    .setStyle(ButtonStyle.Primary);
+
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(keepButton, removeButton)];
+}
+
+export function parseThreadCleanupCustomId(
+  customId: string,
+): { action: ThreadCleanupAction; channelId: string } | null {
+  if (customId.startsWith(THREAD_CLEANUP_KEEP_PREFIX)) {
+    const channelId = customId.slice(THREAD_CLEANUP_KEEP_PREFIX.length);
+    if (channelId) {
+      return { action: "keep", channelId };
+    }
+  }
+
+  if (customId.startsWith(THREAD_CLEANUP_REMOVE_PREFIX)) {
+    const channelId = customId.slice(THREAD_CLEANUP_REMOVE_PREFIX.length);
+    if (channelId) {
+      return { action: "remove", channelId };
     }
   }
 

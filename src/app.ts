@@ -12,9 +12,11 @@ import { openDatabase } from "./db/schema";
 import {
   buildProjectSwitchButtons,
   buildStopButtons,
+  buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
+  parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
@@ -275,16 +277,16 @@ function isThreadBootstrapChannel(channel: unknown): channel is ThreadBootstrapC
   );
 }
 
-type ThreadSetupChannel = {
+type SendableChannel = {
   send: (options: string | { content: string; components?: unknown[] }) => Promise<unknown>;
 };
 
-function canSendThreadSetupMessage(channel: unknown): channel is ThreadSetupChannel {
+function canSendMessage(channel: unknown): channel is SendableChannel {
   return (
     typeof channel === "object" &&
     channel !== null &&
     "send" in channel &&
-    typeof (channel as ThreadSetupChannel).send === "function"
+    typeof (channel as SendableChannel).send === "function"
   );
 }
 
@@ -440,36 +442,34 @@ async function maybeInheritThreadContext(input: {
     if (worktreePath) {
       input.sessions.setWorkingDir(input.channelId, worktreePath);
     }
-    input.repository.setThreadBranchMeta(
-      input.channelId,
-      JSON.stringify({
-        channelId: input.channelId,
-        guildId: input.guildId,
-        rootChannelId,
-        parentChannelId,
-        name: threadName,
-        createdAt: Date.now(),
-        ...(worktreePath ? { worktreePath, worktreeMode: "worktree" as const } : {}),
-        ...(!worktreePath ? { worktreeMode: "inherited" as const } : {}),
-      }),
-    );
-    return;
-  }
-
-  input.repository.setThreadBranchMeta(
-    input.channelId,
-    JSON.stringify({
+    saveThreadBranchMeta(input.repository, {
       channelId: input.channelId,
       guildId: input.guildId,
       rootChannelId,
       parentChannelId,
       name: threadName,
       createdAt: Date.now(),
-      worktreeMode: "prompt",
-    }),
-  );
+      ...(worktreePath ? { worktreePath, worktreeMode: "worktree" as const } : {}),
+      ...(!worktreePath ? { worktreeMode: "inherited" as const } : {}),
+      lifecycleState: "active",
+      cleanupState: "none",
+    });
+    return;
+  }
 
-  if (!canSendThreadSetupMessage(input.channel)) {
+  saveThreadBranchMeta(input.repository, {
+    channelId: input.channelId,
+    guildId: input.guildId,
+    rootChannelId,
+    parentChannelId,
+    name: threadName,
+    createdAt: Date.now(),
+    worktreeMode: "prompt",
+    lifecycleState: "active",
+    cleanupState: "none",
+  });
+
+  if (!canSendMessage(input.channel)) {
     return;
   }
 
@@ -482,6 +482,66 @@ async function maybeInheritThreadContext(input: {
     });
   } catch {
     // Ignore thread setup message failures (permissions, unsupported channel types, etc).
+  }
+}
+
+function saveThreadBranchMeta(
+  repository: Repository,
+  meta: {
+    channelId: string;
+    guildId: string;
+    rootChannelId: string;
+    parentChannelId: string | null;
+    name: string;
+    createdAt: number;
+    worktreePath?: string;
+    worktreeMode?: "prompt" | "inherited" | "worktree";
+    lifecycleState?: "active" | "archived" | "deleted";
+    cleanupState?: "none" | "pending" | "kept" | "removed";
+    archivedAt?: number;
+    deletedAt?: number;
+  },
+): void {
+  repository.setThreadBranchMeta(meta.channelId, JSON.stringify(meta));
+}
+
+function resolveThreadParentWorkingDir(
+  repository: Repository,
+  meta: {
+    parentChannelId: string | null;
+    rootChannelId: string;
+  },
+  fallbackWorkingDir: string,
+): string {
+  const parentChannelId = meta.parentChannelId ?? meta.rootChannelId;
+  const parentChannel = repository.getChannel(parentChannelId);
+  return parentChannel?.workingDir ?? fallbackWorkingDir;
+}
+
+type DiscordClientChannelFetcher = {
+  channels: {
+    fetch: (id: string) => Promise<unknown>;
+  };
+};
+
+async function resolveThreadLifecycleNotificationChannel(input: {
+  thread: { parent?: unknown } | null;
+  parentId: string | null;
+  client: DiscordClientChannelFetcher | null;
+}): Promise<SendableChannel | null> {
+  if (input.thread?.parent && canSendMessage(input.thread.parent)) {
+    return input.thread.parent;
+  }
+
+  if (!input.parentId || !input.client) {
+    return null;
+  }
+
+  try {
+    const parent = await input.client.channels.fetch(input.parentId);
+    return canSendMessage(parent) ? parent : null;
+  } catch {
+    return null;
   }
 }
 
@@ -627,6 +687,66 @@ export async function startApp(config: AppConfig): Promise<void> {
           console.log("Gateway resume completed.");
         }
       },
+      onThreadLifecycle: async (event) => {
+        if (shuttingDown) {
+          return;
+        }
+        const meta = parseThreadBranchMeta(repository.getThreadBranchMeta(event.threadId));
+        if (!meta) {
+          return;
+        }
+
+        if (event.type === "unarchived") {
+          const { archivedAt: _archivedAt, deletedAt: _deletedAt, ...rest } = meta;
+          saveThreadBranchMeta(repository, {
+            ...rest,
+            lifecycleState: "active",
+            cleanupState: meta.cleanupState === "pending" ? "none" : (meta.cleanupState ?? "none"),
+          });
+          return;
+        }
+
+        const lifecycleState = event.type === "archived" ? "archived" : "deleted";
+        const updatedMeta = {
+          ...meta,
+          lifecycleState,
+          ...(event.type === "archived" ? { archivedAt: Date.now() } : { deletedAt: Date.now() }),
+          cleanupState: meta.cleanupState ?? "none",
+        } as const;
+
+        const shouldPromptCleanup =
+          Boolean(updatedMeta.worktreePath) && updatedMeta.cleanupState === "none";
+        if (!shouldPromptCleanup) {
+          saveThreadBranchMeta(repository, updatedMeta);
+          return;
+        }
+
+        saveThreadBranchMeta(repository, {
+          ...updatedMeta,
+          cleanupState: "pending",
+        });
+
+        const target = await resolveThreadLifecycleNotificationChannel({
+          thread: event.thread,
+          parentId: event.parentId,
+          client: discordClient,
+        });
+        if (!target) {
+          return;
+        }
+
+        try {
+          const statusVerb = event.type === "archived" ? "archived" : "deleted";
+          await target.send({
+            content:
+              `Thread \`${event.threadName}\` was ${statusVerb}.\n` +
+              `Worktree \`${updatedMeta.worktreePath}\` still exists. Keep it or remove it now?`,
+            components: buildThreadCleanupButtons(event.threadId),
+          });
+        } catch {
+          // Ignore lifecycle prompt failures when channel permissions/cache are limited.
+        }
+      },
       onButtonInteraction: async (interaction) => {
         if (shuttingDown) {
           await interaction.reply({
@@ -706,13 +826,12 @@ export async function startApp(config: AppConfig): Promise<void> {
 
           if (threadWorktreeChoice.action === "keep") {
             const { worktreePath: _worktreePath, ...rest } = meta;
-            repository.setThreadBranchMeta(
-              channelId,
-              JSON.stringify({
-                ...rest,
-                worktreeMode: "inherited",
-              }),
-            );
+            saveThreadBranchMeta(repository, {
+              ...rest,
+              worktreeMode: "inherited",
+              lifecycleState: meta.lifecycleState ?? "active",
+              cleanupState: "none",
+            });
             await interaction.update({
               content: `Thread will keep parent project \`${state.channel.workingDir}\`.`,
               components: [],
@@ -742,19 +861,108 @@ export async function startApp(config: AppConfig): Promise<void> {
 
           sessions.switchProject(channelId, guildId, worktreePath);
           sessions.setSessionId(channelId, null);
-          repository.setThreadBranchMeta(
-            channelId,
-            JSON.stringify({
-              ...meta,
-              worktreePath,
-              worktreeMode: "worktree",
-            }),
-          );
+          saveThreadBranchMeta(repository, {
+            ...meta,
+            worktreePath,
+            worktreeMode: "worktree",
+            lifecycleState: meta.lifecycleState ?? "active",
+            cleanupState: "none",
+          });
           await interaction.update({
             content: `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,
             components: [],
           });
           void syncChannelTopic(interaction.channel, worktreePath);
+          return;
+        }
+
+        const threadCleanup = parseThreadCleanupCustomId(interaction.customId);
+        if (threadCleanup) {
+          const channelId = threadCleanup.channelId;
+          const meta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
+          if (!meta) {
+            await interaction.reply({
+              content: "Thread cleanup request expired.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const worktreePath = meta.worktreePath;
+          if (!worktreePath) {
+            saveThreadBranchMeta(repository, {
+              ...meta,
+              cleanupState: "removed",
+            });
+            await interaction.update({
+              content: `No dedicated worktree remains for thread \`${meta.name}\`.`,
+              components: [],
+            });
+            return;
+          }
+
+          if (threadCleanup.action === "keep") {
+            saveThreadBranchMeta(repository, {
+              ...meta,
+              cleanupState: "kept",
+            });
+            await interaction.update({
+              content: `Keeping worktree \`${worktreePath}\` for thread \`${meta.name}\`.`,
+              components: [],
+            });
+            return;
+          }
+
+          if (!existsSync(worktreePath)) {
+            const { worktreePath: _removedPath, ...rest } = meta;
+            saveThreadBranchMeta(repository, {
+              ...rest,
+              worktreeMode: "inherited",
+              cleanupState: "removed",
+            });
+            await interaction.update({
+              content: `Worktree already removed: \`${worktreePath}\`.`,
+              components: [],
+            });
+            return;
+          }
+
+          const fallbackWorkingDir = path.dirname(worktreePath);
+          const parentWorkingDir = resolveThreadParentWorkingDir(
+            repository,
+            meta,
+            fallbackWorkingDir,
+          );
+          const removeResult = await runCommand(
+            ["git", "worktree", "remove", worktreePath],
+            parentWorkingDir,
+          );
+          if (removeResult.exitCode !== 0) {
+            await interaction.update({
+              content:
+                `Failed to remove worktree \`${worktreePath}\`.\n` +
+                `\`\`\`bash\n${removeResult.output || "(no output)"}\n\`\`\``,
+              components: buildThreadCleanupButtons(channelId),
+            });
+            return;
+          }
+
+          const pruneResult = await runCommand(["git", "worktree", "prune"], parentWorkingDir);
+          const { worktreePath: _removedPath, ...rest } = meta;
+          saveThreadBranchMeta(repository, {
+            ...rest,
+            worktreeMode: "inherited",
+            cleanupState: "removed",
+          });
+
+          const pruneSummary =
+            pruneResult.exitCode === 0
+              ? "git worktree prune complete."
+              : `git worktree prune exit=${pruneResult.exitCode}: ${pruneResult.output || "(no output)"}`;
+          await interaction.update({
+            content: `Removed thread worktree \`${worktreePath}\`.\n` + `${pruneSummary}`,
+            components: [],
+          });
           return;
         }
 
@@ -1050,14 +1258,13 @@ export async function startApp(config: AppConfig): Promise<void> {
 
               sessions.switchProject(channelId, guildId, worktreePath);
               sessions.setSessionId(channelId, null);
-              repository.setThreadBranchMeta(
-                channelId,
-                JSON.stringify({
-                  ...meta,
-                  worktreePath,
-                  worktreeMode: "worktree",
-                }),
-              );
+              saveThreadBranchMeta(repository, {
+                ...meta,
+                worktreePath,
+                worktreeMode: "worktree",
+                lifecycleState: meta.lifecycleState ?? "active",
+                cleanupState: "none",
+              });
               void syncChannelTopic(interaction.channel, worktreePath);
               await interaction.editReply(
                 `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,

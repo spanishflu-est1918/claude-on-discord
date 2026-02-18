@@ -3,9 +3,11 @@ import { ButtonStyle } from "discord.js";
 import {
   buildProjectSwitchButtons,
   buildStopButtons,
+  buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
+  parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
 } from "../src/discord/buttons";
 
@@ -75,6 +77,8 @@ describe("discord buttons", () => {
     expect(parseProjectSwitchCustomId("project:fresh:")).toBeNull();
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:keep:")).toBeNull();
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:")).toBeNull();
+    expect(parseThreadCleanupCustomId("thread:cleanup:keep:")).toBeNull();
+    expect(parseThreadCleanupCustomId("thread:cleanup:remove:")).toBeNull();
   });
 
   test("builds and parses thread worktree choice buttons", () => {
@@ -103,6 +107,35 @@ describe("discord buttons", () => {
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:thread-1")).toEqual({
       action: "create",
       channelId: "thread-1",
+    });
+  });
+
+  test("builds and parses thread cleanup buttons", () => {
+    const rows = buildThreadCleanupButtons("thread-2");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(2);
+
+    const keep = components[0]?.toJSON();
+    const remove = components[1]?.toJSON();
+    const keepId = keep && "custom_id" in keep ? keep.custom_id : undefined;
+    const removeId = remove && "custom_id" in remove ? remove.custom_id : undefined;
+    const keepStyle = keep && "style" in keep ? keep.style : undefined;
+    const removeStyle = remove && "style" in remove ? remove.style : undefined;
+
+    expect(keepId).toBe("thread:cleanup:keep:thread-2");
+    expect(removeId).toBe("thread:cleanup:remove:thread-2");
+    expect(keepStyle).toBe(ButtonStyle.Secondary);
+    expect(removeStyle).toBe(ButtonStyle.Primary);
+
+    expect(parseThreadCleanupCustomId("thread:cleanup:keep:thread-2")).toEqual({
+      action: "keep",
+      channelId: "thread-2",
+    });
+    expect(parseThreadCleanupCustomId("thread:cleanup:remove:thread-2")).toEqual({
+      action: "remove",
+      channelId: "thread-2",
     });
   });
 });

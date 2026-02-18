@@ -41,6 +41,25 @@ describe("thread branch metadata helpers", () => {
     expect(parseThreadBranchMeta(null)).toBeNull();
   });
 
+  test("parseThreadBranchMeta accepts lifecycle and cleanup fields", () => {
+    const parsed = parseThreadBranchMeta(
+      JSON.stringify({
+        channelId: "c1",
+        guildId: "g1",
+        rootChannelId: "root",
+        parentChannelId: "p1",
+        name: "feature-a",
+        createdAt: 10,
+        lifecycleState: "archived",
+        cleanupState: "pending",
+        archivedAt: 20,
+      }),
+    );
+    expect(parsed?.lifecycleState).toBe("archived");
+    expect(parsed?.cleanupState).toBe("pending");
+    expect(parsed?.archivedAt).toBe(20);
+  });
+
   test("buildThreadBranchAwarenessPrompt includes related thread lineage for a thread channel", () => {
     const entries = [
       {
@@ -125,7 +144,8 @@ describe("thread branch metadata helpers", () => {
     expect(lines[0]).toContain("Thread branch:");
     expect(lines[1]).toContain("Thread root:");
     expect(lines[2]).toContain("Thread parent:");
-    expect(lines[3]).toContain("Thread worktree: inherited");
+    expect(lines.some((line) => line.includes("Thread lifecycle: `active`"))).toBeTrue();
+    expect(lines.some((line) => line.includes("Thread worktree: inherited"))).toBeTrue();
   });
 
   test("buildThreadBranchStatusLines surfaces pending thread worktree choice", () => {
@@ -149,7 +169,7 @@ describe("thread branch metadata helpers", () => {
       entries,
     });
 
-    expect(lines[3]).toContain("pending choice");
+    expect(lines.some((line) => line.includes("pending choice"))).toBeTrue();
   });
 
   test("buildThreadBranchStatusLines returns root summary when current channel is root", () => {

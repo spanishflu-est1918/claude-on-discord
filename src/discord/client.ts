@@ -1,4 +1,5 @@
 import {
+  type AnyThreadChannel,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   Client,
@@ -16,6 +17,15 @@ export interface DiscordClientOptions {
   onGatewayDisconnect?: (code: number) => void;
   onGatewayReconnecting?: () => void;
   onGatewayResume?: (replayedEvents: number) => void;
+  onThreadLifecycle?: (event: ThreadLifecycleEvent) => Promise<void>;
+}
+
+export interface ThreadLifecycleEvent {
+  type: "archived" | "unarchived" | "deleted";
+  threadId: string;
+  parentId: string | null;
+  threadName: string;
+  thread: AnyThreadChannel;
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -100,6 +110,40 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
           await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
         }
       }
+    }
+  });
+
+  client.on("threadUpdate", async (oldThread, newThread) => {
+    const didArchive = !oldThread.archived && newThread.archived;
+    const didUnarchive = oldThread.archived && !newThread.archived;
+    if (!didArchive && !didUnarchive) {
+      return;
+    }
+    const type = didArchive ? "archived" : "unarchived";
+    try {
+      await options.onThreadLifecycle?.({
+        type,
+        threadId: newThread.id,
+        parentId: newThread.parentId,
+        threadName: newThread.name,
+        thread: newThread,
+      });
+    } catch (error) {
+      console.error("thread lifecycle handler failed", error);
+    }
+  });
+
+  client.on("threadDelete", async (thread) => {
+    try {
+      await options.onThreadLifecycle?.({
+        type: "deleted",
+        threadId: thread.id,
+        parentId: thread.parentId,
+        threadName: thread.name,
+        thread,
+      });
+    } catch (error) {
+      console.error("thread lifecycle handler failed", error);
     }
   });
 
