@@ -331,6 +331,56 @@ function clipOutput(text: string, maxChars = 8000): string {
   return `${text.slice(0, maxChars)}\n... [truncated ${hiddenChars} chars]`;
 }
 
+function chunkDiffText(text: string): string[] {
+  return chunkDiscordText(text, { maxChars: 1900, maxLines: 400 });
+}
+
+async function postDiffInLockedThread(
+  originMessage: Message,
+  chunks: string[],
+): Promise<string | null> {
+  if (chunks.length === 0) {
+    return null;
+  }
+
+  const startThread = (
+    originMessage as unknown as { startThread?: (options: unknown) => Promise<unknown> }
+  ).startThread;
+  if (typeof startThread !== "function") {
+    return null;
+  }
+
+  try {
+    const thread = (await startThread.call(originMessage, {
+      name: `diff-${Date.now().toString(36)}`,
+      autoArchiveDuration: 60,
+      reason: "Large diff output",
+    })) as {
+      send?: (options: unknown) => Promise<unknown>;
+      setLocked?: (locked?: boolean, reason?: string) => Promise<unknown>;
+      url?: string;
+    };
+
+    if (typeof thread.send !== "function") {
+      return null;
+    }
+
+    for (const chunk of chunks) {
+      if (chunk) {
+        await thread.send(chunk);
+      }
+    }
+
+    if (typeof thread.setLocked === "function") {
+      await thread.setLocked(true, "Read-only diff output");
+    }
+
+    return typeof thread.url === "string" ? thread.url : null;
+  } catch {
+    return null;
+  }
+}
+
 type DiffMode = "working-tree" | "thread-branch";
 type DiffDetailAction = "files" | "stat" | "patch";
 
@@ -1469,7 +1519,7 @@ export async function startApp(config: AppConfig): Promise<void> {
             });
             rememberDiffView(diffView.requestId, refreshedContext);
             const patchDetail = await buildDiffDetail(refreshedContext, "patch");
-            const chunks = chunkDiscordText(patchDetail);
+            const chunks = chunkDiffText(patchDetail);
             await interaction.update({
               content: chunks[0] ?? "(no diff output)",
               components: buildDiffViewButtons(diffView.requestId),
@@ -1485,7 +1535,7 @@ export async function startApp(config: AppConfig): Promise<void> {
 
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const detail = await buildDiffDetail(context, diffView.action);
-          const chunks = chunkDiscordText(detail);
+          const chunks = chunkDiffText(detail);
           await interaction.editReply(chunks[0] ?? "(no diff output)");
           for (let i = 1; i < chunks.length; i++) {
             const chunk = chunks[i];
@@ -1688,15 +1738,26 @@ export async function startApp(config: AppConfig): Promise<void> {
               payload = `${patchDetail}\n\n${summary}`;
             }
 
-            const chunks = chunkDiscordText(payload);
-            await interaction.editReply({
+            const chunks = chunkDiffText(payload);
+            const initialReply = await interaction.editReply({
               content: chunks[0] ?? "(no diff output)",
               components: buildDiffViewButtons(requestId),
             });
-            for (let i = 1; i < chunks.length; i++) {
-              const chunk = chunks[i];
-              if (chunk) {
-                await interaction.followUp(chunk);
+
+            if (chunks.length > 1) {
+              const threadUrl = await postDiffInLockedThread(initialReply as Message, chunks);
+              if (threadUrl) {
+                await interaction.editReply({
+                  content: `Diff posted in locked thread: ${threadUrl}`,
+                  components: buildDiffViewButtons(requestId),
+                });
+              } else {
+                for (let i = 1; i < chunks.length; i++) {
+                  const chunk = chunks[i];
+                  if (chunk) {
+                    await interaction.followUp(chunk);
+                  }
+                }
               }
             }
             break;
