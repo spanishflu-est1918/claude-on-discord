@@ -4,6 +4,7 @@ const INTERRUPT_PREFIX = "run:interrupt:";
 const ABORT_PREFIX = "run:abort:";
 const TOOLS_DETAILS_PREFIX = "run:tools:";
 const TOOLS_REFRESH_PREFIX = "run:tools:refresh:";
+const TOOL_VIEW_PREFIX = "run:toolview:";
 const QUEUE_DISMISS_PREFIX = "queue:dismiss:";
 const PROJECT_KEEP_PREFIX = "project:keep:";
 const PROJECT_FRESH_PREFIX = "project:fresh:";
@@ -19,6 +20,7 @@ const DIFF_PATCH_PREFIX = "diff:patch:";
 export type RunControlAction = "interrupt" | "abort";
 export type ToolInspectAction = "details";
 export type ToolPanelAction = "refresh";
+export type ToolViewAction = "expand" | "collapse";
 export type QueueNoticeAction = "dismiss";
 export type ProjectSwitchAction = "keep" | "fresh";
 export type ThreadWorktreeAction = "keep" | "create";
@@ -176,6 +178,40 @@ export function parseToolPanelCustomId(
     return null;
   }
   return { action: "refresh", channelId, userId };
+}
+
+export function buildToolViewButtons(
+  channelId: string,
+  toolId: string,
+  expanded: boolean,
+): ActionRowBuilder<ButtonBuilder>[] {
+  const nextAction: ToolViewAction = expanded ? "collapse" : "expand";
+  const label = expanded ? "Collapse" : "Expand";
+  const emoji = expanded ? "🔽" : "▶️";
+  const button = new ButtonBuilder()
+    .setCustomId(`${TOOL_VIEW_PREFIX}${nextAction}:${channelId}:${toolId}`)
+    .setLabel(label)
+    .setStyle(ButtonStyle.Secondary)
+    .setEmoji(emoji);
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(button)];
+}
+
+export function parseToolViewCustomId(
+  customId: string,
+): { action: ToolViewAction; channelId: string; toolId: string } | null {
+  if (!customId.startsWith(TOOL_VIEW_PREFIX)) {
+    return null;
+  }
+  const suffix = customId.slice(TOOL_VIEW_PREFIX.length);
+  const [actionText, channelId, ...toolParts] = suffix.split(":");
+  const toolId = toolParts.join(":");
+  if (!channelId || !toolId) {
+    return null;
+  }
+  if (actionText !== "expand" && actionText !== "collapse") {
+    return null;
+  }
+  return { action: actionText, channelId, toolId };
 }
 
 export function parseProjectSwitchCustomId(

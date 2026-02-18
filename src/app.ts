@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AttachmentBuilder, type Message, MessageFlags } from "discord.js";
+import { AttachmentBuilder, EmbedBuilder, type Message, MessageFlags } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -17,6 +17,7 @@ import {
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   buildToolPanelButtons,
+  buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseQueueDismissCustomId,
@@ -25,6 +26,7 @@ import {
   parseThreadWorktreeChoiceCustomId,
   parseToolInspectCustomId,
   parseToolPanelCustomId,
+  parseToolViewCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
@@ -71,6 +73,19 @@ function getMessagePrompt(message: Message): string {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function buildStoredUserTurnContent(message: Message): string {
+  const base = getMessagePrompt(message);
+  if (message.attachments.size === 0) {
+    return base;
+  }
+  const names = [...message.attachments.values()].map((attachment, index) =>
+    sanitizeFilename(attachment.name ?? `attachment-${index + 1}.bin`),
+  );
+  const listed = names.slice(0, 8).join(", ");
+  const overflow = names.length > 8 ? ` (+${names.length - 8} more)` : "";
+  return `${base}\n\nAttachments: ${listed}${overflow}`;
 }
 
 async function stageAttachments(message: Message): Promise<{
@@ -869,6 +884,13 @@ async function maybeInheritThreadContext(input: {
   autoThreadWorktree: boolean;
   worktreeBootstrap: boolean;
   worktreeBootstrapCommand?: string;
+  bootstrapThreadSession?: (input: {
+    channelId: string;
+    workingDir: string;
+    model: string;
+    systemPrompt?: string;
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+  }) => Promise<string | null>;
 }): Promise<void> {
   const existing = input.repository.getChannel(input.channelId);
   if (existing) {
@@ -900,6 +922,33 @@ async function maybeInheritThreadContext(input: {
   }
   const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(parentChannelId));
   const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
+  const maybeBootstrapThreadSession = async (): Promise<void> => {
+    if (!input.bootstrapThreadSession) {
+      return;
+    }
+    const state = input.sessions.getState(input.channelId, input.guildId);
+    if (state.channel.sessionId) {
+      return;
+    }
+    try {
+      const sessionId = await input.bootstrapThreadSession({
+        channelId: input.channelId,
+        workingDir: state.channel.workingDir,
+        model: state.channel.model,
+        ...(parentPrompt ? { systemPrompt: parentPrompt } : {}),
+        history: state.history.map((entry) => ({
+          role: entry.role,
+          content: entry.content,
+        })),
+      });
+      if (sessionId) {
+        input.sessions.setSessionId(input.channelId, sessionId);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`Thread session bootstrap failed for ${input.channelId}: ${detail}`);
+    }
+  };
 
   if (input.autoThreadWorktree) {
     const provisioned = await maybeProvisionThreadWorktree({
@@ -937,6 +986,7 @@ async function maybeInheritThreadContext(input: {
       lifecycleState: "active",
       cleanupState: "none",
     });
+    await maybeBootstrapThreadSession();
     return;
   }
 
@@ -951,6 +1001,7 @@ async function maybeInheritThreadContext(input: {
     lifecycleState: "active",
     cleanupState: "none",
   });
+  await maybeBootstrapThreadSession();
 
   if (!canSendMessage(input.channel)) {
     return;
@@ -1383,6 +1434,8 @@ function italicizeMultiline(text: string): string {
 }
 
 const THINKING_SPINNER_FRAMES = ["-", "\\", "|", "/"] as const;
+const ACTIVE_RUN_MAX_AGE_MS = 30 * 60 * 1000;
+const ACTIVE_RUN_WATCHDOG_INTERVAL_MS = 30 * 1000;
 
 function stringifyToolInput(input: unknown): string | undefined {
   if (typeof input === "undefined") {
@@ -1714,7 +1767,43 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
   return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
 }
 
-function buildSingleLiveToolMessage(entry: LiveToolEntry): string {
+type LiveToolRenderPayload = {
+  content: string;
+  embeds: [EmbedBuilder];
+  components: ReturnType<typeof buildToolViewButtons>;
+};
+
+function toolStatusLabel(status: LiveToolStatus): string {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Running";
+    case "done":
+      return "Done";
+    case "failed":
+      return "Failed";
+    case "interrupted":
+      return "Interrupted";
+  }
+}
+
+function toolStatusColor(status: LiveToolStatus): number {
+  switch (status) {
+    case "queued":
+      return 0x5865f2;
+    case "running":
+      return 0xfee75c;
+    case "done":
+      return 0x57f287;
+    case "failed":
+      return 0xed4245;
+    case "interrupted":
+      return 0xeb459e;
+  }
+}
+
+function buildSingleLiveToolMessageContent(entry: LiveToolEntry): string {
   const elapsed = formatElapsedSeconds(entry);
   const header = [`${toolStatusIcon(entry.status)} ${entry.name}`, elapsed ? `(${elapsed})` : ""]
     .filter(Boolean)
@@ -1724,6 +1813,46 @@ function buildSingleLiveToolMessage(entry: LiveToolEntry): string {
     return header;
   }
   return [header, "```bash", clipText(detail, 1800), "```"].join("\n");
+}
+
+function buildSingleLiveToolMessage(
+  entry: LiveToolEntry,
+  input: { channelId: string; expanded: boolean },
+): LiveToolRenderPayload {
+  const elapsed = formatElapsedSeconds(entry) ?? "n/a";
+  const embed = new EmbedBuilder()
+    .setColor(toolStatusColor(entry.status))
+    .setTitle(`${toolStatusIcon(entry.status)} ${entry.name}`)
+    .setFooter({ text: "Claude tool stream" })
+    .setTimestamp(new Date(entry.updatedAtMs))
+    .addFields(
+      { name: "Status", value: toolStatusLabel(entry.status), inline: true },
+      { name: "Elapsed", value: elapsed, inline: true },
+      { name: "Tool ID", value: `\`${entry.id}\``, inline: false },
+    );
+
+  if (input.expanded && entry.summary) {
+    embed.addFields({
+      name: "Summary",
+      value: clipText(entry.summary, 900),
+      inline: false,
+    });
+  }
+  if (input.expanded && entry.inputPreview) {
+    embed.addFields({
+      name: "Input",
+      value: `\`\`\`json\n${clipText(entry.inputPreview, 850)}\n\`\`\``,
+      inline: false,
+    });
+  }
+
+  return {
+    content: input.expanded
+      ? buildSingleLiveToolMessageContent(entry)
+      : `${toolStatusIcon(entry.status)} ${entry.name}${elapsed !== "n/a" ? ` (${elapsed})` : ""}`,
+    embeds: [embed],
+    components: buildToolViewButtons(input.channelId, entry.id, input.expanded),
+  };
 }
 
 function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
@@ -1826,9 +1955,42 @@ export async function startApp(
   const sessions = new SessionManager(repository, {
     defaultWorkingDir: config.defaultWorkingDir,
     defaultModel: config.defaultModel,
+    maxHistoryItems: config.sessionHistoryMaxItems,
+    maxTurnChars: config.sessionTurnMaxChars,
   });
+  const activeRunMaxAgeMs = config.activeRunMaxAgeMs ?? ACTIVE_RUN_MAX_AGE_MS;
+  const activeRunWatchdogIntervalMs =
+    config.activeRunWatchdogIntervalMs ?? ACTIVE_RUN_WATCHDOG_INTERVAL_MS;
   const stopController = new StopController();
   const runner = runtimeOverrides.createRunner?.() ?? new ClaudeRunner();
+  const bootstrapThreadSession = async (input: {
+    channelId: string;
+    workingDir: string;
+    model: string;
+    systemPrompt?: string;
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+  }): Promise<string | null> => {
+    const bootstrapPrompt = buildSeededPrompt(
+      [
+        "Initialize a new independent thread session from the provided conversation context.",
+        "Do not call any tools.",
+        "Reply with exactly: SESSION_READY",
+      ].join("\n"),
+      input.history,
+      false,
+    );
+
+    const result = await runner.run({
+      channelId: input.channelId,
+      prompt: bootstrapPrompt,
+      cwd: input.workingDir,
+      model: input.model,
+      ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
+      permissionMode: config.claudePermissionMode,
+    });
+
+    return result.sessionId ?? null;
+  };
   const pendingProjectSwitches = new Map<
     string,
     { channelId: string; guildId: string; workingDir: string }
@@ -1836,6 +1998,7 @@ export async function startApp(
   const pendingDiffViews = new Map<string, DiffContext>();
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
+  const liveToolExpandStateByChannel = new Map<string, Map<string, boolean>>();
   const discordDispatchStats = {
     rateLimitHits: 0,
     lastRateLimitAtMs: 0,
@@ -1857,6 +2020,21 @@ export async function startApp(
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
+  let staleRunWatchdog: ReturnType<typeof setInterval> | null = null;
+
+  const getToolExpanded = (channelId: string, toolId: string): boolean => {
+    const channelState = liveToolExpandStateByChannel.get(channelId);
+    if (!channelState) {
+      return true;
+    }
+    return channelState.get(toolId) ?? true;
+  };
+
+  const setToolExpanded = (channelId: string, toolId: string, expanded: boolean): void => {
+    const channelState = liveToolExpandStateByChannel.get(channelId) ?? new Map<string, boolean>();
+    channelState.set(toolId, expanded);
+    liveToolExpandStateByChannel.set(channelId, channelState);
+  };
 
   const rememberDiffView = (requestId: string, context: DiffContext) => {
     pendingDiffViews.set(requestId, context);
@@ -1881,6 +2059,26 @@ export async function startApp(
     console.warn(`Cleared ${aborted.length} active run(s) due to ${reason}.`);
   };
 
+  const startStaleRunWatchdog = () => {
+    if (staleRunWatchdog) {
+      return;
+    }
+    staleRunWatchdog = setInterval(() => {
+      if (shuttingDown) {
+        return;
+      }
+      const staleChannelIds = stopController.abortOlderThan(activeRunMaxAgeMs);
+      if (staleChannelIds.length === 0) {
+        return;
+      }
+      for (const staleChannelId of staleChannelIds) {
+        sessions.setSessionId(staleChannelId, null);
+      }
+      console.warn(`Reaped ${staleChannelIds.length} stale active run(s).`);
+    }, activeRunWatchdogIntervalMs);
+    staleRunWatchdog.unref?.();
+  };
+
   const shutdown = async (reason: string): Promise<void> => {
     if (shutdownPromise) {
       return shutdownPromise;
@@ -1890,9 +2088,15 @@ export async function startApp(
       console.log(`Shutting down (${reason})...`);
       pendingProjectSwitches.clear();
       pendingDiffViews.clear();
+      liveToolTracesByChannel.clear();
+      liveToolExpandStateByChannel.clear();
       clearActiveRunsWithSessionReset(`shutdown:${reason}`);
       if ("closeAll" in runner && typeof runner.closeAll === "function") {
         runner.closeAll();
+      }
+      if (staleRunWatchdog) {
+        clearInterval(staleRunWatchdog);
+        staleRunWatchdog = null;
       }
 
       if (discordClient) {
@@ -2329,6 +2533,35 @@ export async function startApp(
           return;
         }
 
+        const toolView = parseToolViewCustomId(interaction.customId);
+        if (toolView) {
+          if (interaction.channelId !== toolView.channelId) {
+            await interaction.reply({
+              content: "This tool message belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          const trace = liveToolTracesByChannel.get(toolView.channelId);
+          const entry = trace?.byId.get(toolView.toolId);
+          if (!entry) {
+            await interaction.reply({
+              content: "Tool state expired for this message.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          const expanded = toolView.action === "expand";
+          setToolExpanded(toolView.channelId, toolView.toolId, expanded);
+          await interaction.update(
+            buildSingleLiveToolMessage(entry, {
+              channelId: toolView.channelId,
+              expanded,
+            }),
+          );
+          return;
+        }
+
         const toolInspect = parseToolInspectCustomId(interaction.customId);
         if (toolInspect) {
           if (interaction.channelId !== toolInspect.channelId) {
@@ -2473,7 +2706,29 @@ export async function startApp(
               name: title,
               reason: "Fork created via /fork",
             });
+            const threadChannel = isThreadBootstrapChannel(thread)
+              ? thread
+              : {
+                  id: thread.id,
+                  parentId: channelId,
+                  name: title,
+                  isThread: () => true,
+                };
             await interaction.reply(`Forked into thread <#${thread.id}> (\`${title}\`).`);
+            void maybeInheritThreadContext({
+              channel: threadChannel,
+              channelId: thread.id,
+              guildId,
+              sessions,
+              repository,
+              autoThreadWorktree: config.autoThreadWorktree,
+              worktreeBootstrap: config.worktreeBootstrap,
+              worktreeBootstrapCommand: config.worktreeBootstrapCommand,
+              ...(isThreadBootstrapChannel(thread) ? { bootstrapThreadSession } : {}),
+            }).catch((error) => {
+              const detail = error instanceof Error ? error.message : String(error);
+              console.warn(`Fork thread bootstrap failed for ${thread.id}: ${detail}`);
+            });
             break;
           }
           case "compact": {
@@ -2513,7 +2768,7 @@ export async function startApp(
               `Mentions: mode=\`${mentionPolicy.mode}\`, effective=\`${mentionPolicy.requireMention ? "required" : "off"}\``,
               `Discord dispatcher: rate_limits=\`${discordDispatchStats.rateLimitHits}\`, last=\`${lastDispatchRateLimit}\`, lane=\`${discordDispatchStats.lastRateLimitLane || "n/a"}\``,
               ...threadStatusLines,
-              `In-memory turns: \`${turns}\``,
+              `Stored turns: \`${turns}\``,
               `Total channel cost: \`$${totalCost.toFixed(4)}\``,
             ];
             await interaction.reply(lines.join("\n"));
@@ -3368,6 +3623,7 @@ export async function startApp(
               autoThreadWorktree: config.autoThreadWorktree,
               worktreeBootstrap: config.worktreeBootstrap,
               worktreeBootstrapCommand: config.worktreeBootstrapCommand,
+              bootstrapThreadSession,
             });
             const state = sessions.getState(channelId, guildId);
             const directBash = parseDirectBashCommand(message.content);
@@ -3401,6 +3657,7 @@ export async function startApp(
             });
             const runToolTrace = createLiveToolTrace();
             liveToolTracesByChannel.set(channelId, runToolTrace);
+            liveToolExpandStateByChannel.set(channelId, new Map());
 
             await addReaction(message, "🧠");
             const status = await discordDispatch.enqueue(`channel:${channelId}`, async () => {
@@ -3415,6 +3672,9 @@ export async function startApp(
               state.history,
               Boolean(state.channel.sessionId),
             );
+            const resumeFallbackPrompt = state.channel.sessionId
+              ? buildSeededPrompt(prompt, state.history, false)
+              : undefined;
             const abortController = new AbortController();
             const persistedFilenames = new Set<string>();
             let streamedText = "";
@@ -3429,7 +3689,7 @@ export async function startApp(
             let pendingStatusEdit: { content: string; includeButtons: boolean } | null = null;
             const toolSendTarget = canSendMessage(message.channel) ? message.channel : null;
             const toolMessagesById = new Map<string, EditableSentMessage>();
-            const pendingToolMessageContent = new Map<string, string>();
+            const pendingToolMessageContent = new Map<string, LiveToolRenderPayload>();
             const toolMessageEditInFlight = new Set<string>();
 
             const queueStatusEdit = (content: string, includeButtons: boolean): Promise<void> => {
@@ -3533,7 +3793,13 @@ export async function startApp(
               if (!entry || !toolSendTarget) {
                 return;
               }
-              pendingToolMessageContent.set(toolId, buildSingleLiveToolMessage(entry));
+              pendingToolMessageContent.set(
+                toolId,
+                buildSingleLiveToolMessage(entry, {
+                  channelId,
+                  expanded: getToolExpanded(channelId, toolId),
+                }),
+              );
               if (toolMessageEditInFlight.has(toolId)) {
                 return;
               }
@@ -3549,12 +3815,12 @@ export async function startApp(
                     const existing = toolMessagesById.get(toolId);
                     if (existing) {
                       await discordDispatch.enqueue(`tool:${channelId}:${toolId}`, async () => {
-                        await existing.edit({ content: nextContent });
+                        await existing.edit(nextContent);
                       });
                     } else {
                       const sent = await discordDispatch.enqueue(
                         `tool:${channelId}:${toolId}`,
-                        async () => await toolSendTarget.send({ content: nextContent }),
+                        async () => await toolSendTarget.send(nextContent),
                       );
                       if (canEditSentMessage(sent)) {
                         toolMessagesById.set(toolId, sent);
@@ -3571,12 +3837,13 @@ export async function startApp(
             try {
               sessions.appendTurn(channelId, {
                 role: "user",
-                content: prompt,
+                content: buildStoredUserTurnContent(message),
               });
 
               const result = await runner.run({
                 channelId,
                 prompt: seededPrompt,
+                ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
                 cwd: state.channel.workingDir,
                 sessionId: state.channel.sessionId ?? undefined,
                 model: state.channel.model,
@@ -3726,6 +3993,7 @@ export async function startApp(
         }
       },
     });
+    startStaleRunWatchdog();
   } catch (error) {
     await shutdown("startup error");
     throw error;

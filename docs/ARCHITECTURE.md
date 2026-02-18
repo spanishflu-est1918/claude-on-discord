@@ -9,8 +9,8 @@
   - `working_dir`
   - `model`
   - `session_id`
-  - in-memory history ring buffer
-- SQLite persists channel/session metadata and spend tracking.
+  - persisted conversation turns (bounded retention)
+- SQLite persists channel/session metadata, conversation history, and spend tracking.
 
 ## Core Components
 

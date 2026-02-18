@@ -5,7 +5,7 @@ import { Repository } from "../src/db/repository";
 
 const databases: Database[] = [];
 
-function createSessionManager(maxHistoryItems = 40): SessionManager {
+function createSessionManager(maxHistoryItems = 40, maxTurnChars?: number): SessionManager {
   const database = new Database(":memory:", { strict: true });
   databases.push(database);
   const repository = new Repository(database);
@@ -13,6 +13,7 @@ function createSessionManager(maxHistoryItems = 40): SessionManager {
     defaultWorkingDir: "/Users/gorkolas/www",
     defaultModel: "sonnet",
     maxHistoryItems,
+    ...(typeof maxTurnChars === "number" ? { maxTurnChars } : {}),
   });
 }
 
@@ -134,5 +135,39 @@ describe("SessionManager", () => {
 
     expect(state.channel.workingDir).toBe("/tmp/new-project");
     expect(state.history).toEqual([]);
+  });
+
+  test("loads persisted history across manager instances", () => {
+    const database = new Database(":memory:", { strict: true });
+    databases.push(database);
+    const repository = new Repository(database);
+    const first = new SessionManager(repository, {
+      defaultWorkingDir: "/Users/gorkolas/www",
+      defaultModel: "sonnet",
+      maxHistoryItems: 40,
+    });
+
+    first.getState("channel-1", "guild-1");
+    first.appendTurn("channel-1", { role: "user", content: "persisted" });
+
+    const second = new SessionManager(repository, {
+      defaultWorkingDir: "/Users/gorkolas/www",
+      defaultModel: "sonnet",
+      maxHistoryItems: 40,
+    });
+    const state = second.getState("channel-1", "guild-1");
+    expect(state.history.map((turn) => turn.content)).toEqual(["persisted"]);
+  });
+
+  test("clips oversized turns to configured maxTurnChars", () => {
+    const manager = createSessionManager(40, 10);
+    manager.getState("channel-1", "guild-1");
+    manager.appendTurn("channel-1", {
+      role: "user",
+      content: "0123456789ABCDE",
+    });
+    const history = manager.getHistory("channel-1");
+    expect(history).toHaveLength(1);
+    expect(history[0]?.content).toBe("0123456...");
   });
 });

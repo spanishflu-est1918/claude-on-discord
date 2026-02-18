@@ -137,4 +137,32 @@ describe("StopController", () => {
     expect(state.modelSet).toBe("opus");
     expect(state.stoppedTaskId).toBe("task-1");
   });
+
+  test("abortOlderThan reaps stale runs only", () => {
+    const controller = new StopController();
+    const staleAbort = new AbortController();
+    const freshAbort = new AbortController();
+    const staleState: QueryState = { interrupted: false };
+    const freshState: QueryState = { interrupted: false };
+
+    controller.register("stale", {
+      query: createMockQuery(staleState),
+      abortController: staleAbort,
+      startedAt: 10,
+    });
+    controller.register("fresh", {
+      query: createMockQuery(freshState),
+      abortController: freshAbort,
+      startedAt: 900,
+    });
+
+    const reaped = controller.abortOlderThan(100, 1000);
+    expect(reaped).toEqual(["stale"]);
+    expect(staleState.closed).toBe(true);
+    expect(staleAbort.signal.aborted).toBe(true);
+    expect(controller.isActive("stale")).toBe(false);
+    expect(freshState.closed).not.toBe(true);
+    expect(freshAbort.signal.aborted).toBe(false);
+    expect(controller.isActive("fresh")).toBe(true);
+  });
 });

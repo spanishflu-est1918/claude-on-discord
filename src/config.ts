@@ -15,6 +15,10 @@ const envSchema = z.object({
   REQUIRE_MENTION_IN_MULTI_USER_CHANNELS: z.string().trim().optional(),
   WORKTREE_BOOTSTRAP: z.string().trim().optional(),
   WORKTREE_BOOTSTRAP_COMMAND: z.string().trim().optional(),
+  SESSION_HISTORY_MAX_ITEMS: z.string().trim().optional(),
+  SESSION_TURN_MAX_CHARS: z.string().trim().optional(),
+  ACTIVE_RUN_MAX_AGE_MINUTES: z.string().trim().optional(),
+  ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS: z.string().trim().optional(),
   CLAUDE_PERMISSION_MODE: z
     .enum(["default", "plan", "acceptEdits", "bypassPermissions", "delegate", "dontAsk"])
     .default("bypassPermissions"),
@@ -32,6 +36,10 @@ export type AppConfig = {
   requireMentionInMultiUserChannels: boolean;
   worktreeBootstrap: boolean;
   worktreeBootstrapCommand?: string;
+  sessionHistoryMaxItems?: number;
+  sessionTurnMaxChars?: number;
+  activeRunMaxAgeMs?: number;
+  activeRunWatchdogIntervalMs?: number;
   claudePermissionMode: ClaudePermissionMode;
 };
 
@@ -53,6 +61,28 @@ function parseEnvBoolean(
   throw new Error(
     `Invalid environment configuration: ${variableName} must be one of 1/0/true/false/yes/no/on/off`,
   );
+}
+
+function parseEnvInt(
+  input: string | undefined,
+  fallback: number,
+  variableName: string,
+  options: { min?: number; max?: number } = {},
+): number {
+  if (!input || input.trim().length === 0) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(input.trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid environment configuration: ${variableName} must be an integer`);
+  }
+  if (typeof options.min === "number" && parsed < options.min) {
+    throw new Error(`Invalid environment configuration: ${variableName} must be >= ${options.min}`);
+  }
+  if (typeof options.max === "number" && parsed > options.max) {
+    throw new Error(`Invalid environment configuration: ${variableName} must be <= ${options.max}`);
+  }
+  return parsed;
 }
 
 function expandHome(inputPath: string): string {
@@ -95,6 +125,30 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   );
   const worktreeBootstrap = parseEnvBoolean(value.WORKTREE_BOOTSTRAP, true, "WORKTREE_BOOTSTRAP");
   const worktreeBootstrapCommand = value.WORKTREE_BOOTSTRAP_COMMAND?.trim() || undefined;
+  const sessionHistoryMaxItems = parseEnvInt(
+    value.SESSION_HISTORY_MAX_ITEMS,
+    40,
+    "SESSION_HISTORY_MAX_ITEMS",
+    { min: 1, max: 1000 },
+  );
+  const sessionTurnMaxChars = parseEnvInt(
+    value.SESSION_TURN_MAX_CHARS,
+    6000,
+    "SESSION_TURN_MAX_CHARS",
+    { min: 200, max: 200000 },
+  );
+  const activeRunMaxAgeMinutes = parseEnvInt(
+    value.ACTIVE_RUN_MAX_AGE_MINUTES,
+    30,
+    "ACTIVE_RUN_MAX_AGE_MINUTES",
+    { min: 1, max: 24 * 60 },
+  );
+  const activeRunWatchdogIntervalSeconds = parseEnvInt(
+    value.ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS,
+    30,
+    "ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS",
+    { min: 5, max: 3600 },
+  );
 
   return {
     discordToken: value.DISCORD_TOKEN,
@@ -108,6 +162,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     requireMentionInMultiUserChannels,
     worktreeBootstrap,
     ...(worktreeBootstrapCommand ? { worktreeBootstrapCommand } : {}),
+    sessionHistoryMaxItems,
+    sessionTurnMaxChars,
+    activeRunMaxAgeMs: activeRunMaxAgeMinutes * 60 * 1000,
+    activeRunWatchdogIntervalMs: activeRunWatchdogIntervalSeconds * 1000,
     claudePermissionMode: value.CLAUDE_PERMISSION_MODE,
   };
 }

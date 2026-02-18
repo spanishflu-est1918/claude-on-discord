@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { ChannelRecord, SessionCostInsert } from "../types";
+import type { ChannelRecord, SessionCostInsert, SessionTurn } from "../types";
 import { applySchema } from "./schema";
 
 type ChannelRow = {
@@ -16,6 +16,14 @@ type SettingRow = {
   key: string;
   value: string;
   updated_at: number;
+};
+
+type SessionTurnRow = {
+  id: number;
+  channel_id: string;
+  role: SessionTurn["role"];
+  content: string;
+  timestamp_ms: number;
 };
 
 export type UpsertChannelInput = {
@@ -53,6 +61,14 @@ function mapChannelRow(row: ChannelRow): ChannelRecord {
     model: row.model,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSessionTurnRow(row: SessionTurnRow): SessionTurn {
+  return {
+    role: row.role,
+    content: row.content,
+    timestamp: row.timestamp_ms,
   };
 }
 
@@ -184,6 +200,117 @@ export class Repository {
       )
       .get({ channel_id: channelId });
     return row?.total ?? 0;
+  }
+
+  addSessionTurn(input: {
+    channelId: string;
+    role: SessionTurn["role"];
+    content: string;
+    timestamp: number;
+  }): void {
+    this.database
+      .query(
+        `
+        INSERT INTO session_turns (channel_id, role, content, timestamp_ms)
+        VALUES ($channel_id, $role, $content, $timestamp_ms);
+        `,
+      )
+      .run({
+        channel_id: input.channelId,
+        role: input.role,
+        content: input.content,
+        timestamp_ms: input.timestamp,
+      });
+  }
+
+  listSessionTurns(channelId: string, limit?: number): SessionTurn[] {
+    if (typeof limit === "number") {
+      if (limit <= 0) {
+        return [];
+      }
+      const rows = this.database
+        .query<
+          SessionTurnRow,
+          {
+            channel_id: string;
+            limit: number;
+          }
+        >(
+          `
+          SELECT id, channel_id, role, content, timestamp_ms
+          FROM session_turns
+          WHERE channel_id = $channel_id
+          ORDER BY id DESC
+          LIMIT $limit;
+          `,
+        )
+        .all({
+          channel_id: channelId,
+          limit,
+        });
+      return rows.reverse().map(mapSessionTurnRow);
+    }
+
+    const rows = this.database
+      .query<SessionTurnRow, { channel_id: string }>(
+        `
+        SELECT id, channel_id, role, content, timestamp_ms
+        FROM session_turns
+        WHERE channel_id = $channel_id
+        ORDER BY id ASC;
+        `,
+      )
+      .all({ channel_id: channelId });
+    return rows.map(mapSessionTurnRow);
+  }
+
+  trimSessionTurns(channelId: string, keepLast: number): void {
+    if (keepLast <= 0) {
+      this.clearSessionTurns(channelId);
+      return;
+    }
+    this.database
+      .query(
+        `
+        DELETE FROM session_turns
+        WHERE channel_id = $channel_id
+          AND id NOT IN (
+            SELECT id
+            FROM session_turns
+            WHERE channel_id = $channel_id
+            ORDER BY id DESC
+            LIMIT $limit
+          );
+        `,
+      )
+      .run({
+        channel_id: channelId,
+        limit: keepLast,
+      });
+  }
+
+  clearSessionTurns(channelId: string): void {
+    this.database
+      .query(
+        `
+        DELETE FROM session_turns
+        WHERE channel_id = $channel_id;
+        `,
+      )
+      .run({ channel_id: channelId });
+  }
+
+  cloneSessionTurns(sourceChannelId: string, targetChannelId: string, maxItems: number): void {
+    this.clearSessionTurns(targetChannelId);
+    const turns = this.listSessionTurns(sourceChannelId, maxItems);
+    for (const turn of turns) {
+      this.addSessionTurn({
+        channelId: targetChannelId,
+        role: turn.role,
+        content: turn.content,
+        timestamp: turn.timestamp,
+      });
+    }
   }
 
   getSetting(key: string): string | null {

@@ -93,6 +93,29 @@ export class StopController {
     return channelIds;
   }
 
+  abortOlderThan(maxAgeMs: number, now = Date.now()): string[] {
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+      return [];
+    }
+    const staleChannelIds: string[] = [];
+    for (const [channelId, active] of this.activeRuns.entries()) {
+      if (now - active.startedAt <= maxAgeMs) {
+        continue;
+      }
+      try {
+        active.query.close();
+      } catch {
+        // Ignore close failures while reaping stale runs.
+      }
+      active.abortController.abort();
+      staleChannelIds.push(channelId);
+    }
+    for (const channelId of staleChannelIds) {
+      this.activeRuns.delete(channelId);
+    }
+    return staleChannelIds;
+  }
+
   async setModel(channelId: string, model?: string): Promise<boolean> {
     const active = this.activeRuns.get(channelId);
     if (!active) {

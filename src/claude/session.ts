@@ -1,17 +1,11 @@
 import type { Repository } from "../db/repository";
-import type { ChannelRecord } from "../types";
-import { RingBuffer } from "./ring-buffer";
-
-export interface SessionTurn {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: number;
-}
+import type { ChannelRecord, SessionTurn } from "../types";
 
 export interface SessionManagerOptions {
   defaultWorkingDir: string;
   defaultModel: string;
   maxHistoryItems?: number;
+  maxTurnChars?: number;
 }
 
 export interface ChannelSessionState {
@@ -20,14 +14,15 @@ export interface ChannelSessionState {
 }
 
 export class SessionManager {
-  private readonly historyByChannel = new Map<string, RingBuffer<SessionTurn>>();
   private readonly maxHistoryItems: number;
+  private readonly maxTurnChars: number;
 
   constructor(
     private readonly repository: Repository,
     private readonly options: SessionManagerOptions,
   ) {
     this.maxHistoryItems = options.maxHistoryItems ?? 40;
+    this.maxTurnChars = options.maxTurnChars ?? 6000;
   }
 
   ensureChannel(channelId: string, guildId: string): ChannelRecord {
@@ -48,7 +43,7 @@ export class SessionManager {
     const channel = this.ensureChannel(channelId, guildId);
     return {
       channel,
-      history: this.getHistoryBuffer(channelId).toArray(),
+      history: this.repository.listSessionTurns(channelId, this.maxHistoryItems),
     };
   }
 
@@ -65,16 +60,27 @@ export class SessionManager {
   }
 
   appendTurn(channelId: string, turn: Omit<SessionTurn, "timestamp">): SessionTurn {
+    const boundedContent =
+      turn.content.length <= this.maxTurnChars
+        ? turn.content
+        : `${turn.content.slice(0, Math.max(0, this.maxTurnChars - 3))}...`;
     const value: SessionTurn = {
       ...turn,
+      content: boundedContent,
       timestamp: Date.now(),
     };
-    this.getHistoryBuffer(channelId).push(value);
+    this.repository.addSessionTurn({
+      channelId,
+      role: value.role,
+      content: value.content,
+      timestamp: value.timestamp,
+    });
+    this.repository.trimSessionTurns(channelId, this.maxHistoryItems);
     return value;
   }
 
   getHistory(channelId: string): SessionTurn[] {
-    return this.getHistoryBuffer(channelId).toArray();
+    return this.repository.listSessionTurns(channelId, this.maxHistoryItems);
   }
 
   switchProject(
@@ -89,7 +95,7 @@ export class SessionManager {
     this.repository.setChannelWorkingDir(channelId, workingDir);
     if (opts.fresh) {
       this.repository.setChannelSession(channelId, null);
-      this.getHistoryBuffer(channelId).clear();
+      this.repository.clearSessionTurns(channelId);
     } else if (projectChanged) {
       // Session IDs are project-scoped in practice; avoid stale resume errors after switching dirs.
       this.repository.setChannelSession(channelId, null);
@@ -99,7 +105,7 @@ export class SessionManager {
 
   resetSession(channelId: string): void {
     this.repository.setChannelSession(channelId, null);
-    this.getHistoryBuffer(channelId).clear();
+    this.repository.clearSessionTurns(channelId);
   }
 
   cloneChannelContext(
@@ -120,22 +126,8 @@ export class SessionManager {
       sessionId: null,
     });
 
-    const targetBuffer = this.getHistoryBuffer(targetChannelId);
-    targetBuffer.clear();
-    for (const turn of this.getHistoryBuffer(sourceChannelId).toArray()) {
-      targetBuffer.push({ ...turn });
-    }
+    this.repository.cloneSessionTurns(sourceChannelId, targetChannelId, this.maxHistoryItems);
 
     return this.getState(targetChannelId, targetGuildId);
-  }
-
-  private getHistoryBuffer(channelId: string): RingBuffer<SessionTurn> {
-    const existing = this.historyByChannel.get(channelId);
-    if (existing) {
-      return existing;
-    }
-    const created = new RingBuffer<SessionTurn>(this.maxHistoryItems);
-    this.historyByChannel.set(channelId, created);
-    return created;
   }
 }

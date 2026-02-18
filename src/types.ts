@@ -53,6 +53,12 @@ export interface SessionCostInsert {
   turnCount: number;
 }
 
+export interface SessionTurn {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
 export interface SettingRecord {
   key: string;
   value: string;

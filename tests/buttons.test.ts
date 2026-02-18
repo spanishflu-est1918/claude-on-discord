@@ -8,6 +8,7 @@ import {
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   buildToolPanelButtons,
+  buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseQueueDismissCustomId,
@@ -16,6 +17,7 @@ import {
   parseThreadWorktreeChoiceCustomId,
   parseToolInspectCustomId,
   parseToolPanelCustomId,
+  parseToolViewCustomId,
 } from "../src/discord/buttons";
 
 describe("discord buttons", () => {
@@ -102,6 +104,30 @@ describe("discord buttons", () => {
     });
   });
 
+  test("builds and parses tool view expand/collapse buttons", () => {
+    const expandedRows = buildToolViewButtons("chan-9", "tool-123", true);
+    const expandedButton = expandedRows[0]?.components[0]?.toJSON();
+    const expandedId =
+      expandedButton && "custom_id" in expandedButton ? expandedButton.custom_id : undefined;
+    expect(expandedId).toBe("run:toolview:collapse:chan-9:tool-123");
+    expect(parseToolViewCustomId("run:toolview:collapse:chan-9:tool-123")).toEqual({
+      action: "collapse",
+      channelId: "chan-9",
+      toolId: "tool-123",
+    });
+
+    const collapsedRows = buildToolViewButtons("chan-9", "tool-123", false);
+    const collapsedButton = collapsedRows[0]?.components[0]?.toJSON();
+    const collapsedId =
+      collapsedButton && "custom_id" in collapsedButton ? collapsedButton.custom_id : undefined;
+    expect(collapsedId).toBe("run:toolview:expand:chan-9:tool-123");
+    expect(parseToolViewCustomId("run:toolview:expand:chan-9:tool-123")).toEqual({
+      action: "expand",
+      channelId: "chan-9",
+      toolId: "tool-123",
+    });
+  });
+
   test("builds and parses project switch buttons", () => {
     const rows = buildProjectSwitchButtons("req-1");
     expect(rows).toHaveLength(1);
@@ -134,6 +160,8 @@ describe("discord buttons", () => {
     expect(parseToolInspectCustomId("run:tools:")).toBeNull();
     expect(parseToolPanelCustomId("run:tools:refresh:")).toBeNull();
     expect(parseToolPanelCustomId("run:tools:refresh:chan-only")).toBeNull();
+    expect(parseToolViewCustomId("run:toolview:expand:chan-only")).toBeNull();
+    expect(parseToolViewCustomId("run:toolview:oops:chan:tool")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:chan-only")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss::user-only")).toBeNull();

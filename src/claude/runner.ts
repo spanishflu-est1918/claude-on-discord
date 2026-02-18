@@ -33,6 +33,7 @@ export type QueryFactory = (input: QueryFactoryInput) => ClaudeQuery;
 export interface RunRequest {
   channelId: string;
   prompt: string;
+  resumeFallbackPrompt?: string;
   cwd: string;
   sessionId?: string;
   model?: string;
@@ -465,7 +466,14 @@ export class ClaudeRunner {
           this.workersByChannel.set(request.channelId, worker);
         }
 
-        return await worker.run(request);
+        const effectivePrompt =
+          !attempt.includeResume && request.resumeFallbackPrompt
+            ? request.resumeFallbackPrompt
+            : request.prompt;
+        return await worker.run({
+          ...request,
+          prompt: effectivePrompt,
+        });
       } catch (error) {
         failedAttemptLabels.push(attempt.label);
         const activeWorker = this.workersByChannel.get(request.channelId);

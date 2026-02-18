@@ -134,4 +134,56 @@ describe("Repository", () => {
     repo.clearThreadBranchMeta("c1");
     expect(repo.getThreadBranchMeta("c1")).toBeNull();
   });
+
+  test("stores, trims, clears, and clones session turns", () => {
+    const repo = createRepository();
+    repo.upsertChannel({
+      channelId: "source",
+      guildId: "g1",
+      workingDir: "/tmp/source",
+    });
+    repo.upsertChannel({
+      channelId: "target",
+      guildId: "g1",
+      workingDir: "/tmp/target",
+    });
+
+    repo.addSessionTurn({
+      channelId: "source",
+      role: "user",
+      content: "one",
+      timestamp: 1,
+    });
+    repo.addSessionTurn({
+      channelId: "source",
+      role: "assistant",
+      content: "two",
+      timestamp: 2,
+    });
+    repo.addSessionTurn({
+      channelId: "source",
+      role: "user",
+      content: "three",
+      timestamp: 3,
+    });
+
+    expect(repo.listSessionTurns("source").map((turn) => turn.content)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+    expect(repo.listSessionTurns("source", 2).map((turn) => turn.content)).toEqual([
+      "two",
+      "three",
+    ]);
+
+    repo.trimSessionTurns("source", 2);
+    expect(repo.listSessionTurns("source").map((turn) => turn.content)).toEqual(["two", "three"]);
+
+    repo.cloneSessionTurns("source", "target", 40);
+    expect(repo.listSessionTurns("target").map((turn) => turn.content)).toEqual(["two", "three"]);
+
+    repo.clearSessionTurns("target");
+    expect(repo.listSessionTurns("target")).toEqual([]);
+  });
 });

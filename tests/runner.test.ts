@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ClaudeRunner, type QueryFactoryInput } from "../src/claude/runner";
-import type { ClaudeQuery, ClaudeSDKMessage } from "../src/types";
+import type { ClaudeQuery, ClaudeSDKMessage, ClaudeSDKUserMessage } from "../src/types";
 
 type MessageLike = Record<string, unknown>;
 
@@ -41,6 +41,20 @@ function createFailingQuery(error: Error): ClaudeQuery {
   };
 
   return query as unknown as ClaudeQuery;
+}
+
+async function readPromptText(promptInput: QueryFactoryInput["prompt"]): Promise<string> {
+  if (typeof promptInput === "string") {
+    return promptInput;
+  }
+  const iterator = promptInput[Symbol.asyncIterator]();
+  const next = await iterator.next();
+  if (next.done) {
+    return "";
+  }
+  const value = next.value as ClaudeSDKUserMessage;
+  const content = value.message.content;
+  return typeof content === "string" ? content : String(content);
 }
 
 describe("ClaudeRunner", () => {
@@ -493,6 +507,57 @@ describe("ClaudeRunner", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]?.options.resume).toBe("session-stale");
     expect(calls[1]?.options.resume).toBeUndefined();
+  });
+
+  test("uses resume fallback prompt when retrying without session resume", async () => {
+    const prompts: string[] = [];
+    let calls = 0;
+    const runner = new ClaudeRunner((input) => {
+      calls += 1;
+      async function* iterator() {
+        prompts.push(await readPromptText(input.prompt));
+        if (calls === 1) {
+          throw new Error("Claude Code process exited with code 1");
+        }
+        yield {
+          type: "result",
+          subtype: "success",
+          session_id: "session-recovered",
+          duration_ms: 100,
+          total_cost_usd: 0.01,
+          num_turns: 1,
+          result: "Recovered fresh",
+          is_error: false,
+          duration_api_ms: 30,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "retry-resume-fallback-1",
+        } as ClaudeSDKMessage;
+      }
+
+      const query = Object.assign(iterator(), {
+        interrupt: async () => {},
+        abort: async () => {},
+        setModel: async (_model?: string) => {},
+        stopTask: async (_taskId: string) => {},
+        close: () => {},
+      });
+      return query as unknown as ClaudeQuery;
+    });
+
+    const result = await runner.run({
+      channelId: "channel-1",
+      prompt: "Current message",
+      resumeFallbackPrompt: "Conversation context ... Current message",
+      cwd: "/tmp",
+      sessionId: "session-stale",
+    });
+
+    expect(result.text).toBe("Recovered fresh");
+    expect(calls).toBe(2);
+    expect(prompts).toEqual(["Current message", "Conversation context ... Current message"]);
   });
 
   test("retries without MCP and session resume when both recovery steps are needed", async () => {

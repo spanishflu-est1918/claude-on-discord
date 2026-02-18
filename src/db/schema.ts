@@ -27,6 +27,15 @@ export const SCHEMA_STATEMENTS = [
   );
   `,
   `
+  CREATE TABLE IF NOT EXISTS session_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    timestamp_ms INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  );
+  `,
+  `
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -35,6 +44,7 @@ export const SCHEMA_STATEMENTS = [
   `,
   "CREATE INDEX IF NOT EXISTS idx_session_costs_session_id ON session_costs(session_id);",
   "CREATE INDEX IF NOT EXISTS idx_session_costs_channel_id ON session_costs(channel_id);",
+  "CREATE INDEX IF NOT EXISTS idx_session_turns_channel_id_id ON session_turns(channel_id, id);",
 ] as const;
 
 export function applySchema(database: Database): void {
