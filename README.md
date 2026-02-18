@@ -135,6 +135,7 @@ Common optional variables:
 - `/pr open|draft [base] [title] [body]`: create a GitHub PR from current branch
   - default base resolves from thread root branch or origin default branch
   - requires clean working tree and commits ahead of base
+- `/pr status|view`: inspect PR state/details for current branch
 - `/worktree create|list|remove|thread`: git worktree operations
   - `create`: auto-generates path when omitted
     - auto-runs setup for new worktree

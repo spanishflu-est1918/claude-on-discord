@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { buildPrCreateArgs, extractFirstUrl, parseOriginDefaultBranch } from "../src/discord/pr";
+import {
+  buildPrCreateArgs,
+  extractFirstUrl,
+  formatPrStatusLine,
+  parseOriginDefaultBranch,
+  parsePrSummaryJson,
+} from "../src/discord/pr";
 
 describe("PR helpers", () => {
   test("parseOriginDefaultBranch extracts origin default branch", () => {
@@ -56,5 +62,46 @@ describe("PR helpers", () => {
         body: "body",
       }),
     ).toThrow("PR body requires a PR title.");
+  });
+
+  test("parsePrSummaryJson returns parsed summary for gh json output", () => {
+    const parsed = parsePrSummaryJson(
+      JSON.stringify({
+        number: 42,
+        title: "Add feature",
+        state: "OPEN",
+        isDraft: true,
+        url: "https://github.com/acme/repo/pull/42",
+        headRefName: "feature",
+        baseRefName: "main",
+        body: "details",
+      }),
+    );
+    expect(parsed).toEqual({
+      number: 42,
+      title: "Add feature",
+      state: "OPEN",
+      isDraft: true,
+      url: "https://github.com/acme/repo/pull/42",
+      headRefName: "feature",
+      baseRefName: "main",
+      body: "details",
+    });
+  });
+
+  test("formatPrStatusLine renders concise status", () => {
+    const line = formatPrStatusLine({
+      number: 9,
+      title: "Title",
+      state: "OPEN",
+      isDraft: false,
+      url: "https://github.com/acme/repo/pull/9",
+      headRefName: "feature",
+      baseRefName: "main",
+    });
+    expect(line).toContain("PR #9");
+    expect(line).toContain("ready");
+    expect(line).toContain("feature");
+    expect(line).toContain("main");
   });
 });

@@ -87,6 +87,16 @@ const slashCommands = [
     )
     .addSubcommand((subcommand) =>
       addPrOptions(subcommand.setName("draft").setDescription("Create a draft pull request")),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("status")
+        .setDescription("Show PR status for current branch (if one exists)"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("view")
+        .setDescription("Show PR details for current branch (if one exists)"),
     ),
   new SlashCommandBuilder()
     .setName("worktree")

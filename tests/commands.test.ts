@@ -20,13 +20,13 @@ describe("slash commands", () => {
     expect(names).toEqual(["url", "full"]);
   });
 
-  test("/pr exposes open and draft subcommands", () => {
+  test("/pr exposes create and inspect subcommands", () => {
     const commands = getSlashCommandDefinitions();
     const pr = commands.find((command) => command.name === "pr");
     expect(pr).toBeDefined();
     const subcommands = (pr?.options ?? [])
       .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
       .filter(Boolean);
-    expect(subcommands).toEqual(["open", "draft"]);
+    expect(subcommands).toEqual(["open", "draft", "status", "view"]);
   });
 });

@@ -28,8 +28,11 @@ import { buildDiffDelivery } from "./discord/diff-delivery";
 import {
   buildPrCreateArgs,
   extractFirstUrl,
+  formatPrStatusLine,
   type PrCreateAction,
+  type PrInspectAction,
   parseOriginDefaultBranch,
+  parsePrSummaryJson,
 } from "./discord/pr";
 import {
   buildThreadBranchAwarenessPrompt,
@@ -1758,11 +1761,18 @@ export async function startApp(
           }
           case "pr": {
             const state = sessions.getState(channelId, guildId);
-            const action = interaction.options.getSubcommand(true) as PrCreateAction;
-            const baseInput = interaction.options.getString("base")?.trim() || null;
-            const titleInput = interaction.options.getString("title")?.trim() || null;
-            const bodyInput = interaction.options.getString("body")?.trim() || null;
+            const action = interaction.options.getSubcommand(true) as
+              | PrCreateAction
+              | PrInspectAction;
             await interaction.deferReply();
+
+            const ghVersion = await runCommand(["gh", "--version"], state.channel.workingDir);
+            if (ghVersion.exitCode !== 0) {
+              await interaction.editReply(
+                "GitHub CLI (`gh`) is not available. Install it and run `/pr` again.",
+              );
+              break;
+            }
 
             const headResult = await runCommand(
               ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -1784,6 +1794,62 @@ export async function startApp(
               break;
             }
 
+            if (action === "status" || action === "view") {
+              const inspectResult = await runCommand(
+                [
+                  "gh",
+                  "pr",
+                  "view",
+                  headBranch,
+                  "--json",
+                  "number,title,state,isDraft,url,headRefName,baseRefName,body",
+                ],
+                state.channel.workingDir,
+              );
+              if (inspectResult.exitCode !== 0) {
+                if (/no pull requests found/i.test(inspectResult.output)) {
+                  await interaction.editReply(`No PR found for current branch \`${headBranch}\`.`);
+                  break;
+                }
+                await interaction.editReply(
+                  `Failed to inspect PR for \`${headBranch}\`.\n` +
+                    `\`\`\`bash\n${clipOutput(inspectResult.output || "(no output)", 1800)}\n\`\`\``,
+                );
+                break;
+              }
+
+              const summary = parsePrSummaryJson(inspectResult.output);
+              if (!summary) {
+                await interaction.editReply(
+                  "Could not parse `gh pr view` response. Try again with a newer `gh` version.",
+                );
+                break;
+              }
+
+              if (action === "status") {
+                await interaction.editReply(formatPrStatusLine(summary));
+                break;
+              }
+
+              const details = [
+                formatPrStatusLine(summary),
+                `Title: ${summary.title}`,
+                `Body:\n${clipOutput(summary.body?.trim() || "(empty)", 2400)}`,
+              ].join("\n\n");
+              const chunks = chunkDiscordText(details);
+              await interaction.editReply(chunks[0] ?? "(no output)");
+              for (let i = 1; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                if (chunk) {
+                  await interaction.followUp(chunk);
+                }
+              }
+              break;
+            }
+
+            const baseInput = interaction.options.getString("base")?.trim() || null;
+            const titleInput = interaction.options.getString("title")?.trim() || null;
+            const bodyInput = interaction.options.getString("body")?.trim() || null;
             const baseBranch =
               baseInput ??
               (await resolvePrBaseBranch({
@@ -1822,14 +1888,6 @@ export async function startApp(
                 );
                 break;
               }
-            }
-
-            const ghVersion = await runCommand(["gh", "--version"], state.channel.workingDir);
-            if (ghVersion.exitCode !== 0) {
-              await interaction.editReply(
-                "GitHub CLI (`gh`) is not available. Install it and run `/pr` again.",
-              );
-              break;
             }
 
             let prArgs: string[];
