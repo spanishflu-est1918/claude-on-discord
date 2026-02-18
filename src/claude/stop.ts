@@ -69,6 +69,11 @@ export class StopController {
     if (!active) {
       return false;
     }
+    try {
+      active.query.close();
+    } catch {
+      // Ignore close failures and still abort the run controller.
+    }
     active.abortController.abort();
     this.activeRuns.delete(channelId);
     return true;
@@ -77,6 +82,11 @@ export class StopController {
   abortAll(): string[] {
     const channelIds = Array.from(this.activeRuns.keys());
     for (const active of this.activeRuns.values()) {
+      try {
+        active.query.close();
+      } catch {
+        // Ignore close failures while shutting down.
+      }
       active.abortController.abort();
     }
     this.activeRuns.clear();

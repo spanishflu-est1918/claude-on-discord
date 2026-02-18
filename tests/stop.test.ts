@@ -6,6 +6,7 @@ interface QueryState {
   interrupted: boolean;
   modelSet?: string;
   stoppedTaskId?: string;
+  closed?: boolean;
   throwOnInterrupt?: boolean;
 }
 
@@ -22,6 +23,9 @@ function createMockQuery(state: QueryState): ClaudeQuery {
     },
     stopTask: async (taskId: string) => {
       state.stoppedTaskId = taskId;
+    },
+    close: () => {
+      state.closed = true;
     },
     next: async () => ({ done: true, value: undefined }),
     return: async () => ({ done: true, value: undefined }),
@@ -76,14 +80,16 @@ describe("StopController", () => {
 
   test("abort signals controller and clears active run", () => {
     const controller = new StopController();
+    const state: QueryState = { interrupted: false };
     const abortController = new AbortController();
     controller.register("channel-1", {
-      query: createMockQuery({ interrupted: false }),
+      query: createMockQuery(state),
       abortController,
     });
 
     const aborted = controller.abort("channel-1");
     expect(aborted).toBe(true);
+    expect(state.closed).toBe(true);
     expect(abortController.signal.aborted).toBe(true);
     expect(controller.isActive("channel-1")).toBe(false);
     expect(controller.wasInterrupted("channel-1")).toBe(false);
@@ -93,18 +99,22 @@ describe("StopController", () => {
     const controller = new StopController();
     const a = new AbortController();
     const b = new AbortController();
+    const stateA: QueryState = { interrupted: false };
+    const stateB: QueryState = { interrupted: false };
 
     controller.register("channel-1", {
-      query: createMockQuery({ interrupted: false }),
+      query: createMockQuery(stateA),
       abortController: a,
     });
     controller.register("channel-2", {
-      query: createMockQuery({ interrupted: false }),
+      query: createMockQuery(stateB),
       abortController: b,
     });
 
     const ids = controller.abortAll().sort();
     expect(ids).toEqual(["channel-1", "channel-2"]);
+    expect(stateA.closed).toBe(true);
+    expect(stateB.closed).toBe(true);
     expect(a.signal.aborted).toBe(true);
     expect(b.signal.aborted).toBe(true);
     expect(controller.isActive("channel-1")).toBe(false);
