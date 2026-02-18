@@ -23,7 +23,7 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
     partials: [Partials.Channel],
   });
 
-  client.once("ready", () => {
+  client.once("clientReady", () => {
     const user = client.user?.tag ?? "unknown";
     console.log(`Discord client ready as ${user}`);
   });

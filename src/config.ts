@@ -4,7 +4,9 @@ import type { ClaudePermissionMode } from "./types";
 
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
-  DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID is required"),
+  APPLICATION_ID: z.string().trim().optional(),
+  DISCORD_CLIENT_ID: z.string().trim().optional(),
+  DISCORD_PUBLIC_KEY: z.string().trim().optional(),
   DISCORD_GUILD_ID: z.string().trim().optional().default(""),
   DEFAULT_WORKING_DIR: z.string().trim().default("~/www"),
   DATABASE_PATH: z.string().trim().default("./data/claude-on-discord.sqlite"),
@@ -17,6 +19,7 @@ const envSchema = z.object({
 export type AppConfig = {
   discordToken: string;
   discordClientId: string;
+  discordPublicKey?: string;
   discordGuildId?: string;
   defaultWorkingDir: string;
   databasePath: string;
@@ -43,12 +46,20 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
 
   const value = parsed.data;
+  const discordClientId = value.APPLICATION_ID || value.DISCORD_CLIENT_ID;
+  if (!discordClientId) {
+    throw new Error(
+      "Invalid environment configuration: APPLICATION_ID (or DISCORD_CLIENT_ID) is required",
+    );
+  }
+
   const resolvedWorkingDir = path.resolve(expandHome(value.DEFAULT_WORKING_DIR));
   const resolvedDbPath = path.resolve(expandHome(value.DATABASE_PATH));
 
   return {
     discordToken: value.DISCORD_TOKEN,
-    discordClientId: value.DISCORD_CLIENT_ID,
+    discordClientId,
+    ...(value.DISCORD_PUBLIC_KEY ? { discordPublicKey: value.DISCORD_PUBLIC_KEY } : {}),
     ...(value.DISCORD_GUILD_ID ? { discordGuildId: value.DISCORD_GUILD_ID } : {}),
     defaultWorkingDir: resolvedWorkingDir,
     databasePath: resolvedDbPath,

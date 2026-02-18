@@ -16,6 +16,15 @@ Copy env file:
 cp .env.example .env
 ```
 
+Required env vars:
+
+- `DISCORD_TOKEN` (bot token)
+- `APPLICATION_ID` (same value as client/app id)
+
+Optional:
+
+- `DISCORD_GUILD_ID` for instant guild command registration during dev (without it, global slash commands can take time to appear).
+
 Run tests:
 
 ```bash
