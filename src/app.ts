@@ -1256,20 +1256,27 @@ function toStreamingPreview(text: string, thinking: string, maxChars = 1800): st
 
   const parts: string[] = [];
   if (trimmedThinking) {
-    const clippedThinking =
-      trimmedThinking.length > 800 ? `...${trimmedThinking.slice(-797)}` : trimmedThinking;
-    parts.push(`Thinking:\n${clippedThinking}`);
+    parts.push(`Thinking:\n${trimmedThinking}`);
   }
   if (trimmedText) {
-    const clippedText = trimmedText.length > 900 ? `...${trimmedText.slice(-897)}` : trimmedText;
-    parts.push(`Answer so far:\n${clippedText}`);
+    parts.push(`Answer so far:\n${trimmedText}`);
   }
 
   const combined = parts.join("\n\n");
   if (combined.length <= maxChars) {
     return combined;
   }
-  return `...${combined.slice(-(maxChars - 3))}`;
+
+  // Preserve accumulated context while still showing latest progress when over limit.
+  const separator = "\n\n...[truncated live preview]...\n\n";
+  const budget = Math.max(0, maxChars - separator.length);
+  const headSize = Math.floor(budget * 0.7);
+  const tailSize = Math.max(0, budget - headSize);
+
+  if (tailSize === 0) {
+    return combined.slice(0, maxChars);
+  }
+  return `${combined.slice(0, headSize)}${separator}${combined.slice(-tailSize)}`;
 }
 
 export async function startApp(
