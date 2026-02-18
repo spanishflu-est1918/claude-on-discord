@@ -55,24 +55,62 @@ export class ClaudeRunner {
     const abortController = request.abortController ?? new AbortController();
     const permissionMode = request.permissionMode ?? "bypassPermissions";
     const mcpServers = await loadMcpServers(request.cwd);
+    try {
+      return await this.runSingleQuery({
+        request,
+        abortController,
+        permissionMode,
+        mcpServers,
+        includeMcpServers: true,
+      });
+    } catch (error) {
+      if (!mcpServers || !shouldRetryWithoutMcp(error)) {
+        throw wrapRunnerError(error);
+      }
+
+      try {
+        return await this.runSingleQuery({
+          request,
+          abortController,
+          permissionMode,
+          mcpServers,
+          includeMcpServers: false,
+        });
+      } catch (retryError) {
+        throw wrapRunnerError(
+          retryError,
+          "Retried without MCP servers after the initial Claude process failed.",
+        );
+      }
+    }
+  }
+
+  private async runSingleQuery(input: {
+    request: RunRequest;
+    abortController: AbortController;
+    permissionMode: ClaudePermissionMode;
+    mcpServers?: Record<string, ClaudeMcpServerConfig>;
+    includeMcpServers: boolean;
+  }): Promise<RunResult> {
+    const options: QueryFactoryInput["options"] = {
+      cwd: input.request.cwd,
+      permissionMode: input.permissionMode,
+      settingSources: ["project", "local"],
+      ...(input.permissionMode === "bypassPermissions"
+        ? { allowDangerouslySkipPermissions: true }
+        : {}),
+      ...(input.request.model ? { model: input.request.model } : {}),
+      ...(input.request.sessionId ? { resume: input.request.sessionId } : {}),
+      ...(input.includeMcpServers && input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+    };
 
     const query = this.queryFactory({
-      prompt: request.prompt,
-      abortController,
-      options: {
-        cwd: request.cwd,
-        permissionMode,
-        settingSources: ["project", "local"],
-        ...(permissionMode === "bypassPermissions"
-          ? { allowDangerouslySkipPermissions: true }
-          : {}),
-        ...(request.model ? { model: request.model } : {}),
-        ...(request.sessionId ? { resume: request.sessionId } : {}),
-        ...(mcpServers ? { mcpServers } : {}),
-      },
+      prompt: input.request.prompt,
+      abortController: input.abortController,
+      options,
     });
 
-    request.onQueryStart?.(query);
+    input.request.onQueryStart?.(query);
 
     const messages: ClaudeSDKMessage[] = [];
     let text = "";
@@ -84,14 +122,14 @@ export class ClaudeRunner {
 
     for await (const message of query) {
       messages.push(message);
-      request.onMessage?.(message);
+      input.request.onMessage?.(message);
 
       sessionId = readSessionId(message) ?? sessionId;
       const streamChunk = extractStreamTextDelta(message);
       if (streamChunk) {
         sawStreamText = true;
         text += streamChunk;
-        request.onTextDelta?.(streamChunk);
+        input.request.onTextDelta?.(streamChunk);
       }
 
       if (isResultMessage(message)) {
@@ -119,6 +157,22 @@ export class ClaudeRunner {
       messages,
     };
   }
+}
+
+function shouldRetryWithoutMcp(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /\bexited with code 1\b/i.test(error.message);
+}
+
+function wrapRunnerError(error: unknown, context?: string): Error {
+  if (error instanceof Error) {
+    const message = context ? `${context} ${error.message}` : error.message;
+    return new Error(message, { cause: error });
+  }
+  const message = context ? `${context} ${String(error)}` : String(error);
+  return new Error(message);
 }
 
 async function loadMcpServers(

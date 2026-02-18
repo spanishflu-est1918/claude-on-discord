@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { ClaudeRunner, type QueryFactoryInput } from "../src/claude/runner";
 import type { ClaudeQuery, ClaudeSDKMessage } from "../src/types";
 
@@ -18,6 +21,22 @@ function createMockQuery(messages: MessageLike[]): ClaudeQuery {
     setModel: async (_model?: string) => {},
     stopTask: async (_taskId: string) => {},
   });
+
+  return query as unknown as ClaudeQuery;
+}
+
+function createFailingQuery(error: Error): ClaudeQuery {
+  const query = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: async () => Promise.reject(error),
+      };
+    },
+    interrupt: async () => {},
+    abort: async () => {},
+    setModel: async (_model?: string) => {},
+    stopTask: async (_taskId: string) => {},
+  };
 
   return query as unknown as ClaudeQuery;
 }
@@ -152,5 +171,97 @@ describe("ClaudeRunner", () => {
     expect(queryStarted).toBe(true);
     expect(textDeltas).toEqual(["A", "B"]);
     expect(result.text).toBe("AB");
+  });
+
+  test("retries without MCP servers when claude process exits with code 1", async () => {
+    const workingDir = await mkdtemp(path.join(tmpdir(), "runner-mcp-retry-"));
+    await mkdir(path.join(workingDir, ".claude"), { recursive: true });
+    await writeFile(
+      path.join(workingDir, ".claude", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          test: {
+            command: "echo",
+            args: ["hello"],
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    try {
+      const calls: QueryFactoryInput[] = [];
+      const runner = new ClaudeRunner((input) => {
+        calls.push(input);
+        if (calls.length === 1) {
+          return createFailingQuery(new Error("Claude Code process exited with code 1"));
+        }
+        return createMockQuery([
+          {
+            type: "result",
+            subtype: "success",
+            session_id: "session-retry",
+            duration_ms: 100,
+            total_cost_usd: 0.01,
+            num_turns: 1,
+            result: "Recovered",
+            is_error: false,
+            duration_api_ms: 30,
+            stop_reason: "end_turn",
+            usage: {},
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "retry-1",
+          },
+        ]);
+      });
+
+      const result = await runner.run({
+        prompt: "Ping",
+        cwd: workingDir,
+      });
+
+      expect(result.text).toBe("Recovered");
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.options.mcpServers).toBeDefined();
+      expect(calls[1]?.options.mcpServers).toBeUndefined();
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not retry for non-retryable failures", async () => {
+    const workingDir = await mkdtemp(path.join(tmpdir(), "runner-mcp-no-retry-"));
+    await mkdir(path.join(workingDir, ".claude"), { recursive: true });
+    await writeFile(
+      path.join(workingDir, ".claude", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          test: {
+            command: "echo",
+            args: ["hello"],
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    try {
+      let callCount = 0;
+      const runner = new ClaudeRunner(() => {
+        callCount += 1;
+        return createFailingQuery(new Error("Claude Code process exited with code 2"));
+      });
+
+      await expect(
+        runner.run({
+          prompt: "Ping",
+          cwd: workingDir,
+        }),
+      ).rejects.toThrow("code 2");
+      expect(callCount).toBe(1);
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
+    }
   });
 });
