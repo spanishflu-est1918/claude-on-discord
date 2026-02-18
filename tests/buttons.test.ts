@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ButtonStyle } from "discord.js";
 import {
   buildProjectSwitchButtons,
   buildStopButtons,
@@ -18,9 +19,13 @@ describe("discord buttons", () => {
     const abort = components[1]?.toJSON();
     const interruptId = interrupt && "custom_id" in interrupt ? interrupt.custom_id : undefined;
     const abortId = abort && "custom_id" in abort ? abort.custom_id : undefined;
+    const interruptStyle = interrupt && "style" in interrupt ? interrupt.style : undefined;
+    const abortStyle = abort && "style" in abort ? abort.style : undefined;
 
     expect(interruptId).toBe("run:interrupt:123");
     expect(abortId).toBe("run:abort:123");
+    expect(interruptStyle).toBe(ButtonStyle.Secondary);
+    expect(abortStyle).toBe(ButtonStyle.Secondary);
   });
 
   test("parses interrupt and abort ids", () => {

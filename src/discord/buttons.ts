@@ -18,7 +18,7 @@ export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuil
   const abortButton = new ButtonBuilder()
     .setCustomId(`${ABORT_PREFIX}${channelId}`)
     .setLabel("Abort")
-    .setStyle(ButtonStyle.Danger)
+    .setStyle(ButtonStyle.Secondary)
     .setEmoji("🛑");
 
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(interruptButton, abortButton)];
