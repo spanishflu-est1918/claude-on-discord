@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildThreadBranchAwarenessPrompt,
+  buildThreadBranchStatusLines,
   parseThreadBranchMeta,
 } from "../src/discord/thread-branch";
 
@@ -86,5 +87,65 @@ describe("thread branch metadata helpers", () => {
 
     expect(prompt).toContain("Current channel is a root with child thread branches");
     expect(prompt).toContain("channel=thread-a");
+  });
+
+  test("buildThreadBranchStatusLines returns branch metadata for current thread", () => {
+    const entries = [
+      {
+        channelId: "thread-b",
+        value: JSON.stringify({
+          channelId: "thread-b",
+          guildId: "g1",
+          rootChannelId: "root",
+          parentChannelId: "thread-a",
+          name: "b",
+          createdAt: 2,
+        }),
+      },
+    ];
+
+    const lines = buildThreadBranchStatusLines({
+      currentChannelId: "thread-b",
+      entries,
+    });
+
+    expect(lines[0]).toContain("Thread branch:");
+    expect(lines[1]).toContain("Thread root:");
+    expect(lines[2]).toContain("Thread parent:");
+  });
+
+  test("buildThreadBranchStatusLines returns root summary when current channel is root", () => {
+    const entries = [
+      {
+        channelId: "thread-a",
+        value: JSON.stringify({
+          channelId: "thread-a",
+          guildId: "g1",
+          rootChannelId: "root",
+          parentChannelId: "root",
+          name: "a",
+          createdAt: 1,
+        }),
+      },
+      {
+        channelId: "thread-b",
+        value: JSON.stringify({
+          channelId: "thread-b",
+          guildId: "g1",
+          rootChannelId: "root",
+          parentChannelId: "thread-a",
+          name: "b",
+          createdAt: 2,
+        }),
+      },
+    ];
+
+    const lines = buildThreadBranchStatusLines({
+      currentChannelId: "root",
+      entries,
+    });
+
+    expect(lines[0]).toContain("Thread role: root");
+    expect(lines[1]).toContain("Thread branches: `2`");
   });
 });

@@ -18,7 +18,11 @@ import {
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
-import { buildThreadBranchAwarenessPrompt, parseThreadBranchMeta } from "./discord/thread-branch";
+import {
+  buildThreadBranchAwarenessPrompt,
+  buildThreadBranchStatusLines,
+  parseThreadBranchMeta,
+} from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
 
 function getMessagePrompt(message: Message): string {
@@ -593,11 +597,16 @@ export async function startApp(config: AppConfig): Promise<void> {
             const totalCost = repository.getChannelCostTotal(channelId);
             const turns = state.history.length;
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+            const threadStatusLines = buildThreadBranchStatusLines({
+              currentChannelId: channelId,
+              entries: repository.listThreadBranchMetaEntries(),
+            });
             const lines = [
               `Project: \`${state.channel.workingDir}\``,
               `Model: \`${state.channel.model}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
+              ...threadStatusLines,
               `In-memory turns: \`${turns}\``,
               `Total channel cost: \`$${totalCost.toFixed(4)}\``,
             ];

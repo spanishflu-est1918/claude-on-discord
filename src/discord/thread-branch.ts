@@ -90,3 +90,40 @@ export function buildThreadBranchAwarenessPrompt(input: {
 
   return `${lines.join("\n")}\n\n`;
 }
+
+export function buildThreadBranchStatusLines(input: {
+  currentChannelId: string;
+  entries: Array<{ channelId: string; value: string }>;
+}): string[] {
+  const metas = input.entries
+    .map((entry) => parseThreadBranchMeta(entry.value))
+    .filter((entry): entry is ThreadBranchMeta => entry !== null);
+
+  if (metas.length === 0) {
+    return [];
+  }
+
+  const byChannel = new Map<string, ThreadBranchMeta>();
+  for (const meta of metas) {
+    byChannel.set(meta.channelId, meta);
+  }
+
+  const current = byChannel.get(input.currentChannelId);
+  if (current) {
+    return [
+      `Thread branch: \`${current.name}\` (\`${current.channelId}\`)`,
+      `Thread root: \`${current.rootChannelId}\``,
+      `Thread parent: ${current.parentChannelId ? `\`${current.parentChannelId}\`` : "none"}`,
+    ];
+  }
+
+  const childCount = metas.filter((meta) => meta.rootChannelId === input.currentChannelId).length;
+  if (childCount > 0) {
+    return [
+      `Thread role: root (\`${input.currentChannelId}\`)`,
+      `Thread branches: \`${childCount}\``,
+    ];
+  }
+
+  return [];
+}
