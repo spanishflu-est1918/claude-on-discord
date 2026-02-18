@@ -29,7 +29,7 @@ Position `claude-on-discord` as the serious way to run Claude Code from Discord,
 3. Feature deep dive: commands, session model, stop controls, prompts
 4. Security posture: local-first, token handling, trust boundaries
 5. Setup guide: install, init, invite, first run
-6. Roadmap: stabilization, attachment reliability, packaging
+6. Roadmap: stabilization, threaded conversation forking, attachment reliability, packaging
 
 ## Assets Needed Later
 

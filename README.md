@@ -143,3 +143,5 @@ bun test
   - GitHub-ready docs structure (`README`, setup guide, troubleshooting, architecture notes)
   - Website/landing page with workflow demos and use-cases
   - Later: `npx`-friendly distribution flow
+- Planned product feature:
+  - Threaded conversation management with session forking (branch a conversation path from Discord)

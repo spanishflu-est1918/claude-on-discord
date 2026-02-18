@@ -281,6 +281,13 @@ User types in channel
 33. Startup preflight checks with clear access diagnostics
 34. Package CLI for external install (`npx` path) once repo is publish-ready
 
+### Phase 7: Conversation Branching
+
+35. Thread-aware conversation management (parent thread + branch metadata)
+36. Fork current conversation into a new branch/session from Discord
+37. Branch navigation commands (list/switch/history)
+38. Optional branch naming and branch-specific system prompts
+
 ---
 
 ## Verification
