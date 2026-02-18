@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Message } from "discord.js";
+import { type Message, MessageFlags } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -284,14 +284,14 @@ export async function startApp(config: AppConfig): Promise<void> {
         if (!pending) {
           await interaction.reply({
             content: "Project switch request expired. Run /project again.",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
         if (interaction.channelId !== pending.channelId) {
           await interaction.reply({
             content: "This project switch belongs to a different channel.",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -314,14 +314,17 @@ export async function startApp(config: AppConfig): Promise<void> {
 
       const control = parseRunControlCustomId(interaction.customId);
       if (!control) {
-        await interaction.reply({ content: "Unknown control button.", ephemeral: true });
+        await interaction.reply({
+          content: "Unknown control button.",
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
 
       if (interaction.channelId !== control.channelId) {
         await interaction.reply({
           content: "This control belongs to a different channel session.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -330,7 +333,7 @@ export async function startApp(config: AppConfig): Promise<void> {
         const interrupted = await stopController.interrupt(control.channelId);
         await interaction.reply({
           content: interrupted ? "Interrupt signal sent." : "No active run to interrupt.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -338,7 +341,7 @@ export async function startApp(config: AppConfig): Promise<void> {
       const aborted = stopController.abort(control.channelId);
       await interaction.reply({
         content: aborted ? "Abort signal sent." : "No active run to abort.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     },
     onSlashCommand: async (interaction) => {
@@ -493,7 +496,10 @@ export async function startApp(config: AppConfig): Promise<void> {
           break;
         }
         default: {
-          await interaction.reply({ content: "Command not implemented.", ephemeral: true });
+          await interaction.reply({
+            content: "Command not implemented.",
+            flags: MessageFlags.Ephemeral,
+          });
           break;
         }
       }

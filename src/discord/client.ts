@@ -4,6 +4,7 @@ import {
   Client,
   GatewayIntentBits,
   type Message,
+  MessageFlags,
   Partials,
 } from "discord.js";
 
@@ -56,9 +57,9 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
         console.error("button interaction failed", error);
         const msg = error instanceof Error ? error.message : "Unknown error";
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
+          await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
         } else {
-          await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+          await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
         }
       }
       return;
@@ -71,9 +72,9 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
         console.error("slash command failed", error);
         const msg = error instanceof Error ? error.message : "Unknown error";
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
+          await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
         } else {
-          await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+          await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
         }
       }
     }
