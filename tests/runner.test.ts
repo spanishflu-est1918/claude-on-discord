@@ -264,4 +264,105 @@ describe("ClaudeRunner", () => {
       await rm(workingDir, { recursive: true, force: true });
     }
   });
+
+  test("retries without session resume when process exits with code 1", async () => {
+    const calls: QueryFactoryInput[] = [];
+    const runner = new ClaudeRunner((input) => {
+      calls.push(input);
+      if (calls.length === 1) {
+        return createFailingQuery(new Error("Claude Code process exited with code 1"));
+      }
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-fresh",
+          duration_ms: 100,
+          total_cost_usd: 0.01,
+          num_turns: 1,
+          result: "Recovered fresh",
+          is_error: false,
+          duration_api_ms: 30,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "retry-fresh-1",
+        },
+      ]);
+    });
+
+    const result = await runner.run({
+      prompt: "Ping",
+      cwd: "/tmp",
+      sessionId: "session-stale",
+    });
+
+    expect(result.text).toBe("Recovered fresh");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.options.resume).toBe("session-stale");
+    expect(calls[1]?.options.resume).toBeUndefined();
+  });
+
+  test("retries without MCP and session resume when both recovery steps are needed", async () => {
+    const workingDir = await mkdtemp(path.join(tmpdir(), "runner-mcp-session-retry-"));
+    await mkdir(path.join(workingDir, ".claude"), { recursive: true });
+    await writeFile(
+      path.join(workingDir, ".claude", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          test: {
+            command: "echo",
+            args: ["hello"],
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    try {
+      const calls: QueryFactoryInput[] = [];
+      const runner = new ClaudeRunner((input) => {
+        calls.push(input);
+        if (calls.length <= 2) {
+          return createFailingQuery(new Error("Claude Code process exited with code 1"));
+        }
+        return createMockQuery([
+          {
+            type: "result",
+            subtype: "success",
+            session_id: "session-final",
+            duration_ms: 100,
+            total_cost_usd: 0.01,
+            num_turns: 1,
+            result: "Recovered after both fallbacks",
+            is_error: false,
+            duration_api_ms: 30,
+            stop_reason: "end_turn",
+            usage: {},
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "retry-both-1",
+          },
+        ]);
+      });
+
+      const result = await runner.run({
+        prompt: "Ping",
+        cwd: workingDir,
+        sessionId: "session-stale",
+      });
+
+      expect(result.text).toBe("Recovered after both fallbacks");
+      expect(calls).toHaveLength(3);
+      expect(calls[0]?.options.mcpServers).toBeDefined();
+      expect(calls[0]?.options.resume).toBe("session-stale");
+      expect(calls[1]?.options.mcpServers).toBeUndefined();
+      expect(calls[1]?.options.resume).toBe("session-stale");
+      expect(calls[2]?.options.mcpServers).toBeUndefined();
+      expect(calls[2]?.options.resume).toBeUndefined();
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
+    }
+  });
 });

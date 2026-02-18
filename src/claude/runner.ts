@@ -55,6 +55,7 @@ export class ClaudeRunner {
     const abortController = request.abortController ?? new AbortController();
     const permissionMode = request.permissionMode ?? "bypassPermissions";
     const mcpServers = await loadMcpServers(request.cwd);
+    const hasMcpServers = Boolean(mcpServers);
     try {
       return await this.runSingleQuery({
         request,
@@ -62,26 +63,63 @@ export class ClaudeRunner {
         permissionMode,
         mcpServers,
         includeMcpServers: true,
+        includeResume: true,
       });
     } catch (error) {
-      if (!mcpServers || !shouldRetryWithoutMcp(error)) {
-        throw wrapRunnerError(error);
+      if (hasMcpServers && shouldRetryWithoutMcp(error)) {
+        try {
+          return await this.runSingleQuery({
+            request,
+            abortController,
+            permissionMode,
+            mcpServers,
+            includeMcpServers: false,
+            includeResume: true,
+          });
+        } catch (retryError) {
+          if (request.sessionId && shouldRetryWithoutResume(retryError)) {
+            try {
+              return await this.runSingleQuery({
+                request,
+                abortController,
+                permissionMode,
+                mcpServers,
+                includeMcpServers: false,
+                includeResume: false,
+              });
+            } catch (freshSessionError) {
+              throw wrapRunnerError(
+                freshSessionError,
+                "Retried without MCP and without session resume after Claude process failures.",
+              );
+            }
+          }
+          throw wrapRunnerError(
+            retryError,
+            "Retried without MCP servers after the initial Claude process failed.",
+          );
+        }
       }
 
-      try {
-        return await this.runSingleQuery({
-          request,
-          abortController,
-          permissionMode,
-          mcpServers,
-          includeMcpServers: false,
-        });
-      } catch (retryError) {
-        throw wrapRunnerError(
-          retryError,
-          "Retried without MCP servers after the initial Claude process failed.",
-        );
+      if (request.sessionId && shouldRetryWithoutResume(error)) {
+        try {
+          return await this.runSingleQuery({
+            request,
+            abortController,
+            permissionMode,
+            mcpServers,
+            includeMcpServers: true,
+            includeResume: false,
+          });
+        } catch (freshSessionError) {
+          throw wrapRunnerError(
+            freshSessionError,
+            "Retried without session resume after the initial Claude process failed.",
+          );
+        }
       }
+
+      throw wrapRunnerError(error);
     }
   }
 
@@ -91,6 +129,7 @@ export class ClaudeRunner {
     permissionMode: ClaudePermissionMode;
     mcpServers?: Record<string, ClaudeMcpServerConfig>;
     includeMcpServers: boolean;
+    includeResume: boolean;
   }): Promise<RunResult> {
     const options: QueryFactoryInput["options"] = {
       cwd: input.request.cwd,
@@ -100,7 +139,9 @@ export class ClaudeRunner {
         ? { allowDangerouslySkipPermissions: true }
         : {}),
       ...(input.request.model ? { model: input.request.model } : {}),
-      ...(input.request.sessionId ? { resume: input.request.sessionId } : {}),
+      ...(input.includeResume && input.request.sessionId
+        ? { resume: input.request.sessionId }
+        : {}),
       ...(input.includeMcpServers && input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     };
 
@@ -160,6 +201,13 @@ export class ClaudeRunner {
 }
 
 function shouldRetryWithoutMcp(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /\bexited with code 1\b/i.test(error.message);
+}
+
+function shouldRetryWithoutResume(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
