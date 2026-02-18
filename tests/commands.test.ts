@@ -20,6 +20,18 @@ describe("slash commands", () => {
     expect(names).toEqual(["url", "full"]);
   });
 
+  test("/fork exposes an optional title option", () => {
+    const commands = getSlashCommandDefinitions();
+    const fork = commands.find((command) => command.name === "fork");
+    expect(fork).toBeDefined();
+    const options = fork?.options ?? [];
+    expect(options).toHaveLength(1);
+    const title = options[0] as { name?: string; required?: boolean; max_length?: number };
+    expect(title.name).toBe("title");
+    expect(title.required).not.toBeTrue();
+    expect(title.max_length).toBe(100);
+  });
+
   test("/pr exposes create and inspect subcommands", () => {
     const commands = getSlashCommandDefinitions();
     const pr = commands.find((command) => command.name === "pr");

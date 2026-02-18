@@ -26,6 +26,12 @@ const slashCommands = [
         .setDescription("Optional project path (relative to current dir, absolute, or ~/...)"),
     ),
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
+  new SlashCommandBuilder()
+    .setName("fork")
+    .setDescription("Fork this channel conversation into a new thread")
+    .addStringOption((option) =>
+      option.setName("title").setDescription("Optional thread title").setMaxLength(100),
+    ),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
     .setName("branches")

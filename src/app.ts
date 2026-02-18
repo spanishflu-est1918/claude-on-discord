@@ -30,6 +30,7 @@ import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
 import { buildDiffDelivery } from "./discord/diff-delivery";
+import { DiscordDispatchQueue } from "./discord/dispatcher";
 import {
   buildPrCreateArgs,
   buildPrMergeArgs,
@@ -330,6 +331,18 @@ type TopicChannel = {
   setTopic: (topic: string) => Promise<unknown>;
 };
 
+type ForkThread = {
+  id: string;
+};
+
+type ForkableChannel = {
+  name?: string;
+  isThread: () => boolean;
+  threads: {
+    create: (options: { name: string; reason?: string }) => Promise<ForkThread>;
+  };
+};
+
 function canSetTopic(channel: unknown): channel is TopicChannel {
   return (
     typeof channel === "object" &&
@@ -337,6 +350,40 @@ function canSetTopic(channel: unknown): channel is TopicChannel {
     "setTopic" in channel &&
     typeof (channel as TopicChannel).setTopic === "function"
   );
+}
+
+function canCreateForkThread(channel: unknown): channel is ForkableChannel {
+  if (typeof channel !== "object" || channel === null) {
+    return false;
+  }
+
+  if (
+    !("isThread" in channel) ||
+    typeof (channel as { isThread?: unknown }).isThread !== "function"
+  ) {
+    return false;
+  }
+
+  if (!("threads" in channel)) {
+    return false;
+  }
+
+  const threads = (channel as { threads?: { create?: unknown } }).threads;
+  return typeof threads?.create === "function";
+}
+
+function buildForkThreadTitle(input: { requested: string | null; channelName?: string }): string {
+  const requested = input.requested?.trim();
+  if (requested) {
+    return requested.slice(0, 100);
+  }
+
+  const base = input.channelName?.trim();
+  if (!base) {
+    return "fork";
+  }
+
+  return `${base}-fork`.slice(0, 100);
 }
 
 async function detectBranchName(workingDir: string): Promise<string | null> {
@@ -1397,11 +1444,13 @@ function extractToolStartFromStreamEvent(
   const event = message.event as {
     type?: string;
     index?: number;
+    content_block_index?: number;
     content_block?: {
       type?: string;
       id?: string;
       tool_use_id?: string;
       name?: string;
+      tool_name?: string;
       input?: unknown;
     };
   };
@@ -1409,17 +1458,23 @@ function extractToolStartFromStreamEvent(
     return null;
   }
   const block = event.content_block;
-  if (!block || block.type !== "tool_use") {
+  if (!block || (block.type !== "tool_use" && block.type !== "server_tool_use")) {
     return null;
   }
   const id = block.id ?? block.tool_use_id;
   if (!id) {
     return null;
   }
+  const eventIndex =
+    typeof event.index === "number"
+      ? event.index
+      : typeof event.content_block_index === "number"
+        ? event.content_block_index
+        : undefined;
   return {
     id,
-    index: typeof event.index === "number" ? event.index : undefined,
-    name: block.name,
+    index: eventIndex,
+    name: block.name ?? block.tool_name,
     inputPreview: stringifyToolInput(block.input),
   };
 }
@@ -1495,6 +1550,27 @@ function findLatestRunningTaskToolId(trace: LiveToolTrace): string | null {
   return null;
 }
 
+function resolveToolIdForInputDelta(trace: LiveToolTrace, index: number): string | undefined {
+  const mapped = trace.indexToToolId.get(index);
+  if (mapped) {
+    return mapped;
+  }
+
+  const activeToolIds = trace.order.filter((toolId) => {
+    const entry = trace.byId.get(toolId);
+    return Boolean(entry && (entry.status === "running" || entry.status === "queued"));
+  });
+  if (activeToolIds.length === 0) {
+    return undefined;
+  }
+
+  const fallbackToolId = activeToolIds[activeToolIds.length - 1];
+  if (fallbackToolId) {
+    trace.indexToToolId.set(index, fallbackToolId);
+  }
+  return fallbackToolId;
+}
+
 function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage): boolean {
   let changed = false;
   const now = Date.now();
@@ -1514,7 +1590,7 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
 
   const toolInputDelta = extractToolInputDelta(message);
   if (toolInputDelta) {
-    const toolId = trace.indexToToolId.get(toolInputDelta.index);
+    const toolId = resolveToolIdForInputDelta(trace, toolInputDelta.index);
     if (toolId) {
       const currentBuffer = trace.inputJsonBufferByToolId.get(toolId) ?? "";
       const nextBuffer = `${currentBuffer}${toolInputDelta.partialJson}`;
@@ -1760,6 +1836,24 @@ export async function startApp(
   const pendingDiffViews = new Map<string, DiffContext>();
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
+  const discordDispatchStats = {
+    rateLimitHits: 0,
+    lastRateLimitAtMs: 0,
+    lastRateLimitLane: "",
+  };
+  const discordDispatch = new DiscordDispatchQueue({
+    maxAttempts: 4,
+    baseBackoffMs: 250,
+    maxBackoffMs: 4000,
+    onRateLimit: ({ laneId, retryAfterMs, attempt }) => {
+      discordDispatchStats.rateLimitHits += 1;
+      discordDispatchStats.lastRateLimitAtMs = Date.now();
+      discordDispatchStats.lastRateLimitLane = laneId;
+      console.warn(
+        `Discord dispatcher retry lane=${laneId} attempt=${attempt} wait=${retryAfterMs}ms`,
+      );
+    },
+  });
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
@@ -1901,11 +1995,13 @@ export async function startApp(
 
         try {
           const statusVerb = event.type === "archived" ? "archived" : "deleted";
-          await target.send({
-            content:
-              `Thread \`${event.threadName}\` was ${statusVerb}.\n` +
-              `Worktree \`${updatedMeta.worktreePath}\` still exists. Keep it or remove it now?`,
-            components: buildThreadCleanupButtons(event.threadId),
+          await discordDispatch.enqueue(`thread-lifecycle:${event.threadId}`, async () => {
+            await target.send({
+              content:
+                `Thread \`${event.threadName}\` was ${statusVerb}.\n` +
+                `Worktree \`${updatedMeta.worktreePath}\` still exists. Keep it or remove it now?`,
+              components: buildThreadCleanupButtons(event.threadId),
+            });
           });
         } catch {
           // Ignore lifecycle prompt failures when channel permissions/cache are limited.
@@ -2339,6 +2435,47 @@ export async function startApp(
             await interaction.reply("Session reset for this channel.");
             break;
           }
+          case "fork": {
+            if (!interaction.channel) {
+              await interaction.reply({
+                content: "Could not resolve the current channel for `/fork`.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            if (
+              typeof interaction.channel.isThread === "function" &&
+              interaction.channel.isThread()
+            ) {
+              await interaction.reply({
+                content:
+                  "Run `/fork` from a parent text channel. This command creates a new thread from that channel.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            if (!canCreateForkThread(interaction.channel)) {
+              await interaction.reply({
+                content: "This channel type does not support creating threads.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            const title = buildForkThreadTitle({
+              requested: interaction.options.getString("title"),
+              channelName: interaction.channel.name,
+            });
+
+            const thread = await interaction.channel.threads.create({
+              name: title,
+              reason: "Fork created via /fork",
+            });
+            await interaction.reply(`Forked into thread <#${thread.id}> (\`${title}\`).`);
+            break;
+          }
           case "compact": {
             const state = sessions.getState(channelId, guildId);
             const summary = compactHistory(state.history);
@@ -2364,12 +2501,17 @@ export async function startApp(
               currentChannelId: channelId,
               entries: repository.listThreadBranchMetaEntries(),
             });
+            const lastDispatchRateLimit =
+              discordDispatchStats.lastRateLimitAtMs > 0
+                ? new Date(discordDispatchStats.lastRateLimitAtMs).toISOString()
+                : "never";
             const lines = [
               `Project: \`${state.channel.workingDir}\``,
               `Model: \`${state.channel.model}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
               `Mentions: mode=\`${mentionPolicy.mode}\`, effective=\`${mentionPolicy.requireMention ? "required" : "off"}\``,
+              `Discord dispatcher: rate_limits=\`${discordDispatchStats.rateLimitHits}\`, last=\`${lastDispatchRateLimit}\`, lane=\`${discordDispatchStats.lastRateLimitLane || "n/a"}\``,
               ...threadStatusLines,
               `In-memory turns: \`${turns}\``,
               `Total channel cost: \`$${totalCost.toFixed(4)}\``,
@@ -3172,10 +3314,29 @@ export async function startApp(
       },
       onUserMessage: async (message) => {
         const channelId = message.channel.id;
+        const channelSendTarget = canSendMessage(message.channel) ? message.channel : null;
+        const queueChannelMessage = async (
+          payload: Parameters<typeof message.reply>[0],
+        ): Promise<Awaited<ReturnType<typeof message.reply>>> => {
+          return await discordDispatch.enqueue(
+            `channel:${channelId}`,
+            async () => await message.reply(payload),
+          );
+        };
+        const queueChannelSend = async (payload: unknown): Promise<unknown | null> => {
+          if (!channelSendTarget) {
+            return null;
+          }
+          return await discordDispatch.enqueue(
+            `channel:${channelId}`,
+            async () => await channelSendTarget.send(payload),
+          );
+        };
+
         const wasQueued = pendingMessageRunsByChannel.has(channelId);
         if (wasQueued) {
           try {
-            await message.reply({
+            await queueChannelMessage({
               content: "⏳ Run in progress for this channel. Queued your message.",
               components: buildQueueDismissButtons(channelId, message.author.id),
             });
@@ -3190,7 +3351,7 @@ export async function startApp(
           .then(async () => {
             if (shuttingDown) {
               try {
-                await message.reply("⚠️ Bot is shutting down. Please retry in a moment.");
+                await queueChannelMessage("⚠️ Bot is shutting down. Please retry in a moment.");
               } catch {
                 // Ignore reply failures while shutting down.
               }
@@ -3212,7 +3373,7 @@ export async function startApp(
             const directBash = parseDirectBashCommand(message.content);
             if (directBash !== null) {
               if (!directBash) {
-                await message.reply(
+                await queueChannelMessage(
                   "Direct shell mode expects a command after `!` (example: `!git status`).",
                 );
                 return;
@@ -3223,15 +3384,11 @@ export async function startApp(
               const payload = `\`\`\`bash\n$ ${directBash}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
               const chunks = chunkDiscordText(payload);
               const firstChunk = chunks[0] ?? "(no output)";
-              await message.reply(firstChunk);
+              await queueChannelMessage(firstChunk);
               for (let i = 1; i < chunks.length; i++) {
                 const chunk = chunks[i];
-                if (
-                  chunk &&
-                  "send" in message.channel &&
-                  typeof message.channel.send === "function"
-                ) {
-                  await message.channel.send(chunk);
+                if (chunk) {
+                  await queueChannelSend(chunk);
                 }
               }
               return;
@@ -3246,9 +3403,11 @@ export async function startApp(
             liveToolTracesByChannel.set(channelId, runToolTrace);
 
             await addReaction(message, "🧠");
-            const status = await message.reply({
-              content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
-              components: buildStopButtons(channelId),
+            const status = await discordDispatch.enqueue(`channel:${channelId}`, async () => {
+              return await message.reply({
+                content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
+                components: buildStopButtons(channelId),
+              });
             });
             const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
             const seededPrompt = buildSeededPrompt(
@@ -3285,9 +3444,11 @@ export async function startApp(
                   const edit = pendingStatusEdit;
                   pendingStatusEdit = null;
                   try {
-                    await status.edit({
-                      content: edit.content,
-                      components: edit.includeButtons ? buildStopButtons(channelId) : [],
+                    await discordDispatch.enqueue(`status:${channelId}`, async () => {
+                      await status.edit({
+                        content: edit.content,
+                        components: edit.includeButtons ? buildStopButtons(channelId) : [],
+                      });
                     });
                   } catch {
                     // Ignore transient edit failures to keep stream moving.
@@ -3387,9 +3548,14 @@ export async function startApp(
                   try {
                     const existing = toolMessagesById.get(toolId);
                     if (existing) {
-                      await existing.edit({ content: nextContent });
+                      await discordDispatch.enqueue(`tool:${channelId}:${toolId}`, async () => {
+                        await existing.edit({ content: nextContent });
+                      });
                     } else {
-                      const sent = await toolSendTarget.send({ content: nextContent });
+                      const sent = await discordDispatch.enqueue(
+                        `tool:${channelId}:${toolId}`,
+                        async () => await toolSendTarget.send({ content: nextContent }),
+                      );
                       if (canEditSentMessage(sent)) {
                         toolMessagesById.set(toolId, sent);
                       }
@@ -3477,26 +3643,35 @@ export async function startApp(
               });
 
               const finalPreview = toStreamingPreview(finalText, streamedThinking);
-              await status.edit({
-                content: finalPreview,
-                components: [],
+              await discordDispatch.enqueue(`status:${channelId}`, async () => {
+                await status.edit({
+                  content: finalPreview,
+                  components: [],
+                });
               });
 
               if (finalPreview.includes("...[truncated live preview]...")) {
                 const chunks = chunkDiscordText(finalText);
                 for (const chunk of chunks) {
-                  if (
-                    chunk &&
-                    "send" in message.channel &&
-                    typeof message.channel.send === "function"
-                  ) {
-                    await message.channel.send(chunk);
+                  if (chunk) {
+                    await queueChannelSend(chunk);
                   }
                 }
               }
 
+              const attachmentChannel = channelSendTarget
+                ? {
+                    send: async (payload: unknown) => {
+                      return await discordDispatch.enqueue(
+                        `channel:${channelId}`,
+                        async () => await channelSendTarget.send(payload),
+                      );
+                    },
+                  }
+                : message.channel;
+
               await sendGeneratedFilesToChannel({
-                channel: message.channel,
+                channel: attachmentChannel,
                 workingDir: state.channel.workingDir,
                 filenames: new Set([
                   ...persistedFilenames,
@@ -3525,9 +3700,11 @@ export async function startApp(
               }
 
               const msg = error instanceof Error ? error.message : "Unknown failure";
-              await status.edit({
-                content: `❌ ${msg}`,
-                components: [],
+              await discordDispatch.enqueue(`status:${channelId}`, async () => {
+                await status.edit({
+                  content: `❌ ${msg}`,
+                  components: [],
+                });
               });
               await removeReaction(message, "🧠");
               await addReaction(message, "❌");

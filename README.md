@@ -72,6 +72,7 @@ bun start
 |---------|-------------|
 | `/project [path]` | Switch working directory — no path on macOS opens Finder picker |
 | `/new` | Reset session and history |
+| `/fork [title]` | Create a new thread from the current channel (conversation fork) |
 | `/model <name>` | Switch Claude model |
 | `/bash <command>` | Run shell command directly in current project |
 | `!<command>` | Direct shell shortcut from any channel message |
