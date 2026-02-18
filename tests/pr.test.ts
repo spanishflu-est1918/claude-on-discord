@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildPrCreateArgs,
+  buildPrMergeArgs,
   extractFirstUrl,
   formatPrStatusLine,
   parseOriginDefaultBranch,
@@ -103,5 +104,25 @@ describe("PR helpers", () => {
     expect(line).toContain("ready");
     expect(line).toContain("feature");
     expect(line).toContain("main");
+  });
+
+  test("buildPrMergeArgs builds merge command with strategy and flags", () => {
+    expect(
+      buildPrMergeArgs({
+        number: 22,
+        method: "squash",
+        deleteBranch: false,
+        admin: false,
+      }),
+    ).toEqual(["gh", "pr", "merge", "22", "--squash", "--keep-branch"]);
+
+    expect(
+      buildPrMergeArgs({
+        number: 23,
+        method: "merge",
+        deleteBranch: true,
+        admin: true,
+      }),
+    ).toEqual(["gh", "pr", "merge", "23", "--merge", "--delete-branch", "--admin"]);
   });
 });

@@ -97,6 +97,35 @@ const slashCommands = [
       subcommand
         .setName("view")
         .setDescription("Show PR details for current branch (if one exists)"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("merge")
+        .setDescription("Merge current branch PR (requires confirm=true)")
+        .addStringOption((option) =>
+          option
+            .setName("method")
+            .setDescription("Merge strategy")
+            .addChoices(
+              { name: "squash", value: "squash" },
+              { name: "rebase", value: "rebase" },
+              { name: "merge", value: "merge" },
+            ),
+        )
+        .addBooleanOption((option) =>
+          option
+            .setName("delete_branch")
+            .setDescription("Delete branch after merge (default: false)"),
+        )
+        .addBooleanOption((option) =>
+          option.setName("admin").setDescription("Use admin merge for protected branches"),
+        )
+        .addBooleanOption((option) =>
+          option
+            .setName("confirm")
+            .setDescription("Required safety confirmation")
+            .setRequired(true),
+        ),
     ),
   new SlashCommandBuilder()
     .setName("worktree")

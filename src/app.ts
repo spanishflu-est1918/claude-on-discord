@@ -27,10 +27,13 @@ import { registerSlashCommands } from "./discord/commands";
 import { buildDiffDelivery } from "./discord/diff-delivery";
 import {
   buildPrCreateArgs,
+  buildPrMergeArgs,
   extractFirstUrl,
   formatPrStatusLine,
   type PrCreateAction,
   type PrInspectAction,
+  type PrMergeAction,
+  type PrMergeMethod,
   parseOriginDefaultBranch,
   parsePrSummaryJson,
 } from "./discord/pr";
@@ -1763,7 +1766,8 @@ export async function startApp(
             const state = sessions.getState(channelId, guildId);
             const action = interaction.options.getSubcommand(true) as
               | PrCreateAction
-              | PrInspectAction;
+              | PrInspectAction
+              | PrMergeAction;
             await interaction.deferReply();
 
             const ghVersion = await runCommand(["gh", "--version"], state.channel.workingDir);
@@ -1794,7 +1798,7 @@ export async function startApp(
               break;
             }
 
-            if (action === "status" || action === "view") {
+            if (action === "status" || action === "view" || action === "merge") {
               const inspectResult = await runCommand(
                 [
                   "gh",
@@ -1831,19 +1835,83 @@ export async function startApp(
                 break;
               }
 
-              const details = [
-                formatPrStatusLine(summary),
-                `Title: ${summary.title}`,
-                `Body:\n${clipOutput(summary.body?.trim() || "(empty)", 2400)}`,
-              ].join("\n\n");
-              const chunks = chunkDiscordText(details);
-              await interaction.editReply(chunks[0] ?? "(no output)");
-              for (let i = 1; i < chunks.length; i++) {
-                const chunk = chunks[i];
-                if (chunk) {
-                  await interaction.followUp(chunk);
+              if (action === "view") {
+                const details = [
+                  formatPrStatusLine(summary),
+                  `Title: ${summary.title}`,
+                  `Body:\n${clipOutput(summary.body?.trim() || "(empty)", 2400)}`,
+                ].join("\n\n");
+                const chunks = chunkDiscordText(details);
+                await interaction.editReply(chunks[0] ?? "(no output)");
+                for (let i = 1; i < chunks.length; i++) {
+                  const chunk = chunks[i];
+                  if (chunk) {
+                    await interaction.followUp(chunk);
+                  }
                 }
+                break;
               }
+
+              const confirmMerge = interaction.options.getBoolean("confirm", true);
+              if (!confirmMerge) {
+                await interaction.editReply(
+                  "Merge safety check failed. Re-run with `confirm:true` to merge.",
+                );
+                break;
+              }
+              if (summary.state !== "OPEN") {
+                await interaction.editReply(
+                  `Cannot merge PR #${summary.number}: state is \`${summary.state}\` (expected OPEN).`,
+                );
+                break;
+              }
+              if (summary.isDraft) {
+                await interaction.editReply(
+                  `Cannot merge PR #${summary.number}: it is still a draft.`,
+                );
+                break;
+              }
+
+              const dirtyResult = await runCommand(
+                ["git", "status", "--porcelain"],
+                state.channel.workingDir,
+              );
+              if (dirtyResult.exitCode === 0 && dirtyResult.output.trim().length > 0) {
+                await interaction.editReply(
+                  "Working tree has uncommitted changes. Commit or stash before `/pr merge`.",
+                );
+                break;
+              }
+
+              const methodInput = interaction.options.getString("method")?.trim() || "squash";
+              if (!["squash", "rebase", "merge"].includes(methodInput)) {
+                await interaction.editReply(
+                  `Unsupported merge method \`${methodInput}\`. Use squash, rebase, or merge.`,
+                );
+                break;
+              }
+
+              const method = methodInput as PrMergeMethod;
+              const deleteBranch = interaction.options.getBoolean("delete_branch") ?? false;
+              const admin = interaction.options.getBoolean("admin") ?? false;
+              const mergeArgs = buildPrMergeArgs({
+                number: summary.number,
+                method,
+                deleteBranch,
+                admin,
+              });
+              const mergeResult = await runCommand(mergeArgs, state.channel.workingDir);
+              if (mergeResult.exitCode !== 0) {
+                await interaction.editReply(
+                  `Failed to merge PR #${summary.number}.\n` +
+                    `\`\`\`bash\n${clipOutput(mergeResult.output || "(no output)", 1800)}\n\`\`\``,
+                );
+                break;
+              }
+
+              await interaction.editReply(
+                `Merged PR #${summary.number} with \`${method}\` (${deleteBranch ? "branch deleted" : "branch kept"}).\n${summary.url}`,
+              );
               break;
             }
 

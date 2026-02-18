@@ -1,5 +1,7 @@
 export type PrCreateAction = "open" | "draft";
 export type PrInspectAction = "status" | "view";
+export type PrMergeAction = "merge";
+export type PrMergeMethod = "squash" | "rebase" | "merge";
 
 export type PrSummary = {
   number: number;
@@ -91,4 +93,18 @@ export function parsePrSummaryJson(output: string): PrSummary | null {
 export function formatPrStatusLine(summary: PrSummary): string {
   const draft = summary.isDraft ? "draft" : "ready";
   return `PR #${summary.number} (${draft}, state=${summary.state}) \`${summary.headRefName}\` -> \`${summary.baseRefName}\`\n${summary.url}`;
+}
+
+export function buildPrMergeArgs(input: {
+  number: number;
+  method: PrMergeMethod;
+  deleteBranch: boolean;
+  admin: boolean;
+}): string[] {
+  const args = ["gh", "pr", "merge", String(input.number), `--${input.method}`];
+  args.push(input.deleteBranch ? "--delete-branch" : "--keep-branch");
+  if (input.admin) {
+    args.push("--admin");
+  }
+  return args;
 }

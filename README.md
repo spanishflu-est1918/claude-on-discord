@@ -136,6 +136,8 @@ Common optional variables:
   - default base resolves from thread root branch or origin default branch
   - requires clean working tree and commits ahead of base
 - `/pr status|view`: inspect PR state/details for current branch
+- `/pr merge [method] [delete_branch] [admin] confirm:true`: merge current branch PR
+  - safety checks: confirm flag, OPEN state, non-draft, clean working tree
 - `/worktree create|list|remove|thread`: git worktree operations
   - `create`: auto-generates path when omitted
     - auto-runs setup for new worktree

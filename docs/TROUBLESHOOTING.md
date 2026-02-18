@@ -81,3 +81,9 @@ Checks:
 2. Confirm you are on a branch (not detached HEAD).
 3. Commit/stash all local changes before `/pr`.
 4. Confirm branch has commits ahead of base branch.
+
+`/pr merge` specifics:
+
+1. You must pass `confirm:true`.
+2. PR must be OPEN and not draft.
+3. Merge strategy must be one of `squash`, `rebase`, `merge`.

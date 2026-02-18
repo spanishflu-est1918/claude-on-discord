@@ -27,6 +27,6 @@ describe("slash commands", () => {
     const subcommands = (pr?.options ?? [])
       .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
       .filter(Boolean);
-    expect(subcommands).toEqual(["open", "draft", "status", "view"]);
+    expect(subcommands).toEqual(["open", "draft", "status", "view", "merge"]);
   });
 });
