@@ -61,11 +61,11 @@ export class Repository {
         `,
       )
       .run({
-        $channel_id: input.channelId,
-        $guild_id: input.guildId,
-        $working_dir: input.workingDir,
-        $session_id: sessionId,
-        $model: model,
+        channel_id: input.channelId,
+        guild_id: input.guildId,
+        working_dir: input.workingDir,
+        session_id: sessionId,
+        model: model,
       });
 
     const channel = this.getChannel(input.channelId);
@@ -77,10 +77,10 @@ export class Repository {
 
   getChannel(channelId: string): ChannelRecord | null {
     const row = this.database
-      .query<ChannelRow, { $channel_id: string }>(
+      .query<ChannelRow, { channel_id: string }>(
         "SELECT * FROM channels WHERE channel_id = $channel_id;",
       )
-      .get({ $channel_id: channelId });
+      .get({ channel_id: channelId });
     if (!row) {
       return null;
     }
@@ -96,7 +96,7 @@ export class Repository {
         WHERE channel_id = $channel_id;
         `,
       )
-      .run({ $channel_id: channelId, $session_id: sessionId });
+      .run({ channel_id: channelId, session_id: sessionId });
   }
 
   setChannelWorkingDir(channelId: string, workingDir: string): void {
@@ -108,7 +108,7 @@ export class Repository {
         WHERE channel_id = $channel_id;
         `,
       )
-      .run({ $channel_id: channelId, $working_dir: workingDir });
+      .run({ channel_id: channelId, working_dir: workingDir });
   }
 
   setChannelModel(channelId: string, model: string): void {
@@ -120,7 +120,7 @@ export class Repository {
         WHERE channel_id = $channel_id;
         `,
       )
-      .run({ $channel_id: channelId, $model: model });
+      .run({ channel_id: channelId, model: model });
   }
 
   addSessionCost(input: SessionCostInsert): void {
@@ -132,46 +132,46 @@ export class Repository {
         `,
       )
       .run({
-        $session_id: input.sessionId,
-        $channel_id: input.channelId,
-        $cost_usd: input.costUsd,
-        $duration_ms: input.durationMs,
-        $model: input.model,
-        $turn_count: input.turnCount,
+        session_id: input.sessionId,
+        channel_id: input.channelId,
+        cost_usd: input.costUsd,
+        duration_ms: input.durationMs,
+        model: input.model,
+        turn_count: input.turnCount,
       });
   }
 
   getSessionCostTotal(sessionId: string): number {
     const row = this.database
-      .query<{ total: number }, { $session_id: string }>(
+      .query<{ total: number }, { session_id: string }>(
         "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM session_costs WHERE session_id = $session_id;",
       )
-      .get({ $session_id: sessionId });
+      .get({ session_id: sessionId });
     return row?.total ?? 0;
   }
 
   getChannelCostTotal(channelId: string): number {
     const row = this.database
-      .query<{ total: number }, { $channel_id: string }>(
+      .query<{ total: number }, { channel_id: string }>(
         "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM session_costs WHERE channel_id = $channel_id;",
       )
-      .get({ $channel_id: channelId });
+      .get({ channel_id: channelId });
     return row?.total ?? 0;
   }
 
   getChannelTurnCount(channelId: string): number {
     const row = this.database
-      .query<{ total: number }, { $channel_id: string }>(
+      .query<{ total: number }, { channel_id: string }>(
         "SELECT COALESCE(SUM(turn_count), 0) AS total FROM session_costs WHERE channel_id = $channel_id;",
       )
-      .get({ $channel_id: channelId });
+      .get({ channel_id: channelId });
     return row?.total ?? 0;
   }
 
   getSetting(key: string): string | null {
     const row = this.database
-      .query<SettingRow, { $key: string }>("SELECT * FROM settings WHERE key = $key;")
-      .get({ $key: key });
+      .query<SettingRow, { key: string }>("SELECT * FROM settings WHERE key = $key;")
+      .get({ key: key });
     return row?.value ?? null;
   }
 
@@ -186,6 +186,6 @@ export class Repository {
           updated_at = unixepoch();
         `,
       )
-      .run({ $key: key, $value: value });
+      .run({ key: key, value: value });
   }
 }

@@ -6,7 +6,7 @@ import { Repository } from "../src/db/repository";
 const databases: Database[] = [];
 
 function createSessionManager(maxHistoryItems = 40): SessionManager {
-  const database = new Database(":memory:");
+  const database = new Database(":memory:", { strict: true });
   databases.push(database);
   const repository = new Repository(database);
   return new SessionManager(repository, {

@@ -5,7 +5,7 @@ import { Repository } from "../src/db/repository";
 const databases: Database[] = [];
 
 function createRepository(): Repository {
-  const db = new Database(":memory:");
+  const db = new Database(":memory:", { strict: true });
   databases.push(db);
   return new Repository(db);
 }
