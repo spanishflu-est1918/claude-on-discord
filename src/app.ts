@@ -6,6 +6,7 @@ import { StopController } from "./claude/stop";
 import type { AppConfig } from "./config";
 import { Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
+import { buildStopButtons, parseRunControlCustomId } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
@@ -88,6 +89,36 @@ export async function startApp(config: AppConfig): Promise<void> {
 
   await startDiscordClient({
     token: config.discordToken,
+    onButtonInteraction: async (interaction) => {
+      const control = parseRunControlCustomId(interaction.customId);
+      if (!control) {
+        await interaction.reply({ content: "Unknown control button.", ephemeral: true });
+        return;
+      }
+
+      if (interaction.channelId !== control.channelId) {
+        await interaction.reply({
+          content: "This control belongs to a different channel session.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (control.action === "interrupt") {
+        const interrupted = await stopController.interrupt(control.channelId);
+        await interaction.reply({
+          content: interrupted ? "Interrupt signal sent." : "No active run to interrupt.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const aborted = stopController.abort(control.channelId);
+      await interaction.reply({
+        content: aborted ? "Abort signal sent." : "No active run to abort.",
+        ephemeral: true,
+      });
+    },
     onSlashCommand: async (interaction) => {
       const channelId = interaction.channelId;
       const guildId = interaction.guildId ?? "dm";
@@ -169,7 +200,10 @@ export async function startApp(config: AppConfig): Promise<void> {
       const state = sessions.getState(channelId, guildId);
 
       await addReaction(message, "🧠");
-      const status = await message.reply("Thinking...");
+      const status = await message.reply({
+        content: "Thinking...",
+        components: buildStopButtons(channelId),
+      });
       const prompt = getMessagePrompt(message);
       const abortController = new AbortController();
 
@@ -203,10 +237,16 @@ export async function startApp(config: AppConfig): Promise<void> {
 
         const chunks = chunkDiscordText(outputText);
         if (chunks.length === 0) {
-          await status.edit("(No response text)");
+          await status.edit({
+            content: "(No response text)",
+            components: [],
+          });
         } else {
           const firstChunk = chunks[0];
-          await status.edit(firstChunk ?? "(No response text)");
+          await status.edit({
+            content: firstChunk ?? "(No response text)",
+            components: [],
+          });
           for (let i = 1; i < chunks.length; i++) {
             const chunk = chunks[i];
             if (chunk) {
@@ -221,7 +261,10 @@ export async function startApp(config: AppConfig): Promise<void> {
         await addReaction(message, "✅");
       } catch (error) {
         const msg = error instanceof Error ? error.message : "Unknown failure";
-        await status.edit(`❌ ${msg}`);
+        await status.edit({
+          content: `❌ ${msg}`,
+          components: [],
+        });
         await removeReaction(message, "🧠");
         await addReaction(message, "❌");
       } finally {

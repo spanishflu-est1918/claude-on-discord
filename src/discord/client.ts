@@ -1,4 +1,5 @@
 import {
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   Client,
   GatewayIntentBits,
@@ -10,6 +11,7 @@ export interface DiscordClientOptions {
   token: string;
   onUserMessage: (message: Message) => Promise<void>;
   onSlashCommand: (interaction: ChatInputCommandInteraction) => Promise<void>;
+  onButtonInteraction: (interaction: ButtonInteraction) => Promise<void>;
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -47,19 +49,32 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
   });
 
   client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isChatInputCommand()) {
+    if (interaction.isButton()) {
+      try {
+        await options.onButtonInteraction(interaction);
+      } catch (error) {
+        console.error("button interaction failed", error);
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+        }
+      }
       return;
     }
 
-    try {
-      await options.onSlashCommand(interaction);
-    } catch (error) {
-      console.error("slash command failed", error);
-      const msg = error instanceof Error ? error.message : "Unknown error";
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
-      } else {
-        await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+    if (interaction.isChatInputCommand()) {
+      try {
+        await options.onSlashCommand(interaction);
+      } catch (error) {
+        console.error("slash command failed", error);
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+        }
       }
     }
   });
