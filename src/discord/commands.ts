@@ -59,8 +59,18 @@ export async function registerSlashCommands(input: {
   const body = slashCommands.map((command) => command.toJSON());
 
   if (input.guildId) {
-    await rest.put(Routes.applicationGuildCommands(input.clientId, input.guildId), { body });
-    console.log(`Registered ${body.length} guild slash command(s).`);
+    try {
+      await rest.put(Routes.applicationGuildCommands(input.clientId, input.guildId), { body });
+      console.log(`Registered ${body.length} guild slash command(s).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Missing Access") || message.includes("50001")) {
+        throw new Error(
+          `Missing access to guild ${input.guildId}. Ensure the bot is invited to that server and has application.commands scope.`,
+        );
+      }
+      throw error;
+    }
     return;
   }
 
