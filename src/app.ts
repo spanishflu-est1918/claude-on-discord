@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -90,14 +90,17 @@ async function removeReaction(message: Message, emoji: string): Promise<void> {
   }
 }
 
-function resolvePath(inputPath: string): string {
+function resolvePath(inputPath: string, baseDir = process.cwd()): string {
   if (inputPath.startsWith("~/")) {
     const home = process.env.HOME;
     if (home) {
       return path.resolve(home, inputPath.slice(2));
     }
   }
-  return path.resolve(inputPath);
+  if (path.isAbsolute(inputPath)) {
+    return path.resolve(inputPath);
+  }
+  return path.resolve(baseDir, inputPath);
 }
 
 async function pickFolderWithFinder(): Promise<string | null> {
@@ -245,14 +248,29 @@ async function runBashCommand(
   };
 }
 
-function toStreamingPreview(text: string, maxChars = 1800): string {
-  if (!text.trim()) {
+function toStreamingPreview(text: string, thinking: string, maxChars = 1800): string {
+  const trimmedText = text.trim();
+  const trimmedThinking = thinking.trim();
+  if (!trimmedText && !trimmedThinking) {
     return "Thinking...";
   }
-  if (text.length <= maxChars) {
-    return text;
+
+  const parts: string[] = [];
+  if (trimmedThinking) {
+    const clippedThinking =
+      trimmedThinking.length > 800 ? `...${trimmedThinking.slice(-797)}` : trimmedThinking;
+    parts.push(`Thinking:\n${clippedThinking}`);
   }
-  return `...${text.slice(-(maxChars - 3))}`;
+  if (trimmedText) {
+    const clippedText = trimmedText.length > 900 ? `...${trimmedText.slice(-897)}` : trimmedText;
+    parts.push(`Answer so far:\n${clippedText}`);
+  }
+
+  const combined = parts.join("\n\n");
+  if (combined.length <= maxChars) {
+    return combined;
+  }
+  return `...${combined.slice(-(maxChars - 3))}`;
 }
 
 export async function startApp(config: AppConfig): Promise<void> {
@@ -400,16 +418,51 @@ export async function startApp(config: AppConfig): Promise<void> {
           break;
         }
         case "project": {
+          const state = sessions.getState(channelId, guildId);
+          const inputPath = interaction.options.getString("path");
           await interaction.deferReply();
 
-          if (process.platform !== "darwin") {
-            await interaction.editReply("Finder picker is only available on macOS.");
-            break;
-          }
-          const selectedPath = await pickFolderWithFinder();
-          if (!selectedPath) {
-            await interaction.editReply("Folder selection cancelled.");
-            break;
+          let selectedPath: string | null = null;
+          let sourceDescription = "";
+
+          if (inputPath) {
+            selectedPath = resolvePath(inputPath, state.channel.workingDir);
+            if (!existsSync(selectedPath)) {
+              await interaction.editReply(
+                `Path not found: \`${selectedPath}\`\n\`path\` is resolved relative to current project \`${state.channel.workingDir}\` unless absolute.`,
+              );
+              break;
+            }
+            const isDirectory = (() => {
+              try {
+                return statSync(selectedPath).isDirectory();
+              } catch {
+                return false;
+              }
+            })();
+            if (!isDirectory) {
+              await interaction.editReply(
+                `Path is not a directory: \`${selectedPath}\`\nProvide a folder path relative to \`${state.channel.workingDir}\` or absolute.`,
+              );
+              break;
+            }
+            const isRelative = !path.isAbsolute(inputPath) && !inputPath.startsWith("~/");
+            sourceDescription = isRelative
+              ? `from \`${inputPath}\` (resolved relative to \`${state.channel.workingDir}\`)`
+              : `from \`${inputPath}\``;
+          } else {
+            if (process.platform !== "darwin") {
+              await interaction.editReply(
+                `Finder picker is only available on macOS. Use \`/project path:<dir>\` (relative to \`${state.channel.workingDir}\` or absolute).`,
+              );
+              break;
+            }
+            selectedPath = await pickFolderWithFinder();
+            if (!selectedPath) {
+              await interaction.editReply("Folder selection cancelled.");
+              break;
+            }
+            sourceDescription = "from Finder picker";
           }
 
           const requestId = crypto.randomUUID();
@@ -419,7 +472,7 @@ export async function startApp(config: AppConfig): Promise<void> {
             workingDir: selectedPath,
           });
           await interaction.editReply({
-            content: `Selected project \`${selectedPath}\`. Keep current context or clear it?`,
+            content: `Selected project \`${selectedPath}\` ${sourceDescription}. Keep current context or clear it?`,
             components: buildProjectSwitchButtons(requestId),
           });
           break;
@@ -525,6 +578,7 @@ export async function startApp(config: AppConfig): Promise<void> {
       const abortController = new AbortController();
       const persistedFilenames = new Set<string>();
       let streamedText = "";
+      let streamedThinking = "";
       let streamClosed = false;
       let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
       let statusEditQueue: Promise<unknown> = Promise.resolve();
@@ -546,7 +600,7 @@ export async function startApp(config: AppConfig): Promise<void> {
         if (streamClosed) {
           return;
         }
-        void queueStatusEdit(toStreamingPreview(streamedText), true);
+        void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
       };
 
       const scheduleStreamPreview = () => {
@@ -574,6 +628,10 @@ export async function startApp(config: AppConfig): Promise<void> {
           },
           onTextDelta: (textDelta) => {
             streamedText += textDelta;
+            scheduleStreamPreview();
+          },
+          onThinkingDelta: (thinkingDelta) => {
+            streamedThinking += thinkingDelta;
             scheduleStreamPreview();
           },
           onMessage: (sdkMessage) => {

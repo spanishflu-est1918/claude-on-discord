@@ -19,6 +19,9 @@ export type QueryFactoryInput = {
     | "resume"
     | "mcpServers"
     | "settingSources"
+    | "thinking"
+    | "effort"
+    | "includePartialMessages"
     | "allowDangerouslySkipPermissions"
   >;
 };
@@ -30,11 +33,14 @@ export interface RunRequest {
   cwd: string;
   sessionId?: string;
   model?: string;
+  thinking?: Options["thinking"];
+  effort?: Options["effort"];
   permissionMode?: ClaudePermissionMode;
   abortController?: AbortController;
   onQueryStart?: (query: ClaudeQuery) => void;
   onMessage?: (message: ClaudeSDKMessage) => void;
   onTextDelta?: (text: string) => void;
+  onThinkingDelta?: (thinking: string) => void;
 }
 
 export interface RunResult {
@@ -55,72 +61,37 @@ export class ClaudeRunner {
     const abortController = request.abortController ?? new AbortController();
     const permissionMode = request.permissionMode ?? "bypassPermissions";
     const mcpServers = await loadMcpServers(request.cwd);
-    const hasMcpServers = Boolean(mcpServers);
-    try {
-      return await this.runSingleQuery({
-        request,
-        abortController,
-        permissionMode,
-        mcpServers,
-        includeMcpServers: true,
-        includeResume: true,
-      });
-    } catch (error) {
-      if (hasMcpServers && shouldRetryWithoutMcp(error)) {
-        try {
-          return await this.runSingleQuery({
-            request,
-            abortController,
-            permissionMode,
-            mcpServers,
-            includeMcpServers: false,
-            includeResume: true,
-          });
-        } catch (retryError) {
-          if (request.sessionId && shouldRetryWithoutResume(retryError)) {
-            try {
-              return await this.runSingleQuery({
-                request,
-                abortController,
-                permissionMode,
-                mcpServers,
-                includeMcpServers: false,
-                includeResume: false,
-              });
-            } catch (freshSessionError) {
-              throw wrapRunnerError(
-                freshSessionError,
-                "Retried without MCP and without session resume after Claude process failures.",
-              );
-            }
-          }
-          throw wrapRunnerError(
-            retryError,
-            "Retried without MCP servers after the initial Claude process failed.",
-          );
+    const attempts = buildRunAttempts({
+      hasMcpServers: Boolean(mcpServers),
+      hasSessionId: Boolean(request.sessionId),
+    });
+    const failedAttemptLabels: string[] = [];
+
+    for (let index = 0; index < attempts.length; index++) {
+      const attempt = attempts[index];
+      if (!attempt) {
+        continue;
+      }
+      try {
+        return await this.runSingleQuery({
+          request,
+          abortController,
+          permissionMode,
+          mcpServers,
+          includeMcpServers: attempt.includeMcpServers,
+          includeResume: attempt.includeResume,
+          settingSources: attempt.settingSources,
+        });
+      } catch (error) {
+        failedAttemptLabels.push(attempt.label);
+        const canRetry = shouldRetryAfterProcessExit(error) && index < attempts.length - 1;
+        if (!canRetry) {
+          throw wrapRunnerError(error, formatAttemptContext(failedAttemptLabels));
         }
       }
-
-      if (request.sessionId && shouldRetryWithoutResume(error)) {
-        try {
-          return await this.runSingleQuery({
-            request,
-            abortController,
-            permissionMode,
-            mcpServers,
-            includeMcpServers: true,
-            includeResume: false,
-          });
-        } catch (freshSessionError) {
-          throw wrapRunnerError(
-            freshSessionError,
-            "Retried without session resume after the initial Claude process failed.",
-          );
-        }
-      }
-
-      throw wrapRunnerError(error);
     }
+
+    throw new Error("Runner exhausted retries without returning a result.");
   }
 
   private async runSingleQuery(input: {
@@ -130,15 +101,19 @@ export class ClaudeRunner {
     mcpServers?: Record<string, ClaudeMcpServerConfig>;
     includeMcpServers: boolean;
     includeResume: boolean;
+    settingSources: NonNullable<Options["settingSources"]>;
   }): Promise<RunResult> {
     const options: QueryFactoryInput["options"] = {
       cwd: input.request.cwd,
       permissionMode: input.permissionMode,
-      settingSources: ["project", "local"],
+      settingSources: input.settingSources,
+      includePartialMessages: true,
+      thinking: input.request.thinking ?? { type: "adaptive" },
       ...(input.permissionMode === "bypassPermissions"
         ? { allowDangerouslySkipPermissions: true }
         : {}),
       ...(input.request.model ? { model: input.request.model } : {}),
+      ...(input.request.effort ? { effort: input.request.effort } : {}),
       ...(input.includeResume && input.request.sessionId
         ? { resume: input.request.sessionId }
         : {}),
@@ -172,6 +147,10 @@ export class ClaudeRunner {
         text += streamChunk;
         input.request.onTextDelta?.(streamChunk);
       }
+      const thinkingChunk = extractStreamThinkingDelta(message);
+      if (thinkingChunk) {
+        input.request.onThinkingDelta?.(thinkingChunk);
+      }
 
       if (isResultMessage(message)) {
         costUsd = message.total_cost_usd;
@@ -200,18 +179,86 @@ export class ClaudeRunner {
   }
 }
 
-function shouldRetryWithoutMcp(error: unknown): boolean {
+type RunAttempt = {
+  includeMcpServers: boolean;
+  includeResume: boolean;
+  settingSources: NonNullable<Options["settingSources"]>;
+  label: string;
+};
+
+function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean }): RunAttempt[] {
+  const attempts: RunAttempt[] = [];
+  const seen = new Set<string>();
+
+  const push = (attempt: RunAttempt) => {
+    const key = [
+      attempt.includeMcpServers ? "mcp" : "no-mcp",
+      attempt.includeResume ? "resume" : "no-resume",
+      attempt.settingSources.join(","),
+    ].join("|");
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    attempts.push(attempt);
+  };
+
+  push({
+    includeMcpServers: true,
+    includeResume: true,
+    settingSources: ["project", "local"],
+    label: "default",
+  });
+
+  if (input.hasMcpServers) {
+    push({
+      includeMcpServers: false,
+      includeResume: true,
+      settingSources: ["project", "local"],
+      label: "without MCP",
+    });
+  }
+
+  if (input.hasSessionId) {
+    push({
+      includeMcpServers: true,
+      includeResume: false,
+      settingSources: ["project", "local"],
+      label: "without session resume",
+    });
+  }
+
+  if (input.hasMcpServers && input.hasSessionId) {
+    push({
+      includeMcpServers: false,
+      includeResume: false,
+      settingSources: ["project", "local"],
+      label: "without MCP and session resume",
+    });
+  }
+
+  push({
+    includeMcpServers: false,
+    includeResume: false,
+    settingSources: ["user"],
+    label: "safe mode (user settings only)",
+  });
+
+  return attempts;
+}
+
+function shouldRetryAfterProcessExit(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
   return /\bexited with code 1\b/i.test(error.message);
 }
 
-function shouldRetryWithoutResume(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
+function formatAttemptContext(attemptLabels: string[]): string | undefined {
+  if (attemptLabels.length <= 1) {
+    return undefined;
   }
-  return /\bexited with code 1\b/i.test(error.message);
+  return `Attempted recovery modes: ${attemptLabels.join(" -> ")}.`;
 }
 
 function wrapRunnerError(error: unknown, context?: string): Error {
@@ -299,6 +346,24 @@ function extractStreamTextDelta(message: ClaudeSDKMessage): string | null {
   }
 
   return delta.text;
+}
+
+function extractStreamThinkingDelta(message: ClaudeSDKMessage): string | null {
+  if (message.type !== "stream_event") {
+    return null;
+  }
+
+  const event = message.event;
+  if (!event || event.type !== "content_block_delta") {
+    return null;
+  }
+
+  const delta = event.delta;
+  if (!delta || delta.type !== "thinking_delta" || typeof delta.thinking !== "string") {
+    return null;
+  }
+
+  return delta.thinking;
 }
 
 function extractAssistantText(message: Extract<ClaudeSDKMessage, { type: "assistant" }>): string {

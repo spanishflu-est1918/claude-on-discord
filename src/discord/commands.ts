@@ -3,7 +3,12 @@ import { REST, Routes, SlashCommandBuilder } from "discord.js";
 const slashCommands = [
   new SlashCommandBuilder()
     .setName("project")
-    .setDescription("Pick project dir in Finder, then choose keep or clear context"),
+    .setDescription("Switch project dir; path is relative to current dir if not absolute")
+    .addStringOption((option) =>
+      option
+        .setName("path")
+        .setDescription("Optional project path (relative to current dir, absolute, or ~/...)"),
+    ),
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()

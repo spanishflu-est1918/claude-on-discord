@@ -138,16 +138,24 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.resume).toBe("session-3");
     expect(capturedInput?.options.model).toBe("opus");
     expect(capturedInput?.options.permissionMode).toBe("plan");
+    expect(capturedInput?.options.includePartialMessages).toBe(true);
+    expect(capturedInput?.options.thinking).toEqual({ type: "adaptive" });
   });
 
-  test("calls onQueryStart and onTextDelta callbacks", async () => {
+  test("calls onQueryStart, onTextDelta, and onThinkingDelta callbacks", async () => {
     const textDeltas: string[] = [];
+    const thinkingDeltas: string[] = [];
     let queryStarted = false;
     const query = createMockQuery([
       {
         type: "stream_event",
         session_id: "session-4",
         event: { type: "content_block_delta", delta: { type: "text_delta", text: "A" } },
+      },
+      {
+        type: "stream_event",
+        session_id: "session-4",
+        event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "Plan" } },
       },
       {
         type: "stream_event",
@@ -166,10 +174,14 @@ describe("ClaudeRunner", () => {
       onTextDelta: (text) => {
         textDeltas.push(text);
       },
+      onThinkingDelta: (thinking) => {
+        thinkingDeltas.push(thinking);
+      },
     });
 
     expect(queryStarted).toBe(true);
     expect(textDeltas).toEqual(["A", "B"]);
+    expect(thinkingDeltas).toEqual(["Plan"]);
     expect(result.text).toBe("AB");
   });
 
@@ -359,8 +371,67 @@ describe("ClaudeRunner", () => {
       expect(calls[0]?.options.resume).toBe("session-stale");
       expect(calls[1]?.options.mcpServers).toBeUndefined();
       expect(calls[1]?.options.resume).toBe("session-stale");
-      expect(calls[2]?.options.mcpServers).toBeUndefined();
+      expect(calls[2]?.options.mcpServers).toBeDefined();
       expect(calls[2]?.options.resume).toBeUndefined();
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to safe mode settings after process exit retries", async () => {
+    const workingDir = await mkdtemp(path.join(tmpdir(), "runner-safe-settings-"));
+    await mkdir(path.join(workingDir, ".claude"), { recursive: true });
+    await writeFile(
+      path.join(workingDir, ".claude", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          test: {
+            command: "echo",
+            args: ["hello"],
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    try {
+      const calls: QueryFactoryInput[] = [];
+      const runner = new ClaudeRunner((input) => {
+        calls.push(input);
+        if (calls.length <= 4) {
+          return createFailingQuery(new Error("Claude Code process exited with code 1"));
+        }
+        return createMockQuery([
+          {
+            type: "result",
+            subtype: "success",
+            session_id: "session-safe",
+            duration_ms: 100,
+            total_cost_usd: 0.01,
+            num_turns: 1,
+            result: "Recovered with safe mode",
+            is_error: false,
+            duration_api_ms: 30,
+            stop_reason: "end_turn",
+            usage: {},
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "retry-safe-1",
+          },
+        ]);
+      });
+
+      const result = await runner.run({
+        prompt: "Ping",
+        cwd: workingDir,
+        sessionId: "session-stale",
+      });
+
+      expect(result.text).toBe("Recovered with safe mode");
+      expect(calls).toHaveLength(5);
+      expect(calls[4]?.options.settingSources).toEqual(["user"]);
+      expect(calls[4]?.options.mcpServers).toBeUndefined();
+      expect(calls[4]?.options.resume).toBeUndefined();
     } finally {
       await rm(workingDir, { recursive: true, force: true });
     }
