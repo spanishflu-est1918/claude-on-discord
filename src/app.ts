@@ -1,8 +1,8 @@
 import { existsSync, statSync } from "node:fs";
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type Message, MessageFlags } from "discord.js";
+import { AttachmentBuilder, type Message, MessageFlags } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -1178,6 +1178,22 @@ function formatErrorMessage(error: unknown): string {
   return "unknown error";
 }
 
+function getSentAttachmentCount(message: unknown): number | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const candidate = message as {
+    attachments?: { size?: number };
+  };
+  if (!candidate.attachments || typeof candidate.attachments !== "object") {
+    return null;
+  }
+  if (typeof candidate.attachments.size === "number") {
+    return candidate.attachments.size;
+  }
+  return null;
+}
+
 async function sendGeneratedFilesToChannel(input: {
   channel: unknown;
   workingDir: string;
@@ -1200,10 +1216,18 @@ async function sendGeneratedFilesToChannel(input: {
     sentPaths.add(resolved);
 
     try {
-      await input.channel.send({
+      const fileData = await readFile(resolved);
+      const uploadName = path.basename(resolved) || "artifact.bin";
+      const sentMessage = await input.channel.send({
         content: `Generated file: \`${filename}\``,
-        files: [resolved],
+        files: [new AttachmentBuilder(fileData, { name: uploadName })],
       });
+      const attachmentCount = getSentAttachmentCount(sentMessage);
+      if (attachmentCount === 0) {
+        failures.push(
+          `- \`${filename}\`: Discord acknowledged message but no attachment was present`,
+        );
+      }
     } catch (error) {
       failures.push(`- \`${filename}\`: ${formatErrorMessage(error)}`);
     }
