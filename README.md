@@ -122,7 +122,10 @@ Common optional variables:
 - `/systemprompt show`: view current per-channel system prompt
 - `/systemprompt clear`: clear per-channel system prompt (session restarts)
 - `/bash <command>`: run shell command directly in current project
-- `/worktree create|list|remove`: git worktree operations
+- `/worktree create|list|remove|thread`: git worktree operations
+  - `create`: auto-generates path when omitted
+  - `remove`: defaults to current project dir when omitted
+  - `thread`: provision/switch this thread to dedicated worktree
 - `/compact`: compact in-memory context and reset session
 - `/cost`: show total channel spend/turns
 

@@ -309,6 +309,35 @@ function sanitizeThreadToken(input: string): string {
   return base.length > 0 ? base : "thread";
 }
 
+async function buildAutoWorktreeTarget(input: {
+  baseWorkingDir: string;
+  channelId: string;
+  branchHint?: string | null;
+}): Promise<{ worktreePath: string; branchName: string } | null> {
+  const topLevelResult = await runCommand(
+    ["git", "rev-parse", "--show-toplevel"],
+    input.baseWorkingDir,
+  );
+  if (topLevelResult.exitCode !== 0) {
+    return null;
+  }
+
+  const repoRoot = firstOutputLine(topLevelResult.output);
+  if (!repoRoot) {
+    return null;
+  }
+
+  const repoName = path.basename(repoRoot);
+  const suffix = input.channelId.slice(-8);
+  const token = sanitizeThreadToken(input.branchHint ?? `worktree-${Date.now().toString(36)}`);
+  const worktreeRoot = path.resolve(repoRoot, "..", `${repoName}.discord-worktrees`);
+  const worktreePath = path.join(worktreeRoot, `${token}-${suffix}`);
+  const branchName = input.branchHint ?? `discord/${token.slice(0, 40)}-${suffix}`;
+  await mkdir(worktreeRoot, { recursive: true });
+
+  return { worktreePath, branchName };
+}
+
 async function maybeProvisionThreadWorktree(input: {
   enabled: boolean;
   parentWorkingDir: string;
@@ -1036,34 +1065,60 @@ export async function startApp(config: AppConfig): Promise<void> {
               break;
             }
 
-            if (!inputPath) {
-              await interaction.editReply("`path` is required for create/remove.");
-              break;
-            }
-
             if (action === "create") {
-              const resolvedPath = resolvePath(inputPath);
-              const cmd = ["git", "worktree", "add", resolvedPath];
-              if (branch) {
-                cmd.push(branch);
+              let resolvedPath: string;
+              let result: { exitCode: number; output: string };
+
+              if (inputPath) {
+                resolvedPath = resolvePath(inputPath, state.channel.workingDir);
+                const cmd = ["git", "worktree", "add", resolvedPath];
+                if (branch) {
+                  cmd.push(branch);
+                }
+                result = await runCommand(cmd, state.channel.workingDir);
+              } else {
+                const autoTarget = await buildAutoWorktreeTarget({
+                  baseWorkingDir: state.channel.workingDir,
+                  channelId,
+                  branchHint: branch,
+                });
+                if (!autoTarget) {
+                  await interaction.editReply(
+                    `Failed to resolve repository root from \`${state.channel.workingDir}\`.`,
+                  );
+                  break;
+                }
+
+                resolvedPath = autoTarget.worktreePath;
+                result = await runCommand(
+                  ["git", "worktree", "add", resolvedPath, "-b", autoTarget.branchName],
+                  state.channel.workingDir,
+                );
+                if (result.exitCode !== 0 && /already exists/i.test(result.output)) {
+                  result = await runCommand(
+                    ["git", "worktree", "add", resolvedPath, autoTarget.branchName],
+                    state.channel.workingDir,
+                  );
+                }
               }
-              const result = await runCommand(cmd, state.channel.workingDir);
               const output = result.output || "(no output)";
               await interaction.editReply(
-                `worktree create exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+                `worktree create path=\`${resolvedPath}\` exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
               );
               break;
             }
 
             if (action === "remove") {
-              const resolvedPath = resolvePath(inputPath);
+              const resolvedPath = inputPath
+                ? resolvePath(inputPath, state.channel.workingDir)
+                : state.channel.workingDir;
               const result = await runCommand(
                 ["git", "worktree", "remove", resolvedPath],
                 state.channel.workingDir,
               );
               const output = result.output || "(no output)";
               await interaction.editReply(
-                `worktree remove exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+                `worktree remove path=\`${resolvedPath}\` exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
               );
               break;
             }

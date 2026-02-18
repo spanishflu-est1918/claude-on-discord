@@ -64,7 +64,9 @@ const slashCommands = [
         ),
     )
     .addStringOption((option) =>
-      option.setName("path").setDescription("Path for create/remove actions"),
+      option
+        .setName("path")
+        .setDescription("Optional path override (auto for create, current dir for remove)"),
     )
     .addStringOption((option) =>
       option.setName("branch").setDescription("Branch for create action"),
