@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AttachmentBuilder, type Message, MessageFlags } from "discord.js";
+import { type Message, MessageFlags } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -24,6 +24,7 @@ import {
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
+import { buildDiffDelivery } from "./discord/diff-delivery";
 import {
   buildThreadBranchAwarenessPrompt,
   buildThreadBranchStatusLines,
@@ -329,20 +330,6 @@ function clipOutput(text: string, maxChars = 8000): string {
   }
   const hiddenChars = text.length - maxChars;
   return `${text.slice(0, maxChars)}\n... [truncated ${hiddenChars} chars]`;
-}
-
-function buildDiffDelivery(
-  text: string,
-  filePrefix: string,
-): { content: string; files?: AttachmentBuilder[] } {
-  if (!text.trim()) {
-    return { content: "(no diff output)" };
-  }
-
-  const safePrefix = filePrefix.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "diff";
-  const filename = `${safePrefix}-${Date.now().toString(36)}.diff`;
-  const attachment = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: filename });
-  return { content: `Full output attached as \`${filename}\`.`, files: [attachment] };
 }
 
 type DiffMode = "working-tree" | "thread-branch";

@@ -84,13 +84,17 @@ const slashCommands = [
     ),
 ];
 
+export function getSlashCommandDefinitions(): ReturnType<SlashCommandBuilder["toJSON"]>[] {
+  return slashCommands.map((command) => command.toJSON());
+}
+
 export async function registerSlashCommands(input: {
   token: string;
   clientId: string;
   guildId?: string;
 }): Promise<void> {
   const rest = new REST({ version: "10" }).setToken(input.token);
-  const body = slashCommands.map((command) => command.toJSON());
+  const body = getSlashCommandDefinitions();
 
   if (input.guildId) {
     try {
