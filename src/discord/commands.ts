@@ -13,6 +13,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
+    .setName("compact")
+    .setDescription("Compact in-memory context and reset the Claude session"),
+  new SlashCommandBuilder()
     .setName("bash")
     .setDescription("Run a shell command directly in this channel's working directory")
     .addStringOption((option) =>
@@ -25,6 +28,26 @@ const slashCommands = [
       option.setName("name").setDescription("Model name (e.g. sonnet, opus)").setRequired(true),
     ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
+  new SlashCommandBuilder()
+    .setName("worktree")
+    .setDescription("Manage git worktrees")
+    .addStringOption((option) =>
+      option
+        .setName("action")
+        .setDescription("Action to execute")
+        .setRequired(true)
+        .addChoices(
+          { name: "create", value: "create" },
+          { name: "list", value: "list" },
+          { name: "remove", value: "remove" },
+        ),
+    )
+    .addStringOption((option) =>
+      option.setName("path").setDescription("Path for create/remove actions"),
+    )
+    .addStringOption((option) =>
+      option.setName("branch").setDescription("Branch for create action"),
+    ),
 ];
 
 export async function registerSlashCommands(input: {

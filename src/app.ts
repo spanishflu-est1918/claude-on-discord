@@ -47,6 +47,75 @@ function resolvePath(inputPath: string): string {
   return path.resolve(inputPath);
 }
 
+function buildSeededPrompt(
+  userPrompt: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  hasActiveSession: boolean,
+): string {
+  if (hasActiveSession || history.length === 0) {
+    return userPrompt;
+  }
+
+  const normalizedHistory = history
+    .slice(-12)
+    .map((entry) => {
+      const compactText = entry.content.replace(/\s+/g, " ").trim();
+      const clipped = compactText.length > 400 ? `${compactText.slice(0, 400)}...` : compactText;
+      return `${entry.role.toUpperCase()}: ${clipped}`;
+    })
+    .join("\n");
+
+  return [
+    "Conversation context (carry this forward):",
+    normalizedHistory,
+    "",
+    "Current user message:",
+    userPrompt,
+  ].join("\n");
+}
+
+function compactHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  maxLines = 8,
+): string {
+  if (history.length === 0) {
+    return "No prior context.";
+  }
+
+  return history
+    .slice(-maxLines)
+    .map((entry, index) => {
+      const compactText = entry.content.replace(/\s+/g, " ").trim();
+      const clipped = compactText.length > 180 ? `${compactText.slice(0, 180)}...` : compactText;
+      return `${index + 1}. ${entry.role}: ${clipped}`;
+    })
+    .join("\n");
+}
+
+async function runCommand(
+  cmd: string[],
+  cwd: string,
+): Promise<{ exitCode: number; output: string }> {
+  const process = Bun.spawn({
+    cmd,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+
+  const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+  return {
+    exitCode,
+    output,
+  };
+}
+
 async function runBashCommand(
   command: string,
   cwd: string,
@@ -139,6 +208,17 @@ export async function startApp(config: AppConfig): Promise<void> {
           await interaction.reply("Session reset for this channel.");
           break;
         }
+        case "compact": {
+          const state = sessions.getState(channelId, guildId);
+          const summary = compactHistory(state.history);
+          sessions.resetSession(channelId);
+          sessions.appendTurn(channelId, {
+            role: "assistant",
+            content: `Context summary:\n${summary}`,
+          });
+          await interaction.reply("Context compacted and session reset.");
+          break;
+        }
         case "status": {
           const state = sessions.getState(channelId, guildId);
           const totalCost = repository.getChannelCostTotal(channelId);
@@ -198,6 +278,63 @@ export async function startApp(config: AppConfig): Promise<void> {
           );
           break;
         }
+        case "worktree": {
+          const state = sessions.getState(channelId, guildId);
+          const action = interaction.options.getString("action", true);
+          const inputPath = interaction.options.getString("path");
+          const branch = interaction.options.getString("branch");
+          await interaction.deferReply();
+
+          if (action === "list") {
+            const result = await runCommand(["git", "worktree", "list"], state.channel.workingDir);
+            const text = result.output || "(no output)";
+            const payload = `\`\`\`bash\n${text}\n\`\`\``;
+            const chunks = chunkDiscordText(payload);
+            await interaction.editReply(chunks[0] ?? "(no output)");
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                await interaction.followUp(chunk);
+              }
+            }
+            break;
+          }
+
+          if (!inputPath) {
+            await interaction.editReply("`path` is required for create/remove.");
+            break;
+          }
+
+          if (action === "create") {
+            const resolvedPath = resolvePath(inputPath);
+            const cmd = ["git", "worktree", "add", resolvedPath];
+            if (branch) {
+              cmd.push(branch);
+            }
+            const result = await runCommand(cmd, state.channel.workingDir);
+            const output = result.output || "(no output)";
+            await interaction.editReply(
+              `worktree create exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+            );
+            break;
+          }
+
+          if (action === "remove") {
+            const resolvedPath = resolvePath(inputPath);
+            const result = await runCommand(
+              ["git", "worktree", "remove", resolvedPath],
+              state.channel.workingDir,
+            );
+            const output = result.output || "(no output)";
+            await interaction.editReply(
+              `worktree remove exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+            );
+            break;
+          }
+
+          await interaction.editReply(`Unsupported worktree action: ${action}`);
+          break;
+        }
         default: {
           await interaction.reply({ content: "Command not implemented.", ephemeral: true });
           break;
@@ -215,6 +352,11 @@ export async function startApp(config: AppConfig): Promise<void> {
         components: buildStopButtons(channelId),
       });
       const prompt = getMessagePrompt(message);
+      const seededPrompt = buildSeededPrompt(
+        prompt,
+        state.history,
+        Boolean(state.channel.sessionId),
+      );
       const abortController = new AbortController();
       let streamedText = "";
       let streamClosed = false;
@@ -255,7 +397,7 @@ export async function startApp(config: AppConfig): Promise<void> {
         });
 
         const result = await runner.run({
-          prompt,
+          prompt: seededPrompt,
           cwd: state.channel.workingDir,
           sessionId: state.channel.sessionId ?? undefined,
           model: state.channel.model,
