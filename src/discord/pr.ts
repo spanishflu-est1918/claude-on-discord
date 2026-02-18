@@ -1,7 +1,15 @@
 export type PrCreateAction = "open" | "draft";
 export type PrInspectAction = "status" | "view";
+export type PrChecksAction = "checks";
 export type PrMergeAction = "merge";
 export type PrMergeMethod = "squash" | "rebase" | "merge";
+export type PrCheckState = string;
+export type PrCheckEntry = {
+  name: string;
+  state: PrCheckState;
+  workflow?: string;
+  link?: string;
+};
 
 export type PrSummary = {
   number: number;
@@ -93,6 +101,36 @@ export function parsePrSummaryJson(output: string): PrSummary | null {
 export function formatPrStatusLine(summary: PrSummary): string {
   const draft = summary.isDraft ? "draft" : "ready";
   return `PR #${summary.number} (${draft}, state=${summary.state}) \`${summary.headRefName}\` -> \`${summary.baseRefName}\`\n${summary.url}`;
+}
+
+export function parsePrChecksJson(output: string): PrCheckEntry[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  const checks: PrCheckEntry[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const value = entry as Record<string, unknown>;
+    if (typeof value.name !== "string" || typeof value.state !== "string") {
+      continue;
+    }
+    checks.push({
+      name: value.name,
+      state: value.state,
+      ...(typeof value.workflow === "string" ? { workflow: value.workflow } : {}),
+      ...(typeof value.link === "string" ? { link: value.link } : {}),
+    });
+  }
+  return checks;
 }
 
 export function buildPrMergeArgs(input: {

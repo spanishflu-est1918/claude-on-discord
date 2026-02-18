@@ -30,11 +30,13 @@ import {
   buildPrMergeArgs,
   extractFirstUrl,
   formatPrStatusLine,
+  type PrChecksAction,
   type PrCreateAction,
   type PrInspectAction,
   type PrMergeAction,
   type PrMergeMethod,
   parseOriginDefaultBranch,
+  parsePrChecksJson,
   parsePrSummaryJson,
 } from "./discord/pr";
 import {
@@ -1766,6 +1768,7 @@ export async function startApp(
             const state = sessions.getState(channelId, guildId);
             const action = interaction.options.getSubcommand(true) as
               | PrCreateAction
+              | PrChecksAction
               | PrInspectAction
               | PrMergeAction;
             await interaction.deferReply();
@@ -1798,7 +1801,12 @@ export async function startApp(
               break;
             }
 
-            if (action === "status" || action === "view" || action === "merge") {
+            if (
+              action === "status" ||
+              action === "view" ||
+              action === "checks" ||
+              action === "merge"
+            ) {
               const inspectResult = await runCommand(
                 [
                   "gh",
@@ -1843,6 +1851,70 @@ export async function startApp(
                 ].join("\n\n");
                 const chunks = chunkDiscordText(details);
                 await interaction.editReply(chunks[0] ?? "(no output)");
+                for (let i = 1; i < chunks.length; i++) {
+                  const chunk = chunks[i];
+                  if (chunk) {
+                    await interaction.followUp(chunk);
+                  }
+                }
+                break;
+              }
+
+              if (action === "checks") {
+                const checksResult = await runCommand(
+                  [
+                    "gh",
+                    "pr",
+                    "checks",
+                    String(summary.number),
+                    "--json",
+                    "name,state,workflow,link",
+                  ],
+                  state.channel.workingDir,
+                );
+
+                const parsedChecks = parsePrChecksJson(checksResult.output);
+                if (!parsedChecks) {
+                  if (checksResult.exitCode !== 0) {
+                    await interaction.editReply(
+                      `Failed to read checks for PR #${summary.number}.\n` +
+                        `\`\`\`bash\n${clipOutput(checksResult.output || "(no output)", 1800)}\n\`\`\``,
+                    );
+                    break;
+                  }
+                  await interaction.editReply(
+                    `Could not parse check output for PR #${summary.number}.`,
+                  );
+                  break;
+                }
+
+                if (parsedChecks.length === 0) {
+                  await interaction.editReply(
+                    `No checks reported yet for PR #${summary.number}.\n${summary.url}`,
+                  );
+                  break;
+                }
+
+                const counts = new Map<string, number>();
+                for (const check of parsedChecks) {
+                  counts.set(check.state, (counts.get(check.state) ?? 0) + 1);
+                }
+                const summaryLine = Array.from(counts.entries())
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([stateName, count]) => `${stateName}=${count}`)
+                  .join(", ");
+                const lines = [
+                  `Checks for PR #${summary.number} (\`${summary.headRefName}\` -> \`${summary.baseRefName}\`)`,
+                  `Summary: ${summaryLine}`,
+                  "",
+                  ...parsedChecks.map((check) => {
+                    const workflow = check.workflow ? ` [${check.workflow}]` : "";
+                    const link = check.link ? ` ${check.link}` : "";
+                    return `- ${check.state}: ${check.name}${workflow}${link}`;
+                  }),
+                ];
+                const chunks = chunkDiscordText(lines.join("\n"));
+                await interaction.editReply(chunks[0] ?? "(no checks output)");
                 for (let i = 1; i < chunks.length; i++) {
                   const chunk = chunks[i];
                   if (chunk) {

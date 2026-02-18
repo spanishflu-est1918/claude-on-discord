@@ -99,6 +99,9 @@ const slashCommands = [
         .setDescription("Show PR details for current branch (if one exists)"),
     )
     .addSubcommand((subcommand) =>
+      subcommand.setName("checks").setDescription("Show CI/check status for current branch PR"),
+    )
+    .addSubcommand((subcommand) =>
       subcommand
         .setName("merge")
         .setDescription("Merge current branch PR (requires confirm=true)")

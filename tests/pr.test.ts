@@ -5,6 +5,7 @@ import {
   extractFirstUrl,
   formatPrStatusLine,
   parseOriginDefaultBranch,
+  parsePrChecksJson,
   parsePrSummaryJson,
 } from "../src/discord/pr";
 
@@ -124,5 +125,26 @@ describe("PR helpers", () => {
         admin: true,
       }),
     ).toEqual(["gh", "pr", "merge", "23", "--merge", "--delete-branch", "--admin"]);
+  });
+
+  test("parsePrChecksJson parses checks array", () => {
+    const parsed = parsePrChecksJson(
+      JSON.stringify([
+        {
+          name: "build",
+          state: "SUCCESS",
+          workflow: "CI",
+          link: "https://example.com/check/1",
+        },
+      ]),
+    );
+    expect(parsed).toEqual([
+      {
+        name: "build",
+        state: "SUCCESS",
+        workflow: "CI",
+        link: "https://example.com/check/1",
+      },
+    ]);
   });
 });

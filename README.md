@@ -135,7 +135,7 @@ Common optional variables:
 - `/pr open|draft [base] [title] [body]`: create a GitHub PR from current branch
   - default base resolves from thread root branch or origin default branch
   - requires clean working tree and commits ahead of base
-- `/pr status|view`: inspect PR state/details for current branch
+- `/pr status|view|checks`: inspect PR state/details/checks for current branch
 - `/pr merge [method] [delete_branch] [admin] confirm:true`: merge current branch PR
   - safety checks: confirm flag, OPEN state, non-draft, clean working tree
 - `/worktree create|list|remove|thread`: git worktree operations
@@ -203,3 +203,4 @@ bun test
   - Optional thread→worktree binding (auto-create per-thread git worktree)
   - Branch diffs summarized in Discord (`/diff` with compact review output)
   - PR policy/guardrails and templates on top of `/pr`
+  - Conductor-style PR review buttons that send structured review prompts to the agent

@@ -294,6 +294,7 @@ User types in channel
 40. Branch diff summaries in Discord (`/diff` compact + detailed modes)
 41. PR automation (`/pr` draft/open) targeting root/main branch
 42. Branch policy guardrails (allowed base branches, required checks, PR template)
+43. Conductor-style PR review buttons that send structured review prompts to the agent
 
 ---
 
