@@ -1323,10 +1323,18 @@ function stringifyToolInput(input: unknown): string | undefined {
     return undefined;
   }
   if (typeof input === "string") {
-    return clipText(input, 90);
+    const clipped = clipText(input, 90);
+    if (!clipped || clipped === "{}" || clipped === "[]") {
+      return undefined;
+    }
+    return clipped;
   }
   try {
-    return clipText(JSON.stringify(input), 90);
+    const serialized = clipText(JSON.stringify(input), 90);
+    if (!serialized || serialized === "{}" || serialized === "[]") {
+      return undefined;
+    }
+    return serialized;
   } catch {
     return undefined;
   }
@@ -1423,6 +1431,19 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       changed = true;
     }
     entry.updatedAtMs = now;
+  }
+
+  if (message.type === "system" && message.subtype === "task_started") {
+    if (message.tool_use_id) {
+      const entry = ensureLiveToolEntry(trace, {
+        id: message.tool_use_id,
+        name: message.task_type || message.description || "Task",
+      });
+      entry.status = "running";
+      entry.summary = clipText(message.description, 120);
+      entry.updatedAtMs = now;
+      changed = true;
+    }
   }
 
   if (message.type === "tool_use_summary") {
@@ -3125,17 +3146,32 @@ export async function startApp(
             let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
             let streamSpinnerTimer: ReturnType<typeof setInterval> | null = null;
             let streamSpinnerFrameIndex = 0;
-            let statusEditQueue: Promise<unknown> = Promise.resolve();
+            let statusEditQueue: Promise<void> = Promise.resolve();
+            let statusEditInFlight = false;
+            let pendingStatusEdit: { content: string; includeButtons: boolean } | null = null;
 
-            const queueStatusEdit = (content: string, includeButtons: boolean) => {
-              statusEditQueue = statusEditQueue
-                .then(() =>
-                  status.edit({
-                    content,
-                    components: includeButtons ? buildStopButtons(channelId) : [],
-                  }),
-                )
-                .catch(() => undefined);
+            const queueStatusEdit = (content: string, includeButtons: boolean): Promise<void> => {
+              pendingStatusEdit = { content, includeButtons };
+              if (statusEditInFlight) {
+                return statusEditQueue;
+              }
+
+              statusEditInFlight = true;
+              statusEditQueue = (async () => {
+                while (pendingStatusEdit) {
+                  const edit = pendingStatusEdit;
+                  pendingStatusEdit = null;
+                  try {
+                    await status.edit({
+                      content: edit.content,
+                      components: edit.includeButtons ? buildStopButtons(channelId) : [],
+                    });
+                  } catch {
+                    // Ignore transient edit failures to keep stream moving.
+                  }
+                }
+                statusEditInFlight = false;
+              })();
               return statusEditQueue;
             };
 
