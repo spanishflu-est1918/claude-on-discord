@@ -1309,6 +1309,13 @@ function clipText(value: string, maxChars: number): string {
   return `${trimmed.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
+function italicizeMultiline(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line.trim().length === 0 ? "" : `_${line}_`))
+    .join("\n");
+}
+
 function stringifyToolInput(input: unknown): string | undefined {
   if (typeof input === "undefined") {
     return undefined;
@@ -1577,7 +1584,7 @@ function toStreamingPreview(
 
   const parts: string[] = [];
   if (trimmedThinking) {
-    parts.push(`_Thinking_\n${trimmedThinking}`);
+    parts.push(`_Thinking_\n${italicizeMultiline(trimmedThinking)}`);
   } else if (!trimmedText) {
     parts.push("_Thinking..._");
   }
