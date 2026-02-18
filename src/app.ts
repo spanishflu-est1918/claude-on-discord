@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type Message, MessageFlags } from "discord.js";
+import { AttachmentBuilder, type Message, MessageFlags } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -335,50 +335,26 @@ function chunkDiffText(text: string): string[] {
   return chunkDiscordText(text, { maxChars: 1900, maxLines: 400 });
 }
 
-async function postDiffInLockedThread(
-  originMessage: Message,
-  chunks: string[],
-): Promise<string | null> {
-  if (chunks.length === 0) {
-    return null;
+function buildDiffDelivery(
+  text: string,
+  filePrefix: string,
+): { content: string; files?: AttachmentBuilder[] } {
+  const chunks = chunkDiffText(text);
+  const firstChunk = chunks[0] ?? "(no diff output)";
+  if (chunks.length <= 1) {
+    return { content: firstChunk };
   }
 
-  const startThread = (
-    originMessage as unknown as { startThread?: (options: unknown) => Promise<unknown> }
-  ).startThread;
-  if (typeof startThread !== "function") {
-    return null;
+  const safePrefix = filePrefix.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "diff";
+  const filename = `${safePrefix}-${Date.now().toString(36)}.diff`;
+  const attachment = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: filename });
+  const note = `\n\nFull output attached as \`${filename}\`.`;
+
+  if (firstChunk.length + note.length <= 1900) {
+    return { content: `${firstChunk}${note}`, files: [attachment] };
   }
 
-  try {
-    const thread = (await startThread.call(originMessage, {
-      name: `diff-${Date.now().toString(36)}`,
-      autoArchiveDuration: 60,
-      reason: "Large diff output",
-    })) as {
-      send?: (options: unknown) => Promise<unknown>;
-      setLocked?: (locked?: boolean, reason?: string) => Promise<unknown>;
-      url?: string;
-    };
-
-    if (typeof thread.send !== "function") {
-      return null;
-    }
-
-    for (const chunk of chunks) {
-      if (chunk) {
-        await thread.send(chunk);
-      }
-    }
-
-    if (typeof thread.setLocked === "function") {
-      await thread.setLocked(true, "Read-only diff output");
-    }
-
-    return typeof thread.url === "string" ? thread.url : null;
-  } catch {
-    return null;
-  }
+  return { content: `Full output attached as \`${filename}\`.`, files: [attachment] };
 }
 
 type DiffMode = "working-tree" | "thread-branch";
@@ -1519,33 +1495,22 @@ export async function startApp(config: AppConfig): Promise<void> {
             });
             rememberDiffView(diffView.requestId, refreshedContext);
             const patchDetail = await buildDiffDetail(refreshedContext, "patch");
-            const chunks = chunkDiffText(patchDetail);
+            const delivery = buildDiffDelivery(patchDetail, "diff-patch");
             await interaction.update({
-              content: chunks[0] ?? "(no diff output)",
+              content: delivery.content,
+              files: delivery.files,
               components: buildDiffViewButtons(diffView.requestId),
             });
-            for (let i = 1; i < chunks.length; i++) {
-              const chunk = chunks[i];
-              if (chunk) {
-                await interaction.followUp(chunk);
-              }
-            }
             return;
           }
 
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const detail = await buildDiffDetail(context, diffView.action);
-          const chunks = chunkDiffText(detail);
-          await interaction.editReply(chunks[0] ?? "(no diff output)");
-          for (let i = 1; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunk) {
-              await interaction.followUp({
-                content: chunk,
-                flags: MessageFlags.Ephemeral,
-              });
-            }
-          }
+          const delivery = buildDiffDelivery(detail, `diff-${diffView.action}`);
+          await interaction.editReply({
+            content: delivery.content,
+            files: delivery.files,
+          });
           return;
         }
 
@@ -1738,28 +1703,12 @@ export async function startApp(config: AppConfig): Promise<void> {
               payload = `${patchDetail}\n\n${summary}`;
             }
 
-            const chunks = chunkDiffText(payload);
-            const initialReply = await interaction.editReply({
-              content: chunks[0] ?? "(no diff output)",
+            const delivery = buildDiffDelivery(payload, "diff");
+            await interaction.editReply({
+              content: delivery.content,
+              files: delivery.files,
               components: buildDiffViewButtons(requestId),
             });
-
-            if (chunks.length > 1) {
-              const threadUrl = await postDiffInLockedThread(initialReply as Message, chunks);
-              if (threadUrl) {
-                await interaction.editReply({
-                  content: `Diff posted in locked thread: ${threadUrl}`,
-                  components: buildDiffViewButtons(requestId),
-                });
-              } else {
-                for (let i = 1; i < chunks.length; i++) {
-                  const chunk = chunks[i];
-                  if (chunk) {
-                    await interaction.followUp(chunk);
-                  }
-                }
-              }
-            }
             break;
           }
           case "bash": {
