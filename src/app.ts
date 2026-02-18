@@ -32,6 +32,14 @@ import {
 } from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
 
+export type StartAppRuntimeOverrides = {
+  openDatabase?: typeof openDatabase;
+  registerSlashCommands?: typeof registerSlashCommands;
+  startDiscordClient?: typeof startDiscordClient;
+  createRunner?: () => ClaudeRunner;
+  installSignalHandlers?: boolean;
+};
+
 function getMessagePrompt(message: Message): string {
   if (message.content.trim().length > 0) {
     return message.content;
@@ -986,15 +994,23 @@ function toStreamingPreview(text: string, thinking: string, maxChars = 1800): st
   return `...${combined.slice(-(maxChars - 3))}`;
 }
 
-export async function startApp(config: AppConfig): Promise<void> {
-  const database = openDatabase(config.databasePath);
+export async function startApp(
+  config: AppConfig,
+  runtimeOverrides: StartAppRuntimeOverrides = {},
+): Promise<void> {
+  const openDatabaseImpl = runtimeOverrides.openDatabase ?? openDatabase;
+  const registerSlashCommandsImpl = runtimeOverrides.registerSlashCommands ?? registerSlashCommands;
+  const startDiscordClientImpl = runtimeOverrides.startDiscordClient ?? startDiscordClient;
+  const installSignalHandlers = runtimeOverrides.installSignalHandlers ?? true;
+
+  const database = openDatabaseImpl(config.databasePath);
   const repository = new Repository(database);
   const sessions = new SessionManager(repository, {
     defaultWorkingDir: config.defaultWorkingDir,
     defaultModel: config.defaultModel,
   });
   const stopController = new StopController();
-  const runner = new ClaudeRunner();
+  const runner = runtimeOverrides.createRunner?.() ?? new ClaudeRunner();
   const pendingProjectSwitches = new Map<
     string,
     { channelId: string; guildId: string; workingDir: string }
@@ -1058,13 +1074,13 @@ export async function startApp(config: AppConfig): Promise<void> {
   };
 
   try {
-    await registerSlashCommands({
+    await registerSlashCommandsImpl({
       token: config.discordToken,
       clientId: config.discordClientId,
       guildId: config.discordGuildId,
     });
 
-    discordClient = await startDiscordClient({
+    discordClient = await startDiscordClientImpl({
       token: config.discordToken,
       onGatewayDisconnect: (code) => {
         if (shuttingDown) {
@@ -2080,12 +2096,14 @@ export async function startApp(config: AppConfig): Promise<void> {
     throw error;
   }
 
-  const onSigint = () => {
-    void shutdown("SIGINT").finally(() => process.exit(0));
-  };
-  const onSigterm = () => {
-    void shutdown("SIGTERM").finally(() => process.exit(0));
-  };
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
+  if (installSignalHandlers) {
+    const onSigint = () => {
+      void shutdown("SIGINT").finally(() => process.exit(0));
+    };
+    const onSigterm = () => {
+      void shutdown("SIGTERM").finally(() => process.exit(0));
+    };
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+  }
 }
