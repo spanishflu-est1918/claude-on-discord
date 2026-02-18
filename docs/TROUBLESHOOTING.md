@@ -64,3 +64,11 @@ Known tech debt:
 
 - outgoing image attachment reliability is inconsistent in some flows
 - tracked in `gleaming-moseying-codd.md`
+
+## `/screenshot` Fails
+
+Checks:
+
+1. Ensure `agent-browser` is installed and available in PATH.
+2. Confirm target URL is reachable from the bot host.
+3. Retry with explicit URL: `/screenshot url:https://example.com`

@@ -16,7 +16,7 @@ const slashCommands = [
     .setDescription("List active thread branches and git divergence"),
   new SlashCommandBuilder()
     .setName("diff")
-    .setDescription("Show git diff for this channel (working tree or thread branch)"),
+    .setDescription("Show current git patch for this channel as a .diff attachment"),
   new SlashCommandBuilder()
     .setName("compact")
     .setDescription("Compact in-memory context and reset the Claude session"),
@@ -25,6 +25,15 @@ const slashCommands = [
     .setDescription("Run a shell command directly in this channel's working directory")
     .addStringOption((option) =>
       option.setName("command").setDescription("Shell command to execute").setRequired(true),
+    ),
+  new SlashCommandBuilder()
+    .setName("screenshot")
+    .setDescription("Capture a webpage screenshot via agent-browser")
+    .addStringOption((option) =>
+      option.setName("url").setDescription("URL to capture (defaults to http://localhost:3000)"),
+    )
+    .addBooleanOption((option) =>
+      option.setName("full").setDescription("Capture full page (default: false)"),
     ),
   new SlashCommandBuilder()
     .setName("model")

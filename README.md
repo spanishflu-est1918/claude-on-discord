@@ -29,7 +29,9 @@ It gives you a channel-based coding workflow in Discord while keeping real files
   - optional auto-worktree mode can provision per-thread git worktrees
   - prompt context includes lightweight thread-branch metadata for branch-aware Q&A
 - Direct shell execution via `/bash`
+- Browser screenshots via `/screenshot` (agent-browser)
 - Git worktree utilities via `/worktree`
+  - optional automatic setup on create (`yarn install`/`pnpm install`/`bun install`/`npm install`)
 - Cost tracking via `/cost`
 - Attachment input staging and generated file output back into Discord
 - MCP config loading from project `.claude/mcp.json`
@@ -108,6 +110,8 @@ Common optional variables:
 - `DATABASE_PATH`: sqlite path (default: `./data/claude-on-discord.sqlite`)
 - `DEFAULT_MODEL`: Claude model alias/name (default: `sonnet`)
 - `AUTO_THREAD_WORKTREE`: auto-provision per-thread git worktrees (default: `false`)
+- `WORKTREE_BOOTSTRAP`: run setup automatically after creating worktrees (default: `true`)
+- `WORKTREE_BOOTSTRAP_COMMAND`: optional custom setup command for new worktrees
 - `CLAUDE_PERMISSION_MODE`: SDK permission mode (default: `bypassPermissions`)
 
 ## Commands
@@ -120,15 +124,16 @@ Common optional variables:
 - `/status`: show current channel status and totals
   - includes thread branch/root/parent info when running inside thread branches
 - `/branches`: list active thread branches with worktree/divergence info
-- `/diff [base] [patch]`: show git diff for current lane (working-tree or thread branch compare)
-  - returns compact summary with Discord controls: `Refresh`, `Files`, `Stat`, `Patch`
+- `/diff`: show current lane patch as a single `.diff` attachment (or `(no diff output)`)
 - `/model <name>`: set channel model
 - `/systemprompt set <text>`: set per-channel system prompt (session restarts)
 - `/systemprompt show`: view current per-channel system prompt
 - `/systemprompt clear`: clear per-channel system prompt (session restarts)
 - `/bash <command>`: run shell command directly in current project
+- `/screenshot [url] [full]`: capture a webpage screenshot through `agent-browser`
 - `/worktree create|list|remove|thread`: git worktree operations
   - `create`: auto-generates path when omitted
+    - auto-runs setup for new worktree
   - `remove`: defaults to current project dir when omitted
   - `thread`: provision/switch this thread to dedicated worktree
 - `/compact`: compact in-memory context and reset session

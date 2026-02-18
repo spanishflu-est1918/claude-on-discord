@@ -53,6 +53,7 @@ describe("startApp slash diff integration", () => {
         databasePath: dbPath,
         defaultModel: "sonnet",
         autoThreadWorktree: false,
+        worktreeBootstrap: true,
         claudePermissionMode: "bypassPermissions",
       };
 

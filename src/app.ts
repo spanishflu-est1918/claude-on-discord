@@ -31,6 +31,7 @@ import {
   parseThreadBranchMeta,
 } from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
+import { runWorktreeBootstrap, type WorktreeBootstrapResult } from "./discord/worktree-bootstrap";
 
 export type StartAppRuntimeOverrides = {
   openDatabase?: typeof openDatabase;
@@ -233,6 +234,53 @@ async function runCommand(
     exitCode,
     output,
   };
+}
+
+function buildAgentBrowserSession(channelId: string): string {
+  const token = channelId.replace(/[^a-zA-Z0-9_-]/g, "").slice(-24);
+  return `claude-discord-${token || "default"}`;
+}
+
+async function captureScreenshotWithAgentBrowser(input: {
+  channelId: string;
+  workingDir: string;
+  url: string;
+  fullPage: boolean;
+}): Promise<{ screenshotPath?: string; output: string; exitCode: number }> {
+  const session = buildAgentBrowserSession(input.channelId);
+  const screenshotPath = path.join(
+    tmpdir(),
+    `claude-on-discord-shot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.png`,
+  );
+
+  const openResult = await runCommand(
+    ["agent-browser", "--session", session, "open", input.url],
+    input.workingDir,
+  );
+  if (openResult.exitCode !== 0) {
+    return { exitCode: openResult.exitCode, output: openResult.output };
+  }
+
+  const screenshotCommand = ["agent-browser", "--session", session, "screenshot"];
+  if (input.fullPage) {
+    screenshotCommand.push("--full");
+  }
+  screenshotCommand.push(screenshotPath);
+  const screenshotResult = await runCommand(screenshotCommand, input.workingDir);
+  const closeResult = await runCommand(
+    ["agent-browser", "--session", session, "close"],
+    input.workingDir,
+  );
+
+  const combinedOutput = [screenshotResult.output, closeResult.output].filter(Boolean).join("\n");
+  if (screenshotResult.exitCode !== 0 || !existsSync(screenshotPath)) {
+    if (existsSync(screenshotPath)) {
+      await cleanupFiles([screenshotPath]);
+    }
+    return { exitCode: screenshotResult.exitCode, output: combinedOutput };
+  }
+
+  return { screenshotPath, exitCode: 0, output: combinedOutput };
 }
 
 type TopicChannel = {
@@ -608,12 +656,31 @@ async function buildAutoWorktreeTarget(input: {
   return { worktreePath, branchName };
 }
 
+function buildWorktreeBootstrapSummary(result: WorktreeBootstrapResult): string {
+  if (!result.attempted) {
+    return `setup skipped (${result.skippedReason ?? "not needed"})`;
+  }
+  const cmd = result.commandText ?? "unknown command";
+  if (result.exitCode === 0) {
+    return `setup ok (\`${cmd}\`)`;
+  }
+  const details = result.output?.trim()
+    ? `\n\`\`\`bash\n${clipOutput(result.output, 1200)}\n\`\`\``
+    : "";
+  return `setup failed (\`${cmd}\`, exit=${result.exitCode})${details}`;
+}
+
+type ProvisionedWorktree = {
+  worktreePath: string;
+  created: boolean;
+};
+
 async function maybeProvisionThreadWorktree(input: {
   enabled: boolean;
   parentWorkingDir: string;
   threadChannelId: string;
   threadName: string;
-}): Promise<string | null> {
+}): Promise<ProvisionedWorktree | null> {
   if (!input.enabled) {
     return null;
   }
@@ -639,7 +706,7 @@ async function maybeProvisionThreadWorktree(input: {
   const branchName = `discord/${token.slice(0, 40)}-${suffix}`;
 
   if (existsSync(worktreePath)) {
-    return worktreePath;
+    return { worktreePath, created: false };
   }
 
   await mkdir(worktreeRoot, { recursive: true });
@@ -658,7 +725,7 @@ async function maybeProvisionThreadWorktree(input: {
     return null;
   }
 
-  return worktreePath;
+  return { worktreePath, created: true };
 }
 
 async function maybeInheritThreadContext(input: {
@@ -668,6 +735,8 @@ async function maybeInheritThreadContext(input: {
   sessions: SessionManager;
   repository: Repository;
   autoThreadWorktree: boolean;
+  worktreeBootstrap: boolean;
+  worktreeBootstrapCommand?: string;
 }): Promise<void> {
   const existing = input.repository.getChannel(input.channelId);
   if (existing) {
@@ -701,14 +770,27 @@ async function maybeInheritThreadContext(input: {
   const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
 
   if (input.autoThreadWorktree) {
-    const worktreePath = await maybeProvisionThreadWorktree({
+    const provisioned = await maybeProvisionThreadWorktree({
       enabled: true,
       parentWorkingDir: parent.workingDir,
       threadChannelId: input.channelId,
       threadName,
     });
-    if (worktreePath) {
-      input.sessions.setWorkingDir(input.channelId, worktreePath);
+    if (provisioned) {
+      if (provisioned.created) {
+        const setup = await runWorktreeBootstrap({
+          enabled: input.worktreeBootstrap,
+          customCommand: input.worktreeBootstrapCommand,
+          workingDir: provisioned.worktreePath,
+          runCommand,
+        });
+        if (setup.attempted && setup.exitCode !== 0) {
+          console.warn(
+            `Thread worktree setup failed for ${input.channelId}: ${setup.output || "(no output)"}`,
+          );
+        }
+      }
+      input.sessions.setWorkingDir(input.channelId, provisioned.worktreePath);
     }
     saveThreadBranchMeta(input.repository, {
       channelId: input.channelId,
@@ -717,8 +799,9 @@ async function maybeInheritThreadContext(input: {
       parentChannelId,
       name: threadName,
       createdAt: Date.now(),
-      ...(worktreePath ? { worktreePath, worktreeMode: "worktree" as const } : {}),
-      ...(!worktreePath ? { worktreeMode: "inherited" as const } : {}),
+      ...(provisioned
+        ? { worktreePath: provisioned.worktreePath, worktreeMode: "worktree" as const }
+        : { worktreeMode: "inherited" as const }),
       lifecycleState: "active",
       cleanupState: "none",
     });
@@ -1253,14 +1336,14 @@ export async function startApp(
           const parentChannelId = meta.parentChannelId ?? meta.rootChannelId;
           const parentChannel = repository.getChannel(parentChannelId);
           const parentWorkingDir = parentChannel?.workingDir ?? state.channel.workingDir;
-          const worktreePath = await maybeProvisionThreadWorktree({
+          const provisioned = await maybeProvisionThreadWorktree({
             enabled: true,
             parentWorkingDir,
             threadChannelId: channelId,
             threadName: meta.name,
           });
 
-          if (!worktreePath) {
+          if (!provisioned) {
             await interaction.update({
               content:
                 `Could not create worktree from \`${parentWorkingDir}\`.\n` +
@@ -1270,20 +1353,33 @@ export async function startApp(
             return;
           }
 
-          sessions.switchProject(channelId, guildId, worktreePath);
+          let setupSummary = "";
+          if (provisioned.created) {
+            const setupResult = await runWorktreeBootstrap({
+              enabled: config.worktreeBootstrap,
+              customCommand: config.worktreeBootstrapCommand,
+              workingDir: provisioned.worktreePath,
+              runCommand,
+            });
+            setupSummary = `\n${buildWorktreeBootstrapSummary(setupResult)}`;
+          }
+
+          sessions.switchProject(channelId, guildId, provisioned.worktreePath);
           sessions.setSessionId(channelId, null);
           saveThreadBranchMeta(repository, {
             ...meta,
-            worktreePath,
+            worktreePath: provisioned.worktreePath,
             worktreeMode: "worktree",
             lifecycleState: meta.lifecycleState ?? "active",
             cleanupState: "none",
           });
           await interaction.update({
-            content: `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,
+            content:
+              `Thread switched to dedicated worktree \`${provisioned.worktreePath}\` (session restarted).` +
+              setupSummary,
             components: [],
           });
-          void syncChannelTopic(interaction.channel, worktreePath);
+          void syncChannelTopic(interaction.channel, provisioned.worktreePath);
           return;
         }
 
@@ -1483,6 +1579,8 @@ export async function startApp(
           sessions,
           repository,
           autoThreadWorktree: config.autoThreadWorktree,
+          worktreeBootstrap: config.worktreeBootstrap,
+          worktreeBootstrapCommand: config.worktreeBootstrapCommand,
         });
 
         switch (interaction.commandName) {
@@ -1640,6 +1738,39 @@ export async function startApp(
               if (chunk) {
                 await interaction.followUp(chunk);
               }
+            }
+            break;
+          }
+          case "screenshot": {
+            const state = sessions.getState(channelId, guildId);
+            const url = interaction.options.getString("url")?.trim() || "http://localhost:3000";
+            const fullPage = interaction.options.getBoolean("full") ?? false;
+            await interaction.deferReply();
+
+            const result = await captureScreenshotWithAgentBrowser({
+              channelId,
+              workingDir: state.channel.workingDir,
+              url,
+              fullPage,
+            });
+
+            if (!result.screenshotPath) {
+              const diagnostics = result.output.trim() || "(no output)";
+              await interaction.editReply(
+                `screenshot failed (exit=${result.exitCode}).\n` +
+                  "Make sure `agent-browser` is installed and the target URL is reachable.\n" +
+                  `\`\`\`bash\n${clipOutput(diagnostics, 1800)}\n\`\`\``,
+              );
+              break;
+            }
+
+            try {
+              await interaction.editReply({
+                content: `Screenshot captured from \`${url}\`${fullPage ? " (full page)" : ""}.`,
+                files: [{ attachment: result.screenshotPath }],
+              });
+            } finally {
+              await cleanupFiles([result.screenshotPath]);
             }
             break;
           }
@@ -1810,32 +1941,43 @@ export async function startApp(
               const parentChannelId = meta.parentChannelId ?? meta.rootChannelId;
               const parentChannel = repository.getChannel(parentChannelId);
               const parentWorkingDir = parentChannel?.workingDir ?? state.channel.workingDir;
-              const worktreePath = await maybeProvisionThreadWorktree({
+              const provisioned = await maybeProvisionThreadWorktree({
                 enabled: true,
                 parentWorkingDir,
                 threadChannelId: channelId,
                 threadName: meta.name,
               });
 
-              if (!worktreePath) {
+              if (!provisioned) {
                 await interaction.editReply(
                   `Failed to provision thread worktree from \`${parentWorkingDir}\`.`,
                 );
                 break;
               }
 
-              sessions.switchProject(channelId, guildId, worktreePath);
+              let setupSummary = "";
+              if (provisioned.created) {
+                const setupResult = await runWorktreeBootstrap({
+                  enabled: config.worktreeBootstrap,
+                  customCommand: config.worktreeBootstrapCommand,
+                  workingDir: provisioned.worktreePath,
+                  runCommand,
+                });
+                setupSummary = `\n${buildWorktreeBootstrapSummary(setupResult)}`;
+              }
+
+              sessions.switchProject(channelId, guildId, provisioned.worktreePath);
               sessions.setSessionId(channelId, null);
               saveThreadBranchMeta(repository, {
                 ...meta,
-                worktreePath,
+                worktreePath: provisioned.worktreePath,
                 worktreeMode: "worktree",
                 lifecycleState: meta.lifecycleState ?? "active",
                 cleanupState: "none",
               });
-              void syncChannelTopic(interaction.channel, worktreePath);
+              void syncChannelTopic(interaction.channel, provisioned.worktreePath);
               await interaction.editReply(
-                `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,
+                `Thread switched to dedicated worktree \`${provisioned.worktreePath}\` (session restarted).${setupSummary}`,
               );
               break;
             }
@@ -1877,8 +2019,20 @@ export async function startApp(
                 }
               }
               const output = result.output || "(no output)";
+              let setupSummary = "setup skipped (worktree creation failed)";
+              if (result.exitCode === 0) {
+                const setupResult = await runWorktreeBootstrap({
+                  enabled: config.worktreeBootstrap,
+                  customCommand: config.worktreeBootstrapCommand,
+                  workingDir: resolvedPath,
+                  runCommand,
+                });
+                setupSummary = buildWorktreeBootstrapSummary(setupResult);
+              }
               await interaction.editReply(
-                `worktree create path=\`${resolvedPath}\` exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+                `worktree create path=\`${resolvedPath}\` exit=${result.exitCode}\n` +
+                  `${setupSummary}\n` +
+                  `\`\`\`bash\n${output}\n\`\`\``,
               );
               break;
             }
@@ -1928,6 +2082,8 @@ export async function startApp(
           sessions,
           repository,
           autoThreadWorktree: config.autoThreadWorktree,
+          worktreeBootstrap: config.worktreeBootstrap,
+          worktreeBootstrapCommand: config.worktreeBootstrapCommand,
         });
         const state = sessions.getState(channelId, guildId);
         const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);

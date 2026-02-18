@@ -12,6 +12,8 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().trim().default("./data/claude-on-discord.sqlite"),
   DEFAULT_MODEL: z.string().trim().default("sonnet"),
   AUTO_THREAD_WORKTREE: z.string().trim().optional(),
+  WORKTREE_BOOTSTRAP: z.string().trim().optional(),
+  WORKTREE_BOOTSTRAP_COMMAND: z.string().trim().optional(),
   CLAUDE_PERMISSION_MODE: z
     .enum(["default", "plan", "acceptEdits", "bypassPermissions", "delegate", "dontAsk"])
     .default("bypassPermissions"),
@@ -26,6 +28,8 @@ export type AppConfig = {
   databasePath: string;
   defaultModel: string;
   autoThreadWorktree: boolean;
+  worktreeBootstrap: boolean;
+  worktreeBootstrapCommand?: string;
   claudePermissionMode: ClaudePermissionMode;
 };
 
@@ -74,6 +78,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const resolvedWorkingDir = path.resolve(expandHome(value.DEFAULT_WORKING_DIR));
   const resolvedDbPath = path.resolve(expandHome(value.DATABASE_PATH));
   const autoThreadWorktree = parseEnvBoolean(value.AUTO_THREAD_WORKTREE, false);
+  const worktreeBootstrap = parseEnvBoolean(value.WORKTREE_BOOTSTRAP, true);
+  const worktreeBootstrapCommand = value.WORKTREE_BOOTSTRAP_COMMAND?.trim() || undefined;
 
   return {
     discordToken: value.DISCORD_TOKEN,
@@ -84,6 +90,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     databasePath: resolvedDbPath,
     defaultModel: value.DEFAULT_MODEL,
     autoThreadWorktree,
+    worktreeBootstrap,
+    ...(worktreeBootstrapCommand ? { worktreeBootstrapCommand } : {}),
     claudePermissionMode: value.CLAUDE_PERMISSION_MODE,
   };
 }

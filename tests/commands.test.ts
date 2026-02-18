@@ -8,4 +8,15 @@ describe("slash commands", () => {
     expect(diff).toBeDefined();
     expect(diff?.options ?? []).toHaveLength(0);
   });
+
+  test("/screenshot exposes url/full options", () => {
+    const commands = getSlashCommandDefinitions();
+    const screenshot = commands.find((command) => command.name === "screenshot");
+    expect(screenshot).toBeDefined();
+    const options = screenshot?.options ?? [];
+    const names = options
+      .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
+      .filter(Boolean);
+    expect(names).toEqual(["url", "full"]);
+  });
 });

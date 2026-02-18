@@ -102,6 +102,16 @@ async function main(): Promise<void> {
         "Auto thread worktree (true/false)",
         current.AUTO_THREAD_WORKTREE ?? "false",
       ),
+      worktreeBootstrap: await ask(
+        rl,
+        "Bootstrap new worktrees automatically (true/false)",
+        current.WORKTREE_BOOTSTRAP ?? "true",
+      ),
+      worktreeBootstrapCommand: await ask(
+        rl,
+        "Custom worktree bootstrap command (optional)",
+        current.WORKTREE_BOOTSTRAP_COMMAND ?? "",
+      ),
       claudePermissionMode: await ask(
         rl,
         "Claude permission mode",

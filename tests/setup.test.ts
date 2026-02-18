@@ -38,6 +38,8 @@ describe("bootstrap setup helpers", () => {
       databasePath: "./data/db.sqlite",
       defaultModel: "sonnet",
       autoThreadWorktree: "false",
+      worktreeBootstrap: "true",
+      worktreeBootstrapCommand: "",
       claudePermissionMode: "bypassPermissions",
     };
     const content = renderEnvFile(values);
@@ -45,5 +47,6 @@ describe("bootstrap setup helpers", () => {
     expect(content).toContain("APPLICATION_ID=app");
     expect(content).toContain("DISCORD_GUILD_ID=guild");
     expect(content).toContain("AUTO_THREAD_WORKTREE=false");
+    expect(content).toContain("WORKTREE_BOOTSTRAP=true");
   });
 });
