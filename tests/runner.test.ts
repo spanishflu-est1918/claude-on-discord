@@ -130,6 +130,7 @@ describe("ClaudeRunner", () => {
       cwd: "/repo",
       sessionId: "session-3",
       model: "opus",
+      systemPrompt: "Respond in terse style.",
       permissionMode: "plan",
     });
 
@@ -140,7 +141,8 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.permissionMode).toBe("plan");
     expect(capturedInput?.options.includePartialMessages).toBe(true);
     expect(capturedInput?.options.thinking).toEqual({ type: "adaptive" });
-    expect(capturedInput?.prompt).toContain("you CAN return files/images");
+    expect(capturedInput?.options.systemPrompt).toContain("you CAN return files/images");
+    expect(capturedInput?.options.systemPrompt).toContain("Respond in terse style.");
   });
 
   test("calls onQueryStart, onTextDelta, and onThinkingDelta callbacks", async () => {

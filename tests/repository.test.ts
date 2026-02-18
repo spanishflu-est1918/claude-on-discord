@@ -85,4 +85,15 @@ describe("Repository", () => {
     repo.setSetting("default_model", "opus");
     expect(repo.getSetting("default_model")).toBe("opus");
   });
+
+  test("stores and clears channel system prompt", () => {
+    const repo = createRepository();
+
+    expect(repo.getChannelSystemPrompt("c1")).toBeNull();
+    repo.setChannelSystemPrompt("c1", "Always answer in pirate style.");
+    expect(repo.getChannelSystemPrompt("c1")).toBe("Always answer in pirate style.");
+
+    repo.clearChannelSystemPrompt("c1");
+    expect(repo.getChannelSystemPrompt("c1")).toBeNull();
+  });
 });

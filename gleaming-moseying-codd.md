@@ -220,6 +220,7 @@ User types in channel
 | `/new`                           | Reset Claude session       | Keeps working dir, clears session + ring buffer        |
 | `/status`                        | Show session info          | Project, branch, model, session cost, active/idle      |
 | `/model [name]`                  | Switch model               | Uses `query.setModel()` if mid-session                 |
+| `/systemprompt set\|show\|clear` | Per-channel system prompt  | Stored per channel, applied to all future turns        |
 | `/compact`                       | Summarize context          | Saves tokens on long conversations                     |
 | `/cost`                          | Show spending              | Per-session and cumulative                             |
 | `/worktree create\|list\|remove` | Git worktree management    | Runs `git worktree` commands via Bun.spawn             |
@@ -254,30 +255,31 @@ User types in channel
 16. `/bash` — direct shell execution
 17. `/new` — session reset
 18. `/status`, `/model`, `/cost`
-19. `/compact`
-20. Slash command registration with Discord API
+19. `/systemprompt set|show|clear` (per-channel system prompt storage + application)
+20. `/compact`
+21. Slash command registration with Discord API
 
 ### Phase 4: Rich I/O
 
-21. Attachment input (user uploads → Claude via temp files)
-22. Attachment output (Claude files → Discord)
-23. `/worktree` commands
-24. Debounce rapid messages (batch within 300ms window)
+22. Attachment input (user uploads → Claude via temp files)
+23. Attachment output (Claude files → Discord)
+24. `/worktree` commands
+25. Debounce rapid messages (batch within 300ms window)
 
 ### Phase 5: Polish
 
-25. SIGTERM handler (SDK abort sends SIGTERM)
-26. Graceful shutdown
-27. Error recovery (reconnect, session cleanup)
-28. Channel topic updates (show project + branch)
-29. MCP server loading from `.claude/mcp.json`
-30. Integration tests
+26. SIGTERM handler (SDK abort sends SIGTERM)
+27. Graceful shutdown
+28. Error recovery (reconnect, session cleanup)
+29. Channel topic updates (show project + branch)
+30. MCP server loading from `.claude/mcp.json`
+31. Integration tests
 
 ### Phase 6: Distribution & Setup UX
 
-31. `init` interactive setup CLI (questionnaire + `.env` writer + invite link)
-32. Startup preflight checks with clear access diagnostics
-33. Package CLI for external install (`npx` path) once repo is publish-ready
+32. `init` interactive setup CLI (questionnaire + `.env` writer + invite link)
+33. Startup preflight checks with clear access diagnostics
+34. Package CLI for external install (`npx` path) once repo is publish-ready
 
 ---
 

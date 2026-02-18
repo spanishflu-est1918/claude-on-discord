@@ -26,6 +26,12 @@ export type UpsertChannelInput = {
   sessionId?: string | null;
 };
 
+const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
+
+function channelSystemPromptKey(channelId: string): string {
+  return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
+}
+
 function mapChannelRow(row: ChannelRow): ChannelRecord {
   return {
     channelId: row.channel_id,
@@ -187,5 +193,21 @@ export class Repository {
         `,
       )
       .run({ key: key, value: value });
+  }
+
+  deleteSetting(key: string): void {
+    this.database.query("DELETE FROM settings WHERE key = $key;").run({ key });
+  }
+
+  getChannelSystemPrompt(channelId: string): string | null {
+    return this.getSetting(channelSystemPromptKey(channelId));
+  }
+
+  setChannelSystemPrompt(channelId: string, prompt: string): void {
+    this.setSetting(channelSystemPromptKey(channelId), prompt);
+  }
+
+  clearChannelSystemPrompt(channelId: string): void {
+    this.deleteSetting(channelSystemPromptKey(channelId));
   }
 }

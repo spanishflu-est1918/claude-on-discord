@@ -22,6 +22,7 @@ export type QueryFactoryInput = {
     | "thinking"
     | "effort"
     | "includePartialMessages"
+    | "systemPrompt"
     | "allowDangerouslySkipPermissions"
   >;
 };
@@ -33,6 +34,7 @@ export interface RunRequest {
   cwd: string;
   sessionId?: string;
   model?: string;
+  systemPrompt?: string;
   thinking?: Options["thinking"];
   effort?: Options["effort"];
   permissionMode?: ClaudePermissionMode;
@@ -60,10 +62,11 @@ const DISCORD_BRIDGE_PROMPT_POLICY = [
   "Prefer writing outputs in the current project directory unless the user requests otherwise.",
 ].join(" ");
 
-function withBridgePromptPolicy(prompt: string): string {
-  return ["<system-reminder>", DISCORD_BRIDGE_PROMPT_POLICY, "</system-reminder>", "", prompt].join(
-    "\n",
-  );
+function buildSystemPrompt(channelSystemPrompt?: string): string {
+  if (!channelSystemPrompt?.trim()) {
+    return DISCORD_BRIDGE_PROMPT_POLICY;
+  }
+  return [DISCORD_BRIDGE_PROMPT_POLICY, channelSystemPrompt.trim()].join("\n\n");
 }
 
 export class ClaudeRunner {
@@ -123,6 +126,7 @@ export class ClaudeRunner {
       settingSources: input.settingSources,
       includePartialMessages: true,
       thinking: input.request.thinking ?? { type: "adaptive" },
+      systemPrompt: buildSystemPrompt(input.request.systemPrompt),
       ...(input.permissionMode === "bypassPermissions"
         ? { allowDangerouslySkipPermissions: true }
         : {}),
@@ -135,7 +139,7 @@ export class ClaudeRunner {
     };
 
     const query = this.queryFactory({
-      prompt: withBridgePromptPolicy(input.request.prompt),
+      prompt: input.request.prompt,
       abortController: input.abortController,
       options,
     });

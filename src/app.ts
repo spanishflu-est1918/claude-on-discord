@@ -395,10 +395,12 @@ export async function startApp(config: AppConfig): Promise<void> {
           const state = sessions.getState(channelId, guildId);
           const totalCost = repository.getChannelCostTotal(channelId);
           const turns = state.history.length;
+          const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
           const lines = [
             `Project: \`${state.channel.workingDir}\``,
             `Model: \`${state.channel.model}\``,
             `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
+            `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
             `In-memory turns: \`${turns}\``,
             `Total channel cost: \`$${totalCost.toFixed(4)}\``,
           ];
@@ -492,6 +494,61 @@ export async function startApp(config: AppConfig): Promise<void> {
           await interaction.reply(`Model set to \`${model}\`.`);
           break;
         }
+        case "systemprompt": {
+          const action = interaction.options.getSubcommand(true);
+
+          if (action === "set") {
+            const text = interaction.options.getString("text", true).trim();
+            if (!text) {
+              await interaction.reply({
+                content: "System prompt cannot be empty.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            repository.setChannelSystemPrompt(channelId, text);
+            sessions.setSessionId(channelId, null);
+            await interaction.reply(
+              `Channel system prompt set (\`${text.length}\` chars). Session restarted for this channel.`,
+            );
+            break;
+          }
+
+          if (action === "show") {
+            const text = repository.getChannelSystemPrompt(channelId);
+            if (!text) {
+              await interaction.reply({
+                content: "No channel system prompt is set.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+            const content = `Channel system prompt (\`${text.length}\` chars):\n\`\`\`\n${text}\n\`\`\``;
+            const chunks = chunkDiscordText(content);
+            await interaction.reply({
+              content: chunks[0] ?? "No channel system prompt is set.",
+              flags: MessageFlags.Ephemeral,
+            });
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                await interaction.followUp({
+                  content: chunk,
+                  flags: MessageFlags.Ephemeral,
+                });
+              }
+            }
+            break;
+          }
+
+          repository.clearChannelSystemPrompt(channelId);
+          sessions.setSessionId(channelId, null);
+          await interaction.reply(
+            "Channel system prompt cleared. Session restarted for this channel.",
+          );
+          break;
+        }
         case "cost": {
           const totalCost = repository.getChannelCostTotal(channelId);
           const totalTurns = repository.getChannelTurnCount(channelId);
@@ -570,6 +627,7 @@ export async function startApp(config: AppConfig): Promise<void> {
       const channelId = message.channel.id;
       const guildId = message.guildId ?? "dm";
       const state = sessions.getState(channelId, guildId);
+      const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
       const stagedAttachments = await stageAttachments(message);
 
       await addReaction(message, "🧠");
@@ -629,6 +687,7 @@ export async function startApp(config: AppConfig): Promise<void> {
           cwd: state.channel.workingDir,
           sessionId: state.channel.sessionId ?? undefined,
           model: state.channel.model,
+          systemPrompt: channelSystemPrompt ?? undefined,
           permissionMode: config.claudePermissionMode,
           abortController,
           onQueryStart: (query) => {

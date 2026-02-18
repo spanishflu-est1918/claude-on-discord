@@ -26,6 +26,27 @@ const slashCommands = [
     .addStringOption((option) =>
       option.setName("name").setDescription("Model name (e.g. sonnet, opus)").setRequired(true),
     ),
+  new SlashCommandBuilder()
+    .setName("systemprompt")
+    .setDescription("Manage per-channel system prompt")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("set")
+        .setDescription("Set system prompt for this channel")
+        .addStringOption((option) =>
+          option
+            .setName("text")
+            .setDescription("System prompt text")
+            .setRequired(true)
+            .setMaxLength(4000),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("show").setDescription("Show current channel system prompt"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("clear").setDescription("Clear current channel system prompt"),
+    ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
   new SlashCommandBuilder()
     .setName("worktree")
