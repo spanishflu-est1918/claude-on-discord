@@ -19,6 +19,51 @@ async function ask(
   return valueOrDefault(answer, fallback);
 }
 
+function parseYesNo(input: string, fallback: boolean): boolean {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (["y", "yes", "true", "1"].includes(normalized)) {
+    return true;
+  }
+  if (["n", "no", "false", "0"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
+async function askYesNo(
+  rl: ReturnType<typeof createInterface>,
+  prompt: string,
+  fallback: boolean,
+): Promise<boolean> {
+  const suffix = fallback ? " [Y/n]" : " [y/N]";
+  const answer = await rl.question(`${prompt}${suffix}: `);
+  return parseYesNo(answer, fallback);
+}
+
+async function openInviteInBrowser(url: string): Promise<boolean> {
+  const cmd =
+    process.platform === "darwin"
+      ? ["open", url]
+      : process.platform === "win32"
+        ? ["cmd", "/c", "start", "", url]
+        : ["xdg-open", url];
+
+  try {
+    const child = Bun.spawn({
+      cmd,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await child.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const envPath = path.resolve(".env");
   const current = existsSync(envPath) ? parseEnvFile(await readFile(envPath, "utf8")) : {};
@@ -79,6 +124,15 @@ async function main(): Promise<void> {
 
     console.log(`\nWrote ${envPath}`);
     console.log(`Invite URL:\n${inviteUrl}`);
+
+    const shouldOpenInvite = await askYesNo(rl, "Open invite URL in browser now", true);
+    if (shouldOpenInvite) {
+      const opened = await openInviteInBrowser(inviteUrl);
+      if (!opened) {
+        console.log("Could not open browser automatically. Open the invite URL manually.");
+      }
+    }
+
     console.log("\nNext:");
     console.log("1) Open invite URL and authorize bot for your server");
     console.log("2) bun run start");

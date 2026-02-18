@@ -63,10 +63,11 @@ node ./bin/claude-on-discord.js help
 ### 2. Run Interactive Setup
 
 ```bash
-bun run init
+bun run setup
 ```
 
 This writes `.env` and prints a Discord invite URL with the required scopes.
+Setup can optionally open the invite URL in your browser immediately.
 
 ### 3. Invite the Bot
 
@@ -85,6 +86,7 @@ bun run start
 Equivalent CLI commands:
 
 ```bash
+claude-on-discord setup
 claude-on-discord init
 claude-on-discord dev
 claude-on-discord start

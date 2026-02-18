@@ -8,6 +8,7 @@
   },
   "scripts": {
     "init": "bun src/init.ts",
+    "setup": "bun src/init.ts",
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test",

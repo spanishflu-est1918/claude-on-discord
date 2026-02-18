@@ -10,7 +10,8 @@ function printHelp() {
   console.log("  claude-on-discord <command>");
   console.log("");
   console.log("Commands:");
-  console.log("  init     Run interactive setup and write .env");
+  console.log("  setup    Run interactive setup and write .env (alias: init)");
+  console.log("  init     Alias for setup");
   console.log("  start    Start the Discord bridge");
   console.log("  dev      Start in watch mode");
   console.log("  help     Show this help");
@@ -19,6 +20,7 @@ function printHelp() {
 function resolveBunArgs(command) {
   switch (command) {
     case "init":
+    case "setup":
       return ["run", "src/init.ts"];
     case "start":
       return ["run", "src/index.ts"];
