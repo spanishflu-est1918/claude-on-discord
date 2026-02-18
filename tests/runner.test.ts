@@ -140,6 +140,7 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.permissionMode).toBe("plan");
     expect(capturedInput?.options.includePartialMessages).toBe(true);
     expect(capturedInput?.options.thinking).toEqual({ type: "adaptive" });
+    expect(capturedInput?.prompt).toContain("you CAN return files/images");
   });
 
   test("calls onQueryStart, onTextDelta, and onThinkingDelta callbacks", async () => {

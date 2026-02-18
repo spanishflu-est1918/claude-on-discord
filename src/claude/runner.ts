@@ -52,6 +52,20 @@ export interface RunResult {
   messages: ClaudeSDKMessage[];
 }
 
+const DISCORD_BRIDGE_PROMPT_POLICY = [
+  "You are running inside a Discord bridge host.",
+  "Important: you CAN return files/images to the user via this host.",
+  "Do not claim that you cannot send attachments.",
+  "When asked to return an artifact (image/file), create or modify a real file and keep it on disk.",
+  "Prefer writing outputs in the current project directory unless the user requests otherwise.",
+].join(" ");
+
+function withBridgePromptPolicy(prompt: string): string {
+  return ["<system-reminder>", DISCORD_BRIDGE_PROMPT_POLICY, "</system-reminder>", "", prompt].join(
+    "\n",
+  );
+}
+
 export class ClaudeRunner {
   constructor(
     private readonly queryFactory: QueryFactory = claudeQuery as unknown as QueryFactory,
@@ -121,7 +135,7 @@ export class ClaudeRunner {
     };
 
     const query = this.queryFactory({
-      prompt: input.request.prompt,
+      prompt: withBridgePromptPolicy(input.request.prompt),
       abortController: input.abortController,
       options,
     });
