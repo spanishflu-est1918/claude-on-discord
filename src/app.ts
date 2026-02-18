@@ -12,8 +12,10 @@ import { openDatabase } from "./db/schema";
 import {
   buildProjectSwitchButtons,
   buildStopButtons,
+  buildThreadWorktreeChoiceButtons,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
+  parseThreadWorktreeChoiceCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
@@ -257,6 +259,7 @@ async function syncChannelTopic(channel: unknown, workingDir: string): Promise<v
 type ThreadBootstrapChannel = {
   id: string;
   parentId: string | null;
+  name?: string;
   isThread: () => boolean;
 };
 
@@ -269,6 +272,19 @@ function isThreadBootstrapChannel(channel: unknown): channel is ThreadBootstrapC
     "parentId" in channel &&
     "isThread" in channel &&
     typeof (channel as { isThread?: unknown }).isThread === "function"
+  );
+}
+
+type ThreadSetupChannel = {
+  send: (options: string | { content: string; components?: unknown[] }) => Promise<unknown>;
+};
+
+function canSendThreadSetupMessage(channel: unknown): channel is ThreadSetupChannel {
+  return (
+    typeof channel === "object" &&
+    channel !== null &&
+    "send" in channel &&
+    typeof (channel as ThreadSetupChannel).send === "function"
   );
 }
 
@@ -377,22 +393,40 @@ async function maybeInheritThreadContext(input: {
   }
 
   input.sessions.cloneChannelContext(parentChannelId, input.channelId, input.guildId);
-  const threadName = cloneThreadBranchName((input.channel as { name?: string }).name ?? "");
-  const worktreePath = await maybeProvisionThreadWorktree({
-    enabled: input.autoThreadWorktree,
-    parentWorkingDir: parent.workingDir,
-    threadChannelId: input.channelId,
-    threadName,
-  });
-  if (worktreePath) {
-    input.sessions.setWorkingDir(input.channelId, worktreePath);
-  }
+  const threadName = cloneThreadBranchName(input.channel.name ?? "");
   const parentPrompt = input.repository.getChannelSystemPrompt(parentChannelId);
   if (parentPrompt) {
     input.repository.setChannelSystemPrompt(input.channelId, parentPrompt);
   }
   const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(parentChannelId));
   const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
+
+  if (input.autoThreadWorktree) {
+    const worktreePath = await maybeProvisionThreadWorktree({
+      enabled: true,
+      parentWorkingDir: parent.workingDir,
+      threadChannelId: input.channelId,
+      threadName,
+    });
+    if (worktreePath) {
+      input.sessions.setWorkingDir(input.channelId, worktreePath);
+    }
+    input.repository.setThreadBranchMeta(
+      input.channelId,
+      JSON.stringify({
+        channelId: input.channelId,
+        guildId: input.guildId,
+        rootChannelId,
+        parentChannelId,
+        name: threadName,
+        createdAt: Date.now(),
+        ...(worktreePath ? { worktreePath, worktreeMode: "worktree" as const } : {}),
+        ...(!worktreePath ? { worktreeMode: "inherited" as const } : {}),
+      }),
+    );
+    return;
+  }
+
   input.repository.setThreadBranchMeta(
     input.channelId,
     JSON.stringify({
@@ -402,9 +436,24 @@ async function maybeInheritThreadContext(input: {
       parentChannelId,
       name: threadName,
       createdAt: Date.now(),
-      ...(worktreePath ? { worktreePath } : {}),
+      worktreeMode: "prompt",
     }),
   );
+
+  if (!canSendThreadSetupMessage(input.channel)) {
+    return;
+  }
+
+  try {
+    await input.channel.send({
+      content:
+        `Thread inherited project \`${parent.workingDir}\`.\n` +
+        "Choose whether to keep parent project or create a dedicated git worktree for this thread.",
+      components: buildThreadWorktreeChoiceButtons(input.channelId),
+    });
+  } catch {
+    // Ignore thread setup message failures (permissions, unsupported channel types, etc).
+  }
 }
 
 async function cleanupFiles(paths: string[]): Promise<void> {
@@ -600,6 +649,83 @@ export async function startApp(config: AppConfig): Promise<void> {
             components: [],
           });
           void syncChannelTopic(interaction.channel, state.channel.workingDir);
+          return;
+        }
+
+        const threadWorktreeChoice = parseThreadWorktreeChoiceCustomId(interaction.customId);
+        if (threadWorktreeChoice) {
+          if (interaction.channelId !== threadWorktreeChoice.channelId) {
+            await interaction.reply({
+              content: "This thread setup action belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const guildId = interaction.guildId ?? "dm";
+          const channelId = threadWorktreeChoice.channelId;
+          const state = sessions.getState(channelId, guildId);
+          const meta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
+          if (!meta) {
+            await interaction.reply({
+              content:
+                "Thread setup request expired. Re-run `/status` and `/worktree action:thread`.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          if (threadWorktreeChoice.action === "keep") {
+            const { worktreePath: _worktreePath, ...rest } = meta;
+            repository.setThreadBranchMeta(
+              channelId,
+              JSON.stringify({
+                ...rest,
+                worktreeMode: "inherited",
+              }),
+            );
+            await interaction.update({
+              content: `Thread will keep parent project \`${state.channel.workingDir}\`.`,
+              components: [],
+            });
+            return;
+          }
+
+          const parentChannelId = meta.parentChannelId ?? meta.rootChannelId;
+          const parentChannel = repository.getChannel(parentChannelId);
+          const parentWorkingDir = parentChannel?.workingDir ?? state.channel.workingDir;
+          const worktreePath = await maybeProvisionThreadWorktree({
+            enabled: true,
+            parentWorkingDir,
+            threadChannelId: channelId,
+            threadName: meta.name,
+          });
+
+          if (!worktreePath) {
+            await interaction.update({
+              content:
+                `Could not create worktree from \`${parentWorkingDir}\`.\n` +
+                "You can keep parent project or retry create worktree.",
+              components: buildThreadWorktreeChoiceButtons(channelId),
+            });
+            return;
+          }
+
+          sessions.switchProject(channelId, guildId, worktreePath);
+          sessions.setSessionId(channelId, null);
+          repository.setThreadBranchMeta(
+            channelId,
+            JSON.stringify({
+              ...meta,
+              worktreePath,
+              worktreeMode: "worktree",
+            }),
+          );
+          await interaction.update({
+            content: `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,
+            components: [],
+          });
+          void syncChannelTopic(interaction.channel, worktreePath);
           return;
         }
 
@@ -864,6 +990,49 @@ export async function startApp(config: AppConfig): Promise<void> {
                   await interaction.followUp(chunk);
                 }
               }
+              break;
+            }
+
+            if (action === "thread") {
+              const meta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
+              if (!meta) {
+                await interaction.editReply(
+                  "No thread branch metadata found for this channel. Use this action inside a tracked thread.",
+                );
+                break;
+              }
+
+              const parentChannelId = meta.parentChannelId ?? meta.rootChannelId;
+              const parentChannel = repository.getChannel(parentChannelId);
+              const parentWorkingDir = parentChannel?.workingDir ?? state.channel.workingDir;
+              const worktreePath = await maybeProvisionThreadWorktree({
+                enabled: true,
+                parentWorkingDir,
+                threadChannelId: channelId,
+                threadName: meta.name,
+              });
+
+              if (!worktreePath) {
+                await interaction.editReply(
+                  `Failed to provision thread worktree from \`${parentWorkingDir}\`.`,
+                );
+                break;
+              }
+
+              sessions.switchProject(channelId, guildId, worktreePath);
+              sessions.setSessionId(channelId, null);
+              repository.setThreadBranchMeta(
+                channelId,
+                JSON.stringify({
+                  ...meta,
+                  worktreePath,
+                  worktreeMode: "worktree",
+                }),
+              );
+              void syncChannelTopic(interaction.channel, worktreePath);
+              await interaction.editReply(
+                `Thread switched to dedicated worktree \`${worktreePath}\` (session restarted).`,
+              );
               break;
             }
 

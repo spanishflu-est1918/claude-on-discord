@@ -65,6 +65,7 @@ export interface ThreadBranchMeta {
   name: string;
   createdAt: number;
   worktreePath?: string;
+  worktreeMode?: "prompt" | "inherited" | "worktree";
 }
 
 export interface RingBufferSnapshot<T> {

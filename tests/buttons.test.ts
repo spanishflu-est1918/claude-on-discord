@@ -3,8 +3,10 @@ import { ButtonStyle } from "discord.js";
 import {
   buildProjectSwitchButtons,
   buildStopButtons,
+  buildThreadWorktreeChoiceButtons,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
+  parseThreadWorktreeChoiceCustomId,
 } from "../src/discord/buttons";
 
 describe("discord buttons", () => {
@@ -71,5 +73,36 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
     expect(parseProjectSwitchCustomId("project:keep:")).toBeNull();
     expect(parseProjectSwitchCustomId("project:fresh:")).toBeNull();
+    expect(parseThreadWorktreeChoiceCustomId("thread:worktree:keep:")).toBeNull();
+    expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:")).toBeNull();
+  });
+
+  test("builds and parses thread worktree choice buttons", () => {
+    const rows = buildThreadWorktreeChoiceButtons("thread-1");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(2);
+
+    const keep = components[0]?.toJSON();
+    const create = components[1]?.toJSON();
+    const keepId = keep && "custom_id" in keep ? keep.custom_id : undefined;
+    const createId = create && "custom_id" in create ? create.custom_id : undefined;
+    const keepStyle = keep && "style" in keep ? keep.style : undefined;
+    const createStyle = create && "style" in create ? create.style : undefined;
+
+    expect(keepId).toBe("thread:worktree:keep:thread-1");
+    expect(createId).toBe("thread:worktree:create:thread-1");
+    expect(keepStyle).toBe(ButtonStyle.Secondary);
+    expect(createStyle).toBe(ButtonStyle.Primary);
+
+    expect(parseThreadWorktreeChoiceCustomId("thread:worktree:keep:thread-1")).toEqual({
+      action: "keep",
+      channelId: "thread-1",
+    });
+    expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:thread-1")).toEqual({
+      action: "create",
+      channelId: "thread-1",
+    });
   });
 });

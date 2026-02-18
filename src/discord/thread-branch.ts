@@ -13,7 +13,11 @@ function isThreadBranchMeta(value: unknown): value is ThreadBranchMeta {
     typeof candidate.name === "string" &&
     typeof candidate.createdAt === "number" &&
     Number.isFinite(candidate.createdAt) &&
-    (typeof candidate.worktreePath === "string" || typeof candidate.worktreePath === "undefined")
+    (typeof candidate.worktreePath === "string" || typeof candidate.worktreePath === "undefined") &&
+    (candidate.worktreeMode === "prompt" ||
+      candidate.worktreeMode === "inherited" ||
+      candidate.worktreeMode === "worktree" ||
+      typeof candidate.worktreeMode === "undefined")
   );
 }
 
@@ -27,6 +31,16 @@ export function parseThreadBranchMeta(raw: string | null): ThreadBranchMeta | nu
   } catch {
     return null;
   }
+}
+
+function describeThreadWorktree(meta: ThreadBranchMeta): string {
+  if (meta.worktreePath) {
+    return meta.worktreePath;
+  }
+  if (meta.worktreeMode === "prompt") {
+    return "pending-choice";
+  }
+  return "inherited-root";
 }
 
 export function buildThreadBranchAwarenessPrompt(input: {
@@ -64,7 +78,7 @@ export function buildThreadBranchAwarenessPrompt(input: {
 
     for (const meta of related.slice(0, maxBranches)) {
       lines.push(
-        `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? meta.rootChannelId}; worktree=${meta.worktreePath ?? "inherited-root"}`,
+        `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? meta.rootChannelId}; worktree=${describeThreadWorktree(meta)}`,
       );
     }
     if (related.length > maxBranches) {
@@ -82,7 +96,7 @@ export function buildThreadBranchAwarenessPrompt(input: {
   lines.push("Current channel is a root with child thread branches:");
   for (const meta of rootedHere.slice(0, maxBranches)) {
     lines.push(
-      `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? "none"}; worktree=${meta.worktreePath ?? "inherited-root"}`,
+      `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? "none"}; worktree=${describeThreadWorktree(meta)}`,
     );
   }
   if (rootedHere.length > maxBranches) {
@@ -118,6 +132,10 @@ export function buildThreadBranchStatusLines(input: {
     ];
     if (current.worktreePath) {
       lines.push(`Thread worktree: \`${current.worktreePath}\``);
+    } else if (current.worktreeMode === "prompt") {
+      lines.push("Thread worktree: pending choice (`Keep Parent Project` or `Create Worktree`).");
+    } else {
+      lines.push("Thread worktree: inherited parent/root project.");
     }
     return lines;
   }

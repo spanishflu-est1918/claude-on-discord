@@ -4,9 +4,12 @@ const INTERRUPT_PREFIX = "run:interrupt:";
 const ABORT_PREFIX = "run:abort:";
 const PROJECT_KEEP_PREFIX = "project:keep:";
 const PROJECT_FRESH_PREFIX = "project:fresh:";
+const THREAD_WORKTREE_KEEP_PREFIX = "thread:worktree:keep:";
+const THREAD_WORKTREE_CREATE_PREFIX = "thread:worktree:create:";
 
 export type RunControlAction = "interrupt" | "abort";
 export type ProjectSwitchAction = "keep" | "fresh";
+export type ThreadWorktreeAction = "keep" | "create";
 
 export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
   const interruptButton = new ButtonBuilder()
@@ -36,6 +39,22 @@ export function buildProjectSwitchButtons(requestId: string): ActionRowBuilder<B
     .setStyle(ButtonStyle.Primary);
 
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(keepButton, freshButton)];
+}
+
+export function buildThreadWorktreeChoiceButtons(
+  channelId: string,
+): ActionRowBuilder<ButtonBuilder>[] {
+  const keepButton = new ButtonBuilder()
+    .setCustomId(`${THREAD_WORKTREE_KEEP_PREFIX}${channelId}`)
+    .setLabel("Keep Parent Project")
+    .setStyle(ButtonStyle.Secondary);
+
+  const createButton = new ButtonBuilder()
+    .setCustomId(`${THREAD_WORKTREE_CREATE_PREFIX}${channelId}`)
+    .setLabel("Create Worktree")
+    .setStyle(ButtonStyle.Primary);
+
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(keepButton, createButton)];
 }
 
 export function parseRunControlCustomId(
@@ -72,6 +91,26 @@ export function parseProjectSwitchCustomId(
     const requestId = customId.slice(PROJECT_FRESH_PREFIX.length);
     if (requestId) {
       return { action: "fresh", requestId };
+    }
+  }
+
+  return null;
+}
+
+export function parseThreadWorktreeChoiceCustomId(
+  customId: string,
+): { action: ThreadWorktreeAction; channelId: string } | null {
+  if (customId.startsWith(THREAD_WORKTREE_KEEP_PREFIX)) {
+    const channelId = customId.slice(THREAD_WORKTREE_KEEP_PREFIX.length);
+    if (channelId) {
+      return { action: "keep", channelId };
+    }
+  }
+
+  if (customId.startsWith(THREAD_WORKTREE_CREATE_PREFIX)) {
+    const channelId = customId.slice(THREAD_WORKTREE_CREATE_PREFIX.length);
+    if (channelId) {
+      return { action: "create", channelId };
     }
   }
 

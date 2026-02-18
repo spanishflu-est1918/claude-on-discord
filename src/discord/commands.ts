@@ -60,6 +60,7 @@ const slashCommands = [
           { name: "create", value: "create" },
           { name: "list", value: "list" },
           { name: "remove", value: "remove" },
+          { name: "thread", value: "thread" },
         ),
     )
     .addStringOption((option) =>

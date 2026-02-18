@@ -24,6 +24,19 @@ describe("thread branch metadata helpers", () => {
 
   test("parseThreadBranchMeta returns null for invalid data", () => {
     expect(parseThreadBranchMeta('{"channelId":1}')).toBeNull();
+    expect(
+      parseThreadBranchMeta(
+        JSON.stringify({
+          channelId: "c1",
+          guildId: "g1",
+          rootChannelId: "root",
+          parentChannelId: "p1",
+          name: "feature-a",
+          createdAt: 10,
+          worktreeMode: "bad-mode",
+        }),
+      ),
+    ).toBeNull();
     expect(parseThreadBranchMeta("not-json")).toBeNull();
     expect(parseThreadBranchMeta(null)).toBeNull();
   });
@@ -112,6 +125,31 @@ describe("thread branch metadata helpers", () => {
     expect(lines[0]).toContain("Thread branch:");
     expect(lines[1]).toContain("Thread root:");
     expect(lines[2]).toContain("Thread parent:");
+    expect(lines[3]).toContain("Thread worktree: inherited");
+  });
+
+  test("buildThreadBranchStatusLines surfaces pending thread worktree choice", () => {
+    const entries = [
+      {
+        channelId: "thread-c",
+        value: JSON.stringify({
+          channelId: "thread-c",
+          guildId: "g1",
+          rootChannelId: "root",
+          parentChannelId: "root",
+          name: "c",
+          createdAt: 3,
+          worktreeMode: "prompt",
+        }),
+      },
+    ];
+
+    const lines = buildThreadBranchStatusLines({
+      currentChannelId: "thread-c",
+      entries,
+    });
+
+    expect(lines[3]).toContain("pending choice");
   });
 
   test("buildThreadBranchStatusLines returns root summary when current channel is root", () => {
