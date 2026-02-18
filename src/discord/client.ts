@@ -13,6 +13,9 @@ export interface DiscordClientOptions {
   onUserMessage: (message: Message) => Promise<void>;
   onSlashCommand: (interaction: ChatInputCommandInteraction) => Promise<void>;
   onButtonInteraction: (interaction: ButtonInteraction) => Promise<void>;
+  onGatewayDisconnect?: (code: number) => void;
+  onGatewayReconnecting?: () => void;
+  onGatewayResume?: (replayedEvents: number) => void;
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -29,6 +32,26 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
   client.once("clientReady", () => {
     const user = client.user?.tag ?? "unknown";
     console.log(`Discord client ready as ${user}`);
+  });
+
+  client.on("shardDisconnect", (event) => {
+    const code = event.code ?? 0;
+    console.warn(`Discord gateway disconnected (code=${code}).`);
+    options.onGatewayDisconnect?.(code);
+  });
+
+  client.on("shardReconnecting", () => {
+    console.warn("Discord gateway reconnecting...");
+    options.onGatewayReconnecting?.();
+  });
+
+  client.on("shardResume", (replayedEvents) => {
+    console.log(`Discord gateway resumed (replayed=${replayedEvents}).`);
+    options.onGatewayResume?.(replayedEvents);
+  });
+
+  client.on("error", (error) => {
+    console.error("Discord client error", error);
   });
 
   client.on("messageCreate", async (message) => {

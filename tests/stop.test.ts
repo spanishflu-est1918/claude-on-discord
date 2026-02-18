@@ -89,6 +89,28 @@ describe("StopController", () => {
     expect(controller.wasInterrupted("channel-1")).toBe(false);
   });
 
+  test("abortAll aborts all active runs and returns channel ids", () => {
+    const controller = new StopController();
+    const a = new AbortController();
+    const b = new AbortController();
+
+    controller.register("channel-1", {
+      query: createMockQuery({ interrupted: false }),
+      abortController: a,
+    });
+    controller.register("channel-2", {
+      query: createMockQuery({ interrupted: false }),
+      abortController: b,
+    });
+
+    const ids = controller.abortAll().sort();
+    expect(ids).toEqual(["channel-1", "channel-2"]);
+    expect(a.signal.aborted).toBe(true);
+    expect(b.signal.aborted).toBe(true);
+    expect(controller.isActive("channel-1")).toBe(false);
+    expect(controller.isActive("channel-2")).toBe(false);
+  });
+
   test("setModel and stopTask pass through to query", async () => {
     const controller = new StopController();
     const state: QueryState = { interrupted: false };

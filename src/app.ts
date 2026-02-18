@@ -286,290 +286,217 @@ export async function startApp(config: AppConfig): Promise<void> {
     string,
     { channelId: string; guildId: string; workingDir: string }
   >();
+  let shuttingDown = false;
+  let shutdownPromise: Promise<void> | null = null;
+  let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
 
-  await registerSlashCommands({
-    token: config.discordToken,
-    clientId: config.discordClientId,
-    guildId: config.discordGuildId,
-  });
+  const clearActiveRunsWithSessionReset = (reason: string) => {
+    const activeChannelIds = stopController.getActiveChannelIds();
+    if (activeChannelIds.length === 0) {
+      return;
+    }
+    for (const activeChannelId of activeChannelIds) {
+      sessions.setSessionId(activeChannelId, null);
+    }
+    const aborted = stopController.abortAll();
+    console.warn(`Cleared ${aborted.length} active run(s) due to ${reason}.`);
+  };
 
-  await startDiscordClient({
-    token: config.discordToken,
-    onButtonInteraction: async (interaction) => {
-      const projectSwitch = parseProjectSwitchCustomId(interaction.customId);
-      if (projectSwitch) {
-        const pending = pendingProjectSwitches.get(projectSwitch.requestId);
-        if (!pending) {
+  const shutdown = async (reason: string): Promise<void> => {
+    if (shutdownPromise) {
+      return shutdownPromise;
+    }
+    shuttingDown = true;
+    shutdownPromise = (async () => {
+      console.log(`Shutting down (${reason})...`);
+      pendingProjectSwitches.clear();
+      clearActiveRunsWithSessionReset(`shutdown:${reason}`);
+
+      if (discordClient) {
+        try {
+          discordClient.destroy();
+        } catch (error) {
+          console.error("Failed to destroy Discord client during shutdown", error);
+        }
+      }
+
+      try {
+        database.close();
+      } catch (error) {
+        console.error("Failed to close database during shutdown", error);
+      }
+      console.log("Shutdown complete.");
+    })();
+
+    return shutdownPromise;
+  };
+
+  try {
+    await registerSlashCommands({
+      token: config.discordToken,
+      clientId: config.discordClientId,
+      guildId: config.discordGuildId,
+    });
+
+    discordClient = await startDiscordClient({
+      token: config.discordToken,
+      onGatewayDisconnect: (code) => {
+        if (shuttingDown) {
+          return;
+        }
+        clearActiveRunsWithSessionReset(`gateway disconnect (code=${code})`);
+      },
+      onGatewayReconnecting: () => {
+        if (!shuttingDown) {
+          console.warn("Gateway reconnect in progress.");
+        }
+      },
+      onGatewayResume: () => {
+        if (!shuttingDown) {
+          console.log("Gateway resume completed.");
+        }
+      },
+      onButtonInteraction: async (interaction) => {
+        if (shuttingDown) {
           await interaction.reply({
-            content: "Project switch request expired. Run /project again.",
+            content: "Bot is shutting down. Please retry in a moment.",
             flags: MessageFlags.Ephemeral,
           });
           return;
         }
-        if (interaction.channelId !== pending.channelId) {
-          await interaction.reply({
-            content: "This project switch belongs to a different channel.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        pendingProjectSwitches.delete(projectSwitch.requestId);
-        const previousChannelState = sessions.getState(pending.channelId, pending.guildId).channel;
-        const state = sessions.switchProject(
-          pending.channelId,
-          pending.guildId,
-          pending.workingDir,
-          {
-            fresh: projectSwitch.action === "fresh",
-          },
-        );
-        const changedProject = previousChannelState.workingDir !== pending.workingDir;
-        const suffix =
-          projectSwitch.action === "fresh"
-            ? " with fresh session."
-            : changedProject
-              ? " (context kept, session restarted)."
-              : " (context kept).";
-        await interaction.update({
-          content: `Project set to \`${state.channel.workingDir}\`${suffix}`,
-          components: [],
-        });
-        return;
-      }
-
-      const control = parseRunControlCustomId(interaction.customId);
-      if (!control) {
-        await interaction.reply({
-          content: "Unknown control button.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      if (interaction.channelId !== control.channelId) {
-        await interaction.reply({
-          content: "This control belongs to a different channel session.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      if (control.action === "interrupt") {
-        const interrupted = await stopController.interrupt(control.channelId);
-        await interaction.reply({
-          content: interrupted ? "Interrupt signal sent." : "No active run to interrupt.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-
-      const aborted = stopController.abort(control.channelId);
-      await interaction.reply({
-        content: aborted ? "Abort signal sent." : "No active run to abort.",
-        flags: MessageFlags.Ephemeral,
-      });
-    },
-    onSlashCommand: async (interaction) => {
-      const channelId = interaction.channelId;
-      const guildId = interaction.guildId ?? "dm";
-
-      switch (interaction.commandName) {
-        case "new": {
-          sessions.resetSession(channelId);
-          await interaction.reply("Session reset for this channel.");
-          break;
-        }
-        case "compact": {
-          const state = sessions.getState(channelId, guildId);
-          const summary = compactHistory(state.history);
-          sessions.resetSession(channelId);
-          sessions.appendTurn(channelId, {
-            role: "assistant",
-            content: `Context summary:\n${summary}`,
-          });
-          await interaction.reply("Context compacted and session reset.");
-          break;
-        }
-        case "status": {
-          const state = sessions.getState(channelId, guildId);
-          const totalCost = repository.getChannelCostTotal(channelId);
-          const turns = state.history.length;
-          const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
-          const lines = [
-            `Project: \`${state.channel.workingDir}\``,
-            `Model: \`${state.channel.model}\``,
-            `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
-            `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
-            `In-memory turns: \`${turns}\``,
-            `Total channel cost: \`$${totalCost.toFixed(4)}\``,
-          ];
-          await interaction.reply(lines.join("\n"));
-          break;
-        }
-        case "bash": {
-          const command = interaction.options.getString("command", true);
-          const state = sessions.getState(channelId, guildId);
-          await interaction.deferReply();
-
-          const result = await runBashCommand(command, state.channel.workingDir);
-          const outputText = result.output || "(no output)";
-          const payload = `\`\`\`bash\n$ ${command}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
-          const chunks = chunkDiscordText(payload);
-          const firstChunk = chunks[0] ?? "(no output)";
-          await interaction.editReply(firstChunk);
-
-          for (let i = 1; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunk) {
-              await interaction.followUp(chunk);
-            }
-          }
-          break;
-        }
-        case "project": {
-          const state = sessions.getState(channelId, guildId);
-          const inputPath = interaction.options.getString("path");
-          await interaction.deferReply();
-
-          let selectedPath: string | null = null;
-          let sourceDescription = "";
-
-          if (inputPath) {
-            selectedPath = resolvePath(inputPath, state.channel.workingDir);
-            if (!existsSync(selectedPath)) {
-              await interaction.editReply(
-                `Path not found: \`${selectedPath}\`\n\`path\` is resolved relative to current project \`${state.channel.workingDir}\` unless absolute.`,
-              );
-              break;
-            }
-            const isDirectory = (() => {
-              try {
-                return statSync(selectedPath).isDirectory();
-              } catch {
-                return false;
-              }
-            })();
-            if (!isDirectory) {
-              await interaction.editReply(
-                `Path is not a directory: \`${selectedPath}\`\nProvide a folder path relative to \`${state.channel.workingDir}\` or absolute.`,
-              );
-              break;
-            }
-            const isRelative = !path.isAbsolute(inputPath) && !inputPath.startsWith("~/");
-            sourceDescription = isRelative
-              ? `from \`${inputPath}\` (resolved relative to \`${state.channel.workingDir}\`)`
-              : `from \`${inputPath}\``;
-          } else {
-            if (process.platform !== "darwin") {
-              await interaction.editReply(
-                `Finder picker is only available on macOS. Use \`/project path:<dir>\` (relative to \`${state.channel.workingDir}\` or absolute).`,
-              );
-              break;
-            }
-            selectedPath = await pickFolderWithFinder();
-            if (!selectedPath) {
-              await interaction.editReply("Folder selection cancelled.");
-              break;
-            }
-            sourceDescription = "from Finder picker";
-          }
-
-          const requestId = crypto.randomUUID();
-          pendingProjectSwitches.set(requestId, {
-            channelId,
-            guildId,
-            workingDir: selectedPath,
-          });
-          await interaction.editReply({
-            content: `Selected project \`${selectedPath}\` ${sourceDescription}. Keep current context or clear it?`,
-            components: buildProjectSwitchButtons(requestId),
-          });
-          break;
-        }
-        case "model": {
-          const model = interaction.options.getString("name", true);
-          sessions.setModel(channelId, model);
-          await stopController.setModel(channelId, model);
-          await interaction.reply(`Model set to \`${model}\`.`);
-          break;
-        }
-        case "systemprompt": {
-          const action = interaction.options.getSubcommand(true);
-
-          if (action === "set") {
-            const text = interaction.options.getString("text", true).trim();
-            if (!text) {
-              await interaction.reply({
-                content: "System prompt cannot be empty.",
-                flags: MessageFlags.Ephemeral,
-              });
-              break;
-            }
-
-            repository.setChannelSystemPrompt(channelId, text);
-            sessions.setSessionId(channelId, null);
-            await interaction.reply(
-              `Channel system prompt set (\`${text.length}\` chars). Session restarted for this channel.`,
-            );
-            break;
-          }
-
-          if (action === "show") {
-            const text = repository.getChannelSystemPrompt(channelId);
-            if (!text) {
-              await interaction.reply({
-                content: "No channel system prompt is set.",
-                flags: MessageFlags.Ephemeral,
-              });
-              break;
-            }
-            const content = `Channel system prompt (\`${text.length}\` chars):\n\`\`\`\n${text}\n\`\`\``;
-            const chunks = chunkDiscordText(content);
+        const projectSwitch = parseProjectSwitchCustomId(interaction.customId);
+        if (projectSwitch) {
+          const pending = pendingProjectSwitches.get(projectSwitch.requestId);
+          if (!pending) {
             await interaction.reply({
-              content: chunks[0] ?? "No channel system prompt is set.",
+              content: "Project switch request expired. Run /project again.",
               flags: MessageFlags.Ephemeral,
             });
-            for (let i = 1; i < chunks.length; i++) {
-              const chunk = chunks[i];
-              if (chunk) {
-                await interaction.followUp({
-                  content: chunk,
-                  flags: MessageFlags.Ephemeral,
-                });
-              }
-            }
-            break;
+            return;
+          }
+          if (interaction.channelId !== pending.channelId) {
+            await interaction.reply({
+              content: "This project switch belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
           }
 
-          repository.clearChannelSystemPrompt(channelId);
-          sessions.setSessionId(channelId, null);
-          await interaction.reply(
-            "Channel system prompt cleared. Session restarted for this channel.",
+          pendingProjectSwitches.delete(projectSwitch.requestId);
+          const previousChannelState = sessions.getState(
+            pending.channelId,
+            pending.guildId,
+          ).channel;
+          const state = sessions.switchProject(
+            pending.channelId,
+            pending.guildId,
+            pending.workingDir,
+            {
+              fresh: projectSwitch.action === "fresh",
+            },
           );
-          break;
+          const changedProject = previousChannelState.workingDir !== pending.workingDir;
+          const suffix =
+            projectSwitch.action === "fresh"
+              ? " with fresh session."
+              : changedProject
+                ? " (context kept, session restarted)."
+                : " (context kept).";
+          await interaction.update({
+            content: `Project set to \`${state.channel.workingDir}\`${suffix}`,
+            components: [],
+          });
+          return;
         }
-        case "cost": {
-          const totalCost = repository.getChannelCostTotal(channelId);
-          const totalTurns = repository.getChannelTurnCount(channelId);
-          await interaction.reply(
-            `Channel spend: \`$${totalCost.toFixed(4)}\` across \`${totalTurns}\` turns.`,
-          );
-          break;
-        }
-        case "worktree": {
-          const state = sessions.getState(channelId, guildId);
-          const action = interaction.options.getString("action", true);
-          const inputPath = interaction.options.getString("path");
-          const branch = interaction.options.getString("branch");
-          await interaction.deferReply();
 
-          if (action === "list") {
-            const result = await runCommand(["git", "worktree", "list"], state.channel.workingDir);
-            const text = result.output || "(no output)";
-            const payload = `\`\`\`bash\n${text}\n\`\`\``;
+        const control = parseRunControlCustomId(interaction.customId);
+        if (!control) {
+          await interaction.reply({
+            content: "Unknown control button.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (interaction.channelId !== control.channelId) {
+          await interaction.reply({
+            content: "This control belongs to a different channel session.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (control.action === "interrupt") {
+          const interrupted = await stopController.interrupt(control.channelId);
+          await interaction.reply({
+            content: interrupted ? "Interrupt signal sent." : "No active run to interrupt.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const aborted = stopController.abort(control.channelId);
+        await interaction.reply({
+          content: aborted ? "Abort signal sent." : "No active run to abort.",
+          flags: MessageFlags.Ephemeral,
+        });
+      },
+      onSlashCommand: async (interaction) => {
+        if (shuttingDown) {
+          await interaction.reply({
+            content: "Bot is shutting down. Please retry in a moment.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        const channelId = interaction.channelId;
+        const guildId = interaction.guildId ?? "dm";
+
+        switch (interaction.commandName) {
+          case "new": {
+            sessions.resetSession(channelId);
+            await interaction.reply("Session reset for this channel.");
+            break;
+          }
+          case "compact": {
+            const state = sessions.getState(channelId, guildId);
+            const summary = compactHistory(state.history);
+            sessions.resetSession(channelId);
+            sessions.appendTurn(channelId, {
+              role: "assistant",
+              content: `Context summary:\n${summary}`,
+            });
+            await interaction.reply("Context compacted and session reset.");
+            break;
+          }
+          case "status": {
+            const state = sessions.getState(channelId, guildId);
+            const totalCost = repository.getChannelCostTotal(channelId);
+            const turns = state.history.length;
+            const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+            const lines = [
+              `Project: \`${state.channel.workingDir}\``,
+              `Model: \`${state.channel.model}\``,
+              `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
+              `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
+              `In-memory turns: \`${turns}\``,
+              `Total channel cost: \`$${totalCost.toFixed(4)}\``,
+            ];
+            await interaction.reply(lines.join("\n"));
+            break;
+          }
+          case "bash": {
+            const command = interaction.options.getString("command", true);
+            const state = sessions.getState(channelId, guildId);
+            await interaction.deferReply();
+
+            const result = await runBashCommand(command, state.channel.workingDir);
+            const outputText = result.output || "(no output)";
+            const payload = `\`\`\`bash\n$ ${command}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
             const chunks = chunkDiscordText(payload);
-            await interaction.editReply(chunks[0] ?? "(no output)");
+            const firstChunk = chunks[0] ?? "(no output)";
+            await interaction.editReply(firstChunk);
+
             for (let i = 1; i < chunks.length; i++) {
               const chunk = chunks[i];
               if (chunk) {
@@ -578,223 +505,398 @@ export async function startApp(config: AppConfig): Promise<void> {
             }
             break;
           }
+          case "project": {
+            const state = sessions.getState(channelId, guildId);
+            const inputPath = interaction.options.getString("path");
+            await interaction.deferReply();
 
-          if (!inputPath) {
-            await interaction.editReply("`path` is required for create/remove.");
-            break;
-          }
+            let selectedPath: string | null = null;
+            let sourceDescription = "";
 
-          if (action === "create") {
-            const resolvedPath = resolvePath(inputPath);
-            const cmd = ["git", "worktree", "add", resolvedPath];
-            if (branch) {
-              cmd.push(branch);
-            }
-            const result = await runCommand(cmd, state.channel.workingDir);
-            const output = result.output || "(no output)";
-            await interaction.editReply(
-              `worktree create exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
-            );
-            break;
-          }
-
-          if (action === "remove") {
-            const resolvedPath = resolvePath(inputPath);
-            const result = await runCommand(
-              ["git", "worktree", "remove", resolvedPath],
-              state.channel.workingDir,
-            );
-            const output = result.output || "(no output)";
-            await interaction.editReply(
-              `worktree remove exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
-            );
-            break;
-          }
-
-          await interaction.editReply(`Unsupported worktree action: ${action}`);
-          break;
-        }
-        default: {
-          await interaction.reply({
-            content: "Command not implemented.",
-            flags: MessageFlags.Ephemeral,
-          });
-          break;
-        }
-      }
-    },
-    onUserMessage: async (message) => {
-      const channelId = message.channel.id;
-      const guildId = message.guildId ?? "dm";
-      const state = sessions.getState(channelId, guildId);
-      const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
-      const stagedAttachments = await stageAttachments(message);
-
-      await addReaction(message, "🧠");
-      const status = await message.reply({
-        content: "Thinking...",
-        components: buildStopButtons(channelId),
-      });
-      const prompt = `${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
-      const seededPrompt = buildSeededPrompt(
-        prompt,
-        state.history,
-        Boolean(state.channel.sessionId),
-      );
-      const abortController = new AbortController();
-      const persistedFilenames = new Set<string>();
-      let streamedText = "";
-      let streamedThinking = "";
-      let streamClosed = false;
-      let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-      let statusEditQueue: Promise<unknown> = Promise.resolve();
-
-      const queueStatusEdit = (content: string, includeButtons: boolean) => {
-        statusEditQueue = statusEditQueue
-          .then(() =>
-            status.edit({
-              content,
-              components: includeButtons ? buildStopButtons(channelId) : [],
-            }),
-          )
-          .catch(() => undefined);
-        return statusEditQueue;
-      };
-
-      const flushStreamPreview = () => {
-        streamFlushTimer = null;
-        if (streamClosed) {
-          return;
-        }
-        void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
-      };
-
-      const scheduleStreamPreview = () => {
-        if (streamClosed || streamFlushTimer) {
-          return;
-        }
-        streamFlushTimer = setTimeout(flushStreamPreview, 300);
-      };
-
-      try {
-        sessions.appendTurn(channelId, {
-          role: "user",
-          content: prompt,
-        });
-
-        const result = await runner.run({
-          prompt: seededPrompt,
-          cwd: state.channel.workingDir,
-          sessionId: state.channel.sessionId ?? undefined,
-          model: state.channel.model,
-          systemPrompt: channelSystemPrompt ?? undefined,
-          permissionMode: config.claudePermissionMode,
-          abortController,
-          onQueryStart: (query) => {
-            stopController.register(channelId, { query, abortController });
-          },
-          onTextDelta: (textDelta) => {
-            streamedText += textDelta;
-            scheduleStreamPreview();
-          },
-          onThinkingDelta: (thinkingDelta) => {
-            streamedThinking += thinkingDelta;
-            scheduleStreamPreview();
-          },
-          onMessage: (sdkMessage) => {
-            if (sdkMessage.type === "system" && sdkMessage.subtype === "files_persisted") {
-              for (const file of sdkMessage.files) {
-                persistedFilenames.add(file.filename);
+            if (inputPath) {
+              selectedPath = resolvePath(inputPath, state.channel.workingDir);
+              if (!existsSync(selectedPath)) {
+                await interaction.editReply(
+                  `Path not found: \`${selectedPath}\`\n\`path\` is resolved relative to current project \`${state.channel.workingDir}\` unless absolute.`,
+                );
+                break;
               }
-            }
-          },
-        });
-
-        if (streamFlushTimer) {
-          clearTimeout(streamFlushTimer);
-          streamFlushTimer = null;
-        }
-        streamClosed = true;
-        await statusEditQueue;
-
-        if (result.sessionId) {
-          sessions.setSessionId(channelId, result.sessionId);
-        }
-
-        const outputText = result.text.trim();
-        const finalText =
-          outputText.length > 0
-            ? outputText
-            : stopController.wasInterrupted(channelId)
-              ? "Interrupted."
-              : "(No response text)";
-        sessions.appendTurn(channelId, {
-          role: "assistant",
-          content: finalText,
-        });
-
-        const chunks = chunkDiscordText(finalText);
-        if (chunks.length === 0) {
-          await status.edit({
-            content: finalText,
-            components: [],
-          });
-        } else {
-          const firstChunk = chunks[0];
-          await status.edit({
-            content: firstChunk ?? finalText,
-            components: [],
-          });
-          for (let i = 1; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunk) {
-              if ("send" in message.channel && typeof message.channel.send === "function") {
-                await message.channel.send(chunk);
+              const isDirectory = (() => {
+                try {
+                  return statSync(selectedPath).isDirectory();
+                } catch {
+                  return false;
+                }
+              })();
+              if (!isDirectory) {
+                await interaction.editReply(
+                  `Path is not a directory: \`${selectedPath}\`\nProvide a folder path relative to \`${state.channel.workingDir}\` or absolute.`,
+                );
+                break;
               }
+              const isRelative = !path.isAbsolute(inputPath) && !inputPath.startsWith("~/");
+              sourceDescription = isRelative
+                ? `from \`${inputPath}\` (resolved relative to \`${state.channel.workingDir}\`)`
+                : `from \`${inputPath}\``;
+            } else {
+              if (process.platform !== "darwin") {
+                await interaction.editReply(
+                  `Finder picker is only available on macOS. Use \`/project path:<dir>\` (relative to \`${state.channel.workingDir}\` or absolute).`,
+                );
+                break;
+              }
+              selectedPath = await pickFolderWithFinder();
+              if (!selectedPath) {
+                await interaction.editReply("Folder selection cancelled.");
+                break;
+              }
+              sourceDescription = "from Finder picker";
             }
-          }
-        }
 
-        if ("send" in message.channel && typeof message.channel.send === "function") {
-          for (const filename of persistedFilenames) {
-            const absolutePath = path.isAbsolute(filename)
-              ? filename
-              : path.resolve(state.channel.workingDir, filename);
-            if (!existsSync(absolutePath)) {
-              continue;
+            const requestId = crypto.randomUUID();
+            pendingProjectSwitches.set(requestId, {
+              channelId,
+              guildId,
+              workingDir: selectedPath,
+            });
+            await interaction.editReply({
+              content: `Selected project \`${selectedPath}\` ${sourceDescription}. Keep current context or clear it?`,
+              components: buildProjectSwitchButtons(requestId),
+            });
+            break;
+          }
+          case "model": {
+            const model = interaction.options.getString("name", true);
+            sessions.setModel(channelId, model);
+            await stopController.setModel(channelId, model);
+            await interaction.reply(`Model set to \`${model}\`.`);
+            break;
+          }
+          case "systemprompt": {
+            const action = interaction.options.getSubcommand(true);
+
+            if (action === "set") {
+              const text = interaction.options.getString("text", true).trim();
+              if (!text) {
+                await interaction.reply({
+                  content: "System prompt cannot be empty.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                break;
+              }
+
+              repository.setChannelSystemPrompt(channelId, text);
+              sessions.setSessionId(channelId, null);
+              await interaction.reply(
+                `Channel system prompt set (\`${text.length}\` chars). Session restarted for this channel.`,
+              );
+              break;
             }
-            try {
-              await message.channel.send({
-                content: `Generated file: \`${filename}\``,
-                files: [absolutePath],
+
+            if (action === "show") {
+              const text = repository.getChannelSystemPrompt(channelId);
+              if (!text) {
+                await interaction.reply({
+                  content: "No channel system prompt is set.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                break;
+              }
+              const content = `Channel system prompt (\`${text.length}\` chars):\n\`\`\`\n${text}\n\`\`\``;
+              const chunks = chunkDiscordText(content);
+              await interaction.reply({
+                content: chunks[0] ?? "No channel system prompt is set.",
+                flags: MessageFlags.Ephemeral,
               });
-            } catch {
-              // Ignore attachment send failures.
+              for (let i = 1; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                if (chunk) {
+                  await interaction.followUp({
+                    content: chunk,
+                    flags: MessageFlags.Ephemeral,
+                  });
+                }
+              }
+              break;
             }
+
+            repository.clearChannelSystemPrompt(channelId);
+            sessions.setSessionId(channelId, null);
+            await interaction.reply(
+              "Channel system prompt cleared. Session restarted for this channel.",
+            );
+            break;
+          }
+          case "cost": {
+            const totalCost = repository.getChannelCostTotal(channelId);
+            const totalTurns = repository.getChannelTurnCount(channelId);
+            await interaction.reply(
+              `Channel spend: \`$${totalCost.toFixed(4)}\` across \`${totalTurns}\` turns.`,
+            );
+            break;
+          }
+          case "worktree": {
+            const state = sessions.getState(channelId, guildId);
+            const action = interaction.options.getString("action", true);
+            const inputPath = interaction.options.getString("path");
+            const branch = interaction.options.getString("branch");
+            await interaction.deferReply();
+
+            if (action === "list") {
+              const result = await runCommand(
+                ["git", "worktree", "list"],
+                state.channel.workingDir,
+              );
+              const text = result.output || "(no output)";
+              const payload = `\`\`\`bash\n${text}\n\`\`\``;
+              const chunks = chunkDiscordText(payload);
+              await interaction.editReply(chunks[0] ?? "(no output)");
+              for (let i = 1; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                if (chunk) {
+                  await interaction.followUp(chunk);
+                }
+              }
+              break;
+            }
+
+            if (!inputPath) {
+              await interaction.editReply("`path` is required for create/remove.");
+              break;
+            }
+
+            if (action === "create") {
+              const resolvedPath = resolvePath(inputPath);
+              const cmd = ["git", "worktree", "add", resolvedPath];
+              if (branch) {
+                cmd.push(branch);
+              }
+              const result = await runCommand(cmd, state.channel.workingDir);
+              const output = result.output || "(no output)";
+              await interaction.editReply(
+                `worktree create exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+              );
+              break;
+            }
+
+            if (action === "remove") {
+              const resolvedPath = resolvePath(inputPath);
+              const result = await runCommand(
+                ["git", "worktree", "remove", resolvedPath],
+                state.channel.workingDir,
+              );
+              const output = result.output || "(no output)";
+              await interaction.editReply(
+                `worktree remove exit=${result.exitCode}\n\`\`\`bash\n${output}\n\`\`\``,
+              );
+              break;
+            }
+
+            await interaction.editReply(`Unsupported worktree action: ${action}`);
+            break;
+          }
+          default: {
+            await interaction.reply({
+              content: "Command not implemented.",
+              flags: MessageFlags.Ephemeral,
+            });
+            break;
           }
         }
-
-        await removeReaction(message, "🧠");
-        await addReaction(message, "✅");
-      } catch (error) {
-        if (streamFlushTimer) {
-          clearTimeout(streamFlushTimer);
-          streamFlushTimer = null;
+      },
+      onUserMessage: async (message) => {
+        if (shuttingDown) {
+          try {
+            await message.reply("⚠️ Bot is shutting down. Please retry in a moment.");
+          } catch {
+            // Ignore reply failures while shutting down.
+          }
+          return;
         }
-        streamClosed = true;
-        await statusEditQueue;
+        const channelId = message.channel.id;
+        const guildId = message.guildId ?? "dm";
+        const state = sessions.getState(channelId, guildId);
+        const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+        const stagedAttachments = await stageAttachments(message);
 
-        const msg = error instanceof Error ? error.message : "Unknown failure";
-        await status.edit({
-          content: `❌ ${msg}`,
-          components: [],
+        await addReaction(message, "🧠");
+        const status = await message.reply({
+          content: "Thinking...",
+          components: buildStopButtons(channelId),
         });
-        await removeReaction(message, "🧠");
-        await addReaction(message, "❌");
-      } finally {
-        await cleanupFiles(stagedAttachments.stagedPaths);
-        stopController.clear(channelId);
-      }
-    },
-  });
+        const prompt = `${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
+        const seededPrompt = buildSeededPrompt(
+          prompt,
+          state.history,
+          Boolean(state.channel.sessionId),
+        );
+        const abortController = new AbortController();
+        const persistedFilenames = new Set<string>();
+        let streamedText = "";
+        let streamedThinking = "";
+        let streamClosed = false;
+        let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+        let statusEditQueue: Promise<unknown> = Promise.resolve();
+
+        const queueStatusEdit = (content: string, includeButtons: boolean) => {
+          statusEditQueue = statusEditQueue
+            .then(() =>
+              status.edit({
+                content,
+                components: includeButtons ? buildStopButtons(channelId) : [],
+              }),
+            )
+            .catch(() => undefined);
+          return statusEditQueue;
+        };
+
+        const flushStreamPreview = () => {
+          streamFlushTimer = null;
+          if (streamClosed) {
+            return;
+          }
+          void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
+        };
+
+        const scheduleStreamPreview = () => {
+          if (streamClosed || streamFlushTimer) {
+            return;
+          }
+          streamFlushTimer = setTimeout(flushStreamPreview, 300);
+        };
+
+        try {
+          sessions.appendTurn(channelId, {
+            role: "user",
+            content: prompt,
+          });
+
+          const result = await runner.run({
+            prompt: seededPrompt,
+            cwd: state.channel.workingDir,
+            sessionId: state.channel.sessionId ?? undefined,
+            model: state.channel.model,
+            systemPrompt: channelSystemPrompt ?? undefined,
+            permissionMode: config.claudePermissionMode,
+            abortController,
+            onQueryStart: (query) => {
+              stopController.register(channelId, { query, abortController });
+            },
+            onTextDelta: (textDelta) => {
+              streamedText += textDelta;
+              scheduleStreamPreview();
+            },
+            onThinkingDelta: (thinkingDelta) => {
+              streamedThinking += thinkingDelta;
+              scheduleStreamPreview();
+            },
+            onMessage: (sdkMessage) => {
+              if (sdkMessage.type === "system" && sdkMessage.subtype === "files_persisted") {
+                for (const file of sdkMessage.files) {
+                  persistedFilenames.add(file.filename);
+                }
+              }
+            },
+          });
+
+          if (streamFlushTimer) {
+            clearTimeout(streamFlushTimer);
+            streamFlushTimer = null;
+          }
+          streamClosed = true;
+          await statusEditQueue;
+
+          if (result.sessionId) {
+            sessions.setSessionId(channelId, result.sessionId);
+          }
+
+          const outputText = result.text.trim();
+          const finalText =
+            outputText.length > 0
+              ? outputText
+              : stopController.wasInterrupted(channelId)
+                ? "Interrupted."
+                : "(No response text)";
+          sessions.appendTurn(channelId, {
+            role: "assistant",
+            content: finalText,
+          });
+
+          const chunks = chunkDiscordText(finalText);
+          if (chunks.length === 0) {
+            await status.edit({
+              content: finalText,
+              components: [],
+            });
+          } else {
+            const firstChunk = chunks[0];
+            await status.edit({
+              content: firstChunk ?? finalText,
+              components: [],
+            });
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                if ("send" in message.channel && typeof message.channel.send === "function") {
+                  await message.channel.send(chunk);
+                }
+              }
+            }
+          }
+
+          if ("send" in message.channel && typeof message.channel.send === "function") {
+            for (const filename of persistedFilenames) {
+              const absolutePath = path.isAbsolute(filename)
+                ? filename
+                : path.resolve(state.channel.workingDir, filename);
+              if (!existsSync(absolutePath)) {
+                continue;
+              }
+              try {
+                await message.channel.send({
+                  content: `Generated file: \`${filename}\``,
+                  files: [absolutePath],
+                });
+              } catch {
+                // Ignore attachment send failures.
+              }
+            }
+          }
+
+          await removeReaction(message, "🧠");
+          await addReaction(message, "✅");
+        } catch (error) {
+          if (streamFlushTimer) {
+            clearTimeout(streamFlushTimer);
+            streamFlushTimer = null;
+          }
+          streamClosed = true;
+          await statusEditQueue;
+
+          const msg = error instanceof Error ? error.message : "Unknown failure";
+          await status.edit({
+            content: `❌ ${msg}`,
+            components: [],
+          });
+          await removeReaction(message, "🧠");
+          await addReaction(message, "❌");
+        } finally {
+          await cleanupFiles(stagedAttachments.stagedPaths);
+          stopController.clear(channelId);
+        }
+      },
+    });
+  } catch (error) {
+    await shutdown("startup error");
+    throw error;
+  }
+
+  const onSigint = () => {
+    void shutdown("SIGINT").finally(() => process.exit(0));
+  };
+  const onSigterm = () => {
+    void shutdown("SIGTERM").finally(() => process.exit(0));
+  };
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
 }

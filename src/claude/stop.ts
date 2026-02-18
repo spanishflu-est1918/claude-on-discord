@@ -35,6 +35,16 @@ export class StopController {
     this.activeRuns.delete(channelId);
   }
 
+  clearAll(): number {
+    const size = this.activeRuns.size;
+    this.activeRuns.clear();
+    return size;
+  }
+
+  getActiveChannelIds(): string[] {
+    return Array.from(this.activeRuns.keys());
+  }
+
   wasInterrupted(channelId: string): boolean {
     const active = this.activeRuns.get(channelId);
     return active?.interrupted ?? false;
@@ -62,6 +72,15 @@ export class StopController {
     active.abortController.abort();
     this.activeRuns.delete(channelId);
     return true;
+  }
+
+  abortAll(): string[] {
+    const channelIds = Array.from(this.activeRuns.keys());
+    for (const active of this.activeRuns.values()) {
+      active.abortController.abort();
+    }
+    this.activeRuns.clear();
+    return channelIds;
   }
 
   async setModel(channelId: string, model?: string): Promise<boolean> {
