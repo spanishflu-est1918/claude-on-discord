@@ -49,6 +49,34 @@ const slashCommands = [
     ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
   new SlashCommandBuilder()
+    .setName("branch")
+    .setDescription("Manage conversation branches for this channel")
+    .addSubcommand((subcommand) =>
+      subcommand.setName("current").setDescription("Show current branch"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("list").setDescription("List available branches"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("fork")
+        .setDescription("Fork current branch into a new branch")
+        .addStringOption((option) =>
+          option.setName("name").setDescription("Optional branch name").setMaxLength(48),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("switch")
+        .setDescription("Switch active branch by id or name")
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Branch id or name to switch to")
+            .setRequired(true),
+        ),
+    ),
+  new SlashCommandBuilder()
     .setName("worktree")
     .setDescription("Manage git worktrees")
     .addStringOption((option) =>

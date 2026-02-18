@@ -96,4 +96,21 @@ describe("Repository", () => {
     repo.clearChannelSystemPrompt("c1");
     expect(repo.getChannelSystemPrompt("c1")).toBeNull();
   });
+
+  test("stores and clears channel branch state", () => {
+    const repo = createRepository();
+
+    expect(repo.getChannelBranchState("c1")).toBeNull();
+    repo.setChannelBranchState(
+      "c1",
+      JSON.stringify({
+        activeBranchId: "main",
+        branches: [{ id: "main", name: "main", parentBranchId: null, createdAt: 1 }],
+      }),
+    );
+    expect(repo.getChannelBranchState("c1")).not.toBeNull();
+
+    repo.clearChannelBranchState("c1");
+    expect(repo.getChannelBranchState("c1")).toBeNull();
+  });
 });

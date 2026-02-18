@@ -512,6 +512,7 @@ export async function startApp(config: AppConfig): Promise<void> {
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
             const lines = [
               `Project: \`${state.channel.workingDir}\``,
+              `Branch: \`${state.branch.name}\` (\`${state.branch.id}\`)`,
               `Model: \`${state.channel.model}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
@@ -668,6 +669,51 @@ export async function startApp(config: AppConfig): Promise<void> {
             const totalTurns = repository.getChannelTurnCount(channelId);
             await interaction.reply(
               `Channel spend: \`$${totalCost.toFixed(4)}\` across \`${totalTurns}\` turns.`,
+            );
+            break;
+          }
+          case "branch": {
+            const action = interaction.options.getSubcommand(true);
+            const state = sessions.getState(channelId, guildId);
+
+            if (action === "current") {
+              const parent = state.branch.parentBranchId ?? "none";
+              await interaction.reply(
+                `Current branch: \`${state.branch.name}\` (\`${state.branch.id}\`, parent: \`${parent}\`)`,
+              );
+              break;
+            }
+
+            if (action === "list") {
+              const lines = state.branches.map((branch) => {
+                const marker = branch.id === state.branch.id ? "*" : " ";
+                const parent = branch.parentBranchId ?? "root";
+                return `${marker} \`${branch.name}\` (\`${branch.id}\`, parent: \`${parent}\`)`;
+              });
+              await interaction.reply(`Branches:\n${lines.join("\n")}`);
+              break;
+            }
+
+            if (action === "fork") {
+              const requestedName = interaction.options.getString("name") ?? undefined;
+              const created = sessions.forkBranch(channelId, guildId, requestedName);
+              await interaction.reply(
+                `Forked branch to \`${created.name}\` (\`${created.id}\`) from \`${created.parentBranchId ?? "none"}\`. Session restarted.`,
+              );
+              break;
+            }
+
+            const target = interaction.options.getString("target", true);
+            const switched = sessions.switchBranch(channelId, guildId, target);
+            if (!switched) {
+              await interaction.reply({
+                content: `Branch not found: \`${target}\`. Use \`/branch list\`.`,
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+            await interaction.reply(
+              `Switched to branch \`${switched.name}\` (\`${switched.id}\`). Session restarted.`,
             );
             break;
           }

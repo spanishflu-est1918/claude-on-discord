@@ -57,6 +57,18 @@ export interface SettingRecord {
   updatedAt: number;
 }
 
+export interface ChannelBranch {
+  id: string;
+  name: string;
+  parentBranchId: string | null;
+  createdAt: number;
+}
+
+export interface ChannelBranchState {
+  activeBranchId: string;
+  branches: ChannelBranch[];
+}
+
 export interface RingBufferSnapshot<T> {
   maxSize: number;
   items: T[];

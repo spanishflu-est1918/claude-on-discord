@@ -27,9 +27,14 @@ export type UpsertChannelInput = {
 };
 
 const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
+const CHANNEL_BRANCH_STATE_PREFIX = "channel_branch_state:";
 
 function channelSystemPromptKey(channelId: string): string {
   return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
+}
+
+function channelBranchStateKey(channelId: string): string {
+  return `${CHANNEL_BRANCH_STATE_PREFIX}${channelId}`;
 }
 
 function mapChannelRow(row: ChannelRow): ChannelRecord {
@@ -209,5 +214,17 @@ export class Repository {
 
   clearChannelSystemPrompt(channelId: string): void {
     this.deleteSetting(channelSystemPromptKey(channelId));
+  }
+
+  getChannelBranchState(channelId: string): string | null {
+    return this.getSetting(channelBranchStateKey(channelId));
+  }
+
+  setChannelBranchState(channelId: string, stateJson: string): void {
+    this.setSetting(channelBranchStateKey(channelId), stateJson);
+  }
+
+  clearChannelBranchState(channelId: string): void {
+    this.deleteSetting(channelBranchStateKey(channelId));
   }
 }
