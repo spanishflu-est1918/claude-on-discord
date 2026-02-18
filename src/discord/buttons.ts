@@ -134,6 +134,9 @@ export function parseQueueDismissCustomId(
 export function parseToolInspectCustomId(
   customId: string,
 ): { action: ToolInspectAction; channelId: string } | null {
+  if (customId.startsWith(TOOLS_REFRESH_PREFIX)) {
+    return null;
+  }
   if (!customId.startsWith(TOOLS_DETAILS_PREFIX)) {
     return null;
   }

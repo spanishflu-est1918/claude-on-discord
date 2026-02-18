@@ -1478,6 +1478,23 @@ function parsePossiblyPartialJson(text: string): unknown | null {
   }
 }
 
+function findLatestRunningTaskToolId(trace: LiveToolTrace): string | null {
+  for (let index = trace.order.length - 1; index >= 0; index -= 1) {
+    const toolId = trace.order[index];
+    if (!toolId) {
+      continue;
+    }
+    const entry = trace.byId.get(toolId);
+    if (!entry) {
+      continue;
+    }
+    if ((entry.status === "running" || entry.status === "queued") && /task/i.test(entry.name)) {
+      return toolId;
+    }
+  }
+  return null;
+}
+
 function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage): boolean {
   let changed = false;
   const now = Date.now();
@@ -1533,16 +1550,16 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
   }
 
   if (message.type === "system" && message.subtype === "task_started") {
-    if (message.tool_use_id) {
-      const entry = ensureLiveToolEntry(trace, {
-        id: message.tool_use_id,
-        name: message.task_type || message.description || "Task",
-      });
-      entry.status = "running";
-      entry.summary = clipText(message.description, 120);
-      entry.updatedAtMs = now;
-      changed = true;
-    }
+    const linkedToolId =
+      message.tool_use_id ?? findLatestRunningTaskToolId(trace) ?? `task:${message.task_id}`;
+    const entry = ensureLiveToolEntry(trace, {
+      id: linkedToolId,
+      name: message.task_type || "Task",
+    });
+    entry.status = "running";
+    entry.summary = clipText(message.description, 120);
+    entry.updatedAtMs = now;
+    changed = true;
   }
 
   if (message.type === "tool_use_summary") {
@@ -3246,6 +3263,7 @@ export async function startApp(
             let streamClosed = false;
             let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
             let streamSpinnerTimer: ReturnType<typeof setInterval> | null = null;
+            let streamToolRenderTimer: ReturnType<typeof setInterval> | null = null;
             let streamSpinnerFrameIndex = 0;
             let statusEditQueue: Promise<void> = Promise.resolve();
             let statusEditInFlight = false;
@@ -3310,6 +3328,14 @@ export async function startApp(
               streamSpinnerTimer = null;
             };
 
+            const stopToolRenderTimer = () => {
+              if (!streamToolRenderTimer) {
+                return;
+              }
+              clearInterval(streamToolRenderTimer);
+              streamToolRenderTimer = null;
+            };
+
             streamSpinnerTimer = setInterval(() => {
               if (streamClosed) {
                 return;
@@ -3325,6 +3351,21 @@ export async function startApp(
                 true,
               );
             }, 900);
+
+            streamToolRenderTimer = setInterval(() => {
+              if (streamClosed) {
+                return;
+              }
+              for (const toolId of runToolTrace.order) {
+                const entry = runToolTrace.byId.get(toolId);
+                if (!entry) {
+                  continue;
+                }
+                if (entry.status === "running" || entry.status === "queued") {
+                  queueToolMessageRender(toolId);
+                }
+              }
+            }, 1000);
 
             const queueToolMessageRender = (toolId: string) => {
               const entry = runToolTrace.byId.get(toolId);
@@ -3406,6 +3447,7 @@ export async function startApp(
                 streamFlushTimer = null;
               }
               stopSpinner();
+              stopToolRenderTimer();
               streamClosed = true;
               await statusEditQueue;
 
@@ -3471,6 +3513,7 @@ export async function startApp(
                 streamFlushTimer = null;
               }
               stopSpinner();
+              stopToolRenderTimer();
               streamClosed = true;
               await statusEditQueue;
               finalizeLiveToolTrace(
@@ -3490,6 +3533,7 @@ export async function startApp(
               await addReaction(message, "❌");
             } finally {
               stopSpinner();
+              stopToolRenderTimer();
               await cleanupFiles(stagedAttachments.stagedPaths);
               stopController.clear(channelId);
             }

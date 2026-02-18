@@ -59,6 +59,7 @@ describe("discord buttons", () => {
       action: "details",
       channelId: "chan-1",
     });
+    expect(parseToolInspectCustomId("run:tools:refresh:chan-1:user-1")).toBeNull();
   });
 
   test("builds and parses queue dismiss buttons", () => {
