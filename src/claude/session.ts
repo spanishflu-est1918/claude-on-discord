@@ -83,11 +83,16 @@ export class SessionManager {
     workingDir: string,
     opts: { fresh?: boolean } = {},
   ): ChannelSessionState {
-    this.ensureChannel(channelId, guildId);
+    const existing = this.ensureChannel(channelId, guildId);
+    const projectChanged = existing.workingDir !== workingDir;
+
     this.repository.setChannelWorkingDir(channelId, workingDir);
     if (opts.fresh) {
       this.repository.setChannelSession(channelId, null);
       this.getHistoryBuffer(channelId).clear();
+    } else if (projectChanged) {
+      // Session IDs are project-scoped in practice; avoid stale resume errors after switching dirs.
+      this.repository.setChannelSession(channelId, null);
     }
     return this.getState(channelId, guildId);
   }

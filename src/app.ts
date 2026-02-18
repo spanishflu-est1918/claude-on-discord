@@ -315,6 +315,7 @@ export async function startApp(config: AppConfig): Promise<void> {
         }
 
         pendingProjectSwitches.delete(projectSwitch.requestId);
+        const previousChannelState = sessions.getState(pending.channelId, pending.guildId).channel;
         const state = sessions.switchProject(
           pending.channelId,
           pending.guildId,
@@ -323,8 +324,15 @@ export async function startApp(config: AppConfig): Promise<void> {
             fresh: projectSwitch.action === "fresh",
           },
         );
+        const changedProject = previousChannelState.workingDir !== pending.workingDir;
+        const suffix =
+          projectSwitch.action === "fresh"
+            ? " with fresh session."
+            : changedProject
+              ? " (context kept, session restarted)."
+              : " (context kept).";
         await interaction.update({
-          content: `Project set to \`${state.channel.workingDir}\`${projectSwitch.action === "fresh" ? " with fresh session." : " (context kept)."}`,
+          content: `Project set to \`${state.channel.workingDir}\`${suffix}`,
           components: [],
         });
         return;

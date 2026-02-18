@@ -62,6 +62,36 @@ describe("SessionManager", () => {
     expect(state.history).toEqual([]);
   });
 
+  test("switchProject with keep resets session on directory change but keeps history", () => {
+    const manager = createSessionManager();
+
+    manager.getState("channel-1", "guild-1");
+    manager.setSessionId("channel-1", "session-123");
+    manager.appendTurn("channel-1", { role: "user", content: "hello" });
+
+    const state = manager.switchProject("channel-1", "guild-1", "/tmp/other", { fresh: false });
+
+    expect(state.channel.workingDir).toBe("/tmp/other");
+    expect(state.channel.sessionId).toBeNull();
+    expect(state.history.map((turn) => turn.content)).toEqual(["hello"]);
+  });
+
+  test("switchProject with keep preserves session when directory is unchanged", () => {
+    const manager = createSessionManager();
+
+    manager.getState("channel-1", "guild-1");
+    manager.setSessionId("channel-1", "session-123");
+    manager.appendTurn("channel-1", { role: "assistant", content: "existing" });
+
+    const state = manager.switchProject("channel-1", "guild-1", "/Users/gorkolas/www", {
+      fresh: false,
+    });
+
+    expect(state.channel.workingDir).toBe("/Users/gorkolas/www");
+    expect(state.channel.sessionId).toBe("session-123");
+    expect(state.history.map((turn) => turn.content)).toEqual(["existing"]);
+  });
+
   test("resetSession clears only session and history", () => {
     const manager = createSessionManager();
 
