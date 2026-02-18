@@ -128,6 +128,14 @@ Run tests:
 bun test
 ```
 
+## Documentation
+
+- `docs/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/SECURITY.md`
+- `docs/WEBSITE_BRIEF.md`
+
 ## Positioning / Next
 
 - This project is moving beyond prototype status and should be documented like a product.
