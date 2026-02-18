@@ -3,9 +3,9 @@ import { REST, Routes, SlashCommandBuilder } from "discord.js";
 const slashCommands = [
   new SlashCommandBuilder()
     .setName("project")
-    .setDescription("Switch the working directory for this channel")
+    .setDescription("Switch project dir; omit path on macOS to pick in Finder")
     .addStringOption((option) =>
-      option.setName("path").setDescription("Absolute or ~ path").setRequired(true),
+      option.setName("path").setDescription("Absolute or ~ path").setRequired(false),
     )
     .addBooleanOption((option) =>
       option.setName("fresh").setDescription("Start with a fresh Claude session"),

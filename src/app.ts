@@ -95,6 +95,48 @@ function resolvePath(inputPath: string): string {
   return path.resolve(inputPath);
 }
 
+async function pickFolderWithFinder(): Promise<string | null> {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const subprocess = Bun.spawn({
+    cmd: [
+      "osascript",
+      "-e",
+      "try",
+      "-e",
+      'set selectedFolder to POSIX path of (choose folder with prompt "Select project folder for this channel")',
+      "-e",
+      "return selectedFolder",
+      "-e",
+      "on error number -128",
+      "-e",
+      'return ""',
+      "-e",
+      "end try",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  if (exitCode !== 0) {
+    return null;
+  }
+
+  const selected = stdout.trim();
+  if (!selected) {
+    return null;
+  }
+
+  return path.resolve(selected);
+}
+
 function buildSeededPrompt(
   userPrompt: string,
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -312,11 +354,31 @@ export async function startApp(config: AppConfig): Promise<void> {
           break;
         }
         case "project": {
-          const inputPath = interaction.options.getString("path", true);
+          const inputPath = interaction.options.getString("path");
           const fresh = interaction.options.getBoolean("fresh") ?? false;
-          const resolvedPath = resolvePath(inputPath);
-          const state = sessions.switchProject(channelId, guildId, resolvedPath, { fresh });
-          await interaction.reply(
+          if (inputPath) {
+            const resolvedPath = resolvePath(inputPath);
+            const state = sessions.switchProject(channelId, guildId, resolvedPath, { fresh });
+            await interaction.reply(
+              `Project set to \`${state.channel.workingDir}\`${fresh ? " with fresh session." : "."}`,
+            );
+            break;
+          }
+
+          if (process.platform !== "darwin") {
+            await interaction.reply("`path` is required on non-macOS systems.");
+            break;
+          }
+
+          await interaction.deferReply({ ephemeral: true });
+          const selectedPath = await pickFolderWithFinder();
+          if (!selectedPath) {
+            await interaction.editReply("Folder selection cancelled.");
+            break;
+          }
+
+          const state = sessions.switchProject(channelId, guildId, selectedPath, { fresh });
+          await interaction.editReply(
             `Project set to \`${state.channel.workingDir}\`${fresh ? " with fresh session." : "."}`,
           );
           break;
