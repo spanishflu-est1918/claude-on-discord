@@ -38,6 +38,12 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 bun install
 ```
 
+Optional local CLI entrypoint:
+
+```bash
+node ./bin/claude-on-discord.js help
+```
+
 ### 2. Run Interactive Setup
 
 ```bash
@@ -58,6 +64,14 @@ or:
 
 ```bash
 bun run start
+```
+
+Equivalent CLI commands:
+
+```bash
+claude-on-discord init
+claude-on-discord dev
+claude-on-discord start
 ```
 
 `bun run start` now performs startup preflight checks (working dir, database path, Discord auth/guild reachability) and prints actionable diagnostics before the bot boots.

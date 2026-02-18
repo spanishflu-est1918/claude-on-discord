@@ -3,6 +3,9 @@
   "module": "src/index.ts",
   "type": "module",
   "private": true,
+  "bin": {
+    "claude-on-discord": "bin/claude-on-discord.js"
+  },
   "scripts": {
     "init": "bun src/init.ts",
     "dev": "bun --watch src/index.ts",
