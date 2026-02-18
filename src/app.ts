@@ -331,29 +331,17 @@ function clipOutput(text: string, maxChars = 8000): string {
   return `${text.slice(0, maxChars)}\n... [truncated ${hiddenChars} chars]`;
 }
 
-function chunkDiffText(text: string): string[] {
-  return chunkDiscordText(text, { maxChars: 1900, maxLines: 400 });
-}
-
 function buildDiffDelivery(
   text: string,
   filePrefix: string,
 ): { content: string; files?: AttachmentBuilder[] } {
-  const chunks = chunkDiffText(text);
-  const firstChunk = chunks[0] ?? "(no diff output)";
-  if (chunks.length <= 1) {
-    return { content: firstChunk };
+  if (!text.trim()) {
+    return { content: "(no diff output)" };
   }
 
   const safePrefix = filePrefix.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "diff";
   const filename = `${safePrefix}-${Date.now().toString(36)}.diff`;
   const attachment = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: filename });
-  const note = `\n\nFull output attached as \`${filename}\`.`;
-
-  if (firstChunk.length + note.length <= 1900) {
-    return { content: `${firstChunk}${note}`, files: [attachment] };
-  }
-
   return { content: `Full output attached as \`${filename}\`.`, files: [attachment] };
 }
 
