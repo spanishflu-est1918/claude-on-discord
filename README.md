@@ -161,6 +161,7 @@ Common optional variables:
 - First message in a new Discord thread auto-clones parent channel context.
 - If project changes with context kept, session ID is reset to avoid stale resume failures.
 - During active runs, the bot streams partial answer/thinking previews and shows stop buttons.
+- Messages are serialized per channel; if a new message arrives while a run is active, it is queued to run next.
 - Interrupted runs with no final text are rendered as `Interrupted.`.
 - Multi-user guild channels can require explicit `@bot` mention before response (global + per-channel override).
 
