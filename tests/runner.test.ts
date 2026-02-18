@@ -20,6 +20,7 @@ function createMockQuery(messages: MessageLike[]): ClaudeQuery {
     abort: async () => {},
     setModel: async (_model?: string) => {},
     stopTask: async (_taskId: string) => {},
+    close: () => {},
   });
 
   return query as unknown as ClaudeQuery;
@@ -36,6 +37,7 @@ function createFailingQuery(error: Error): ClaudeQuery {
     abort: async () => {},
     setModel: async (_model?: string) => {},
     stopTask: async (_taskId: string) => {},
+    close: () => {},
   };
 
   return query as unknown as ClaudeQuery;
@@ -75,6 +77,7 @@ describe("ClaudeRunner", () => {
     );
 
     const result = await runner.run({
+      channelId: "channel-1",
       prompt: "Say hello",
       cwd: "/tmp",
     });
@@ -110,6 +113,7 @@ describe("ClaudeRunner", () => {
     );
 
     const result = await runner.run({
+      channelId: "channel-1",
       prompt: "Done?",
       cwd: "/tmp",
     });
@@ -122,10 +126,28 @@ describe("ClaudeRunner", () => {
     let capturedInput: QueryFactoryInput | undefined;
     const runner = new ClaudeRunner((input) => {
       capturedInput = input;
-      return createMockQuery([]);
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-3",
+          duration_ms: 1,
+          total_cost_usd: 0,
+          num_turns: 1,
+          result: "ok",
+          is_error: false,
+          duration_api_ms: 1,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "u3",
+        },
+      ]);
     });
 
     await runner.run({
+      channelId: "channel-1",
       prompt: "Ping",
       cwd: "/repo",
       sessionId: "session-3",
@@ -166,10 +188,27 @@ describe("ClaudeRunner", () => {
         session_id: "session-4",
         event: { type: "content_block_delta", delta: { type: "text_delta", text: "B" } },
       },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "session-4",
+        duration_ms: 1,
+        total_cost_usd: 0,
+        num_turns: 1,
+        result: "AB",
+        is_error: false,
+        duration_api_ms: 1,
+        stop_reason: "end_turn",
+        usage: {},
+        modelUsage: {},
+        permission_denials: [],
+        uuid: "u4",
+      },
     ]);
 
     const runner = new ClaudeRunner(() => query);
     const result = await runner.run({
+      channelId: "channel-1",
       prompt: "AB",
       cwd: "/tmp",
       onQueryStart: () => {
@@ -187,6 +226,88 @@ describe("ClaudeRunner", () => {
     expect(textDeltas).toEqual(["A", "B"]);
     expect(thinkingDeltas).toEqual(["Plan"]);
     expect(result.text).toBe("AB");
+  });
+
+  test("keeps one streaming worker per channel and serializes concurrent turns", async () => {
+    let queryFactoryCalls = 0;
+    let concurrentTurns = 0;
+    let maxConcurrentTurns = 0;
+
+    const runner = new ClaudeRunner((input) => {
+      queryFactoryCalls += 1;
+      if (typeof input.prompt === "string") {
+        throw new Error("Expected streaming prompt input.");
+      }
+
+      async function* iterator() {
+        for await (const userMessage of input.prompt) {
+          const promptText =
+            typeof userMessage === "string"
+              ? userMessage
+              : typeof userMessage.message.content === "string"
+                ? userMessage.message.content
+                : "";
+          concurrentTurns += 1;
+          maxConcurrentTurns = Math.max(maxConcurrentTurns, concurrentTurns);
+          await Bun.sleep(20);
+          yield {
+            type: "stream_event",
+            session_id: "session-stream",
+            event: {
+              type: "content_block_delta",
+              delta: { type: "text_delta", text: promptText.toUpperCase() },
+            },
+          } as ClaudeSDKMessage;
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "session-stream",
+            duration_ms: 20,
+            total_cost_usd: 0.001,
+            num_turns: 1,
+            result: promptText.toUpperCase(),
+            is_error: false,
+            duration_api_ms: 10,
+            stop_reason: "end_turn",
+            usage: {},
+            modelUsage: {},
+            permission_denials: [],
+            uuid: `${promptText}-uuid`,
+          } as ClaudeSDKMessage;
+          concurrentTurns -= 1;
+        }
+      }
+
+      const gen = iterator();
+      return Object.assign(gen, {
+        interrupt: async () => {},
+        setModel: async (_model?: string) => {},
+        stopTask: async (_taskId: string) => {},
+        close: () => {},
+      }) as unknown as ClaudeQuery;
+    });
+
+    try {
+      const [first, second] = await Promise.all([
+        runner.run({
+          channelId: "channel-1",
+          prompt: "first",
+          cwd: "/tmp",
+        }),
+        runner.run({
+          channelId: "channel-1",
+          prompt: "second",
+          cwd: "/tmp",
+        }),
+      ]);
+
+      expect(queryFactoryCalls).toBe(1);
+      expect(maxConcurrentTurns).toBe(1);
+      expect(first.text).toBe("FIRST");
+      expect(second.text).toBe("SECOND");
+    } finally {
+      runner.closeAll();
+    }
   });
 
   test("retries without MCP servers when claude process exits with code 1", async () => {
@@ -233,6 +354,7 @@ describe("ClaudeRunner", () => {
       });
 
       const result = await runner.run({
+        channelId: "channel-1",
         prompt: "Ping",
         cwd: workingDir,
       });
@@ -271,6 +393,7 @@ describe("ClaudeRunner", () => {
 
       await expect(
         runner.run({
+          channelId: "channel-1",
           prompt: "Ping",
           cwd: workingDir,
         }),
@@ -309,6 +432,7 @@ describe("ClaudeRunner", () => {
     });
 
     const result = await runner.run({
+      channelId: "channel-1",
       prompt: "Ping",
       cwd: "/tmp",
       sessionId: "session-stale",
@@ -364,6 +488,7 @@ describe("ClaudeRunner", () => {
       });
 
       const result = await runner.run({
+        channelId: "channel-1",
         prompt: "Ping",
         cwd: workingDir,
         sessionId: "session-stale",
@@ -426,6 +551,7 @@ describe("ClaudeRunner", () => {
       });
 
       const result = await runner.run({
+        channelId: "channel-1",
         prompt: "Ping",
         cwd: workingDir,
         sessionId: "session-stale",

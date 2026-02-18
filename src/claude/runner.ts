@@ -6,10 +6,11 @@ import type {
   ClaudePermissionMode,
   ClaudeQuery,
   ClaudeSDKMessage,
+  ClaudeSDKUserMessage,
 } from "../types";
 
 export type QueryFactoryInput = {
-  prompt: string;
+  prompt: string | AsyncIterable<ClaudeSDKUserMessage>;
   abortController?: AbortController;
   options: Pick<
     Options,
@@ -30,6 +31,7 @@ export type QueryFactoryInput = {
 export type QueryFactory = (input: QueryFactoryInput) => ClaudeQuery;
 
 export interface RunRequest {
+  channelId: string;
   prompt: string;
   cwd: string;
   sessionId?: string;
@@ -71,13 +73,348 @@ function buildSystemPrompt(channelSystemPrompt?: string): string {
   return [DISCORD_BRIDGE_PROMPT_POLICY, channelSystemPrompt.trim()].join("\n\n");
 }
 
+type RunAttempt = {
+  includeMcpServers: boolean;
+  includeResume: boolean;
+  settingSources: NonNullable<Options["settingSources"]>;
+  label: string;
+};
+
+interface PendingRun {
+  request: RunRequest;
+  resolve: (result: RunResult) => void;
+  reject: (error: unknown) => void;
+  started: boolean;
+  aborted: boolean;
+  messages: ClaudeSDKMessage[];
+  text: string;
+  sawStreamText: boolean;
+  costUsd?: number;
+  durationMs?: number;
+  turnCount?: number;
+  cleanupAbortListener: () => void;
+}
+
+class AsyncInputQueue<T> implements AsyncIterable<T> {
+  private values: T[] = [];
+  private waiters: Array<{
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private ended = false;
+  private endedError: Error | null = null;
+
+  enqueue(value: T): void {
+    if (this.ended) {
+      return;
+    }
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.resolve({ done: false, value });
+      return;
+    }
+    this.values.push(value);
+  }
+
+  end(): void {
+    if (this.ended) {
+      return;
+    }
+    this.ended = true;
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      waiter?.resolve({ done: true, value: undefined as T });
+    }
+  }
+
+  fail(error: Error): void {
+    if (this.ended) {
+      return;
+    }
+    this.ended = true;
+    this.endedError = error;
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      waiter?.reject(error);
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: async (): Promise<IteratorResult<T>> => {
+        if (this.values.length > 0) {
+          const value = this.values.shift();
+          if (typeof value === "undefined") {
+            return { done: true, value: undefined };
+          }
+          return { done: false, value };
+        }
+        if (this.ended) {
+          if (this.endedError) {
+            throw this.endedError;
+          }
+          return { done: true, value: undefined };
+        }
+        return await new Promise<IteratorResult<T>>((resolve, reject) => {
+          this.waiters.push({ resolve, reject });
+        });
+      },
+      return: async (): Promise<IteratorResult<T>> => {
+        this.end();
+        return { done: true, value: undefined };
+      },
+    };
+  }
+}
+
+interface WorkerConfig {
+  signature: string;
+  cwd: string;
+  permissionMode: ClaudePermissionMode;
+  model?: string;
+  thinking?: Options["thinking"];
+  effort?: Options["effort"];
+  systemPrompt?: string;
+  resumeSessionId?: string;
+  mcpServers?: Record<string, ClaudeMcpServerConfig>;
+  settingSources: NonNullable<Options["settingSources"]>;
+}
+
+class ChannelWorker {
+  private readonly inputQueue = new AsyncInputQueue<ClaudeSDKUserMessage>();
+  private readonly query: ClaudeQuery;
+  private readonly pendingRuns: PendingRun[] = [];
+  private closed = false;
+  private closeError: Error | null = null;
+  private sessionId: string | undefined;
+
+  constructor(
+    private readonly queryFactory: QueryFactory,
+    private readonly config: WorkerConfig,
+  ) {
+    const options: QueryFactoryInput["options"] = {
+      cwd: config.cwd,
+      permissionMode: config.permissionMode,
+      settingSources: config.settingSources,
+      includePartialMessages: true,
+      thinking: config.thinking ?? { type: "adaptive" },
+      systemPrompt: buildSystemPrompt(config.systemPrompt),
+      ...(config.permissionMode === "bypassPermissions"
+        ? { allowDangerouslySkipPermissions: true }
+        : {}),
+      ...(config.model ? { model: config.model } : {}),
+      ...(config.effort ? { effort: config.effort } : {}),
+      ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
+      ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
+    };
+
+    this.query = this.queryFactory({
+      prompt: this.inputQueue,
+      options,
+    });
+    void this.consumeQueryMessages();
+  }
+
+  matches(signature: string): boolean {
+    return this.config.signature === signature;
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  close(reason = "Worker closed"): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    const closeError = new Error(reason);
+    this.closeError = closeError;
+    this.inputQueue.end();
+    try {
+      this.query.close();
+    } catch {
+      // Ignore close errors.
+    }
+    this.rejectPending(closeError);
+  }
+
+  async run(request: RunRequest): Promise<RunResult> {
+    if (this.closed) {
+      throw this.closeError ?? new Error("Worker is closed.");
+    }
+
+    return await new Promise<RunResult>((resolve, reject) => {
+      const pending: PendingRun = {
+        request,
+        resolve,
+        reject,
+        started: false,
+        aborted: false,
+        messages: [],
+        text: "",
+        sawStreamText: false,
+        cleanupAbortListener: () => {},
+      };
+
+      const signal = request.abortController?.signal;
+      if (signal) {
+        const onAbort = () => {
+          void this.onAbort(pending);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pending.cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          pending.cleanupAbortListener();
+          reject(new Error("Operation aborted."));
+          return;
+        }
+      }
+
+      this.pendingRuns.push(pending);
+      if (this.pendingRuns.length === 1) {
+        this.startRun(pending);
+      }
+
+      this.inputQueue.enqueue(buildUserPromptMessage(request.prompt));
+    });
+  }
+
+  private startRun(run: PendingRun): void {
+    if (run.started) {
+      return;
+    }
+    run.started = true;
+    run.request.onQueryStart?.(this.query);
+  }
+
+  private async onAbort(run: PendingRun): Promise<void> {
+    const index = this.pendingRuns.indexOf(run);
+    if (index === -1) {
+      return;
+    }
+    if (index === 0) {
+      run.aborted = true;
+      try {
+        await this.query.interrupt();
+      } catch {
+        // Ignore interrupt errors and wait for stream termination or result.
+      }
+      return;
+    }
+    this.pendingRuns.splice(index, 1);
+    run.cleanupAbortListener();
+    run.reject(new Error("Operation aborted."));
+  }
+
+  private async consumeQueryMessages(): Promise<void> {
+    try {
+      for await (const message of this.query) {
+        this.sessionId = readSessionId(message) ?? this.sessionId;
+
+        const current = this.pendingRuns[0];
+        if (!current) {
+          continue;
+        }
+
+        current.messages.push(message);
+        current.request.onMessage?.(message);
+
+        const streamChunk = extractStreamTextDelta(message);
+        if (streamChunk) {
+          current.sawStreamText = true;
+          current.text += streamChunk;
+          current.request.onTextDelta?.(streamChunk);
+        }
+        const thinkingChunk = extractStreamThinkingDelta(message);
+        if (thinkingChunk) {
+          current.request.onThinkingDelta?.(thinkingChunk);
+        }
+
+        if (isResultMessage(message)) {
+          current.costUsd = message.total_cost_usd;
+          current.durationMs = message.duration_ms;
+          current.turnCount = message.num_turns;
+
+          if (!current.sawStreamText && message.subtype === "success") {
+            current.text = message.result;
+          }
+
+          this.finishCurrentRun();
+        } else if (!current.sawStreamText && isAssistantMessage(message)) {
+          const assistantText = extractAssistantText(message);
+          if (assistantText) {
+            current.text += assistantText;
+          }
+        }
+      }
+
+      if (!this.closed) {
+        const error = new Error("Claude query ended unexpectedly.");
+        this.closeError = error;
+        this.inputQueue.fail(error);
+        this.rejectPending(error);
+        this.closed = true;
+      }
+    } catch (error) {
+      const wrapped = wrapRunnerError(error);
+      this.closeError = wrapped;
+      this.inputQueue.fail(wrapped);
+      this.rejectPending(wrapped);
+      this.closed = true;
+    }
+  }
+
+  private finishCurrentRun(): void {
+    const run = this.pendingRuns.shift();
+    if (!run) {
+      return;
+    }
+
+    run.cleanupAbortListener();
+    const text = run.aborted && run.text.trim().length === 0 ? "Interrupted." : run.text;
+    run.resolve({
+      text,
+      sessionId: this.sessionId,
+      costUsd: run.costUsd,
+      durationMs: run.durationMs,
+      turnCount: run.turnCount,
+      messages: run.messages,
+    });
+
+    const next = this.pendingRuns[0];
+    if (next) {
+      this.startRun(next);
+    }
+  }
+
+  private rejectPending(error: Error): void {
+    while (this.pendingRuns.length > 0) {
+      const run = this.pendingRuns.shift();
+      if (!run) {
+        continue;
+      }
+      run.cleanupAbortListener();
+      run.reject(error);
+    }
+  }
+}
+
 export class ClaudeRunner {
+  private readonly workersByChannel = new Map<string, ChannelWorker>();
+
   constructor(
     private readonly queryFactory: QueryFactory = claudeQuery as unknown as QueryFactory,
   ) {}
 
+  closeAll(): void {
+    for (const worker of this.workersByChannel.values()) {
+      worker.close("Runner shutdown");
+    }
+    this.workersByChannel.clear();
+  }
+
   async run(request: RunRequest): Promise<RunResult> {
-    const abortController = request.abortController ?? new AbortController();
     const permissionMode = request.permissionMode ?? "bypassPermissions";
     const mcpServers = await loadMcpServers(request.cwd);
     const attempts = buildRunAttempts({
@@ -92,17 +429,45 @@ export class ClaudeRunner {
         continue;
       }
       try {
-        return await this.runSingleQuery({
+        const workerSignature = buildWorkerSignature({
           request,
-          abortController,
           permissionMode,
           mcpServers,
           includeMcpServers: attempt.includeMcpServers,
           includeResume: attempt.includeResume,
           settingSources: attempt.settingSources,
         });
+        let worker = this.workersByChannel.get(request.channelId);
+        if (worker && (worker.isClosed() || !worker.matches(workerSignature))) {
+          worker.close("Worker reconfigured");
+          this.workersByChannel.delete(request.channelId);
+          worker = undefined;
+        }
+
+        if (!worker) {
+          worker = new ChannelWorker(this.queryFactory, {
+            signature: workerSignature,
+            cwd: request.cwd,
+            permissionMode,
+            model: request.model,
+            thinking: request.thinking,
+            effort: request.effort,
+            systemPrompt: request.systemPrompt,
+            resumeSessionId: attempt.includeResume ? request.sessionId : undefined,
+            mcpServers: attempt.includeMcpServers ? mcpServers : undefined,
+            settingSources: attempt.settingSources,
+          });
+          this.workersByChannel.set(request.channelId, worker);
+        }
+
+        return await worker.run(request);
       } catch (error) {
         failedAttemptLabels.push(attempt.label);
+        const activeWorker = this.workersByChannel.get(request.channelId);
+        if (activeWorker) {
+          activeWorker.close("Worker reset after run failure");
+          this.workersByChannel.delete(request.channelId);
+        }
         const canRetry = shouldRetryAfterProcessExit(error) && index < attempts.length - 1;
         if (!canRetry) {
           throw wrapRunnerError(error, formatAttemptContext(failedAttemptLabels));
@@ -112,99 +477,39 @@ export class ClaudeRunner {
 
     throw new Error("Runner exhausted retries without returning a result.");
   }
-
-  private async runSingleQuery(input: {
-    request: RunRequest;
-    abortController: AbortController;
-    permissionMode: ClaudePermissionMode;
-    mcpServers?: Record<string, ClaudeMcpServerConfig>;
-    includeMcpServers: boolean;
-    includeResume: boolean;
-    settingSources: NonNullable<Options["settingSources"]>;
-  }): Promise<RunResult> {
-    const options: QueryFactoryInput["options"] = {
-      cwd: input.request.cwd,
-      permissionMode: input.permissionMode,
-      settingSources: input.settingSources,
-      includePartialMessages: true,
-      thinking: input.request.thinking ?? { type: "adaptive" },
-      systemPrompt: buildSystemPrompt(input.request.systemPrompt),
-      ...(input.permissionMode === "bypassPermissions"
-        ? { allowDangerouslySkipPermissions: true }
-        : {}),
-      ...(input.request.model ? { model: input.request.model } : {}),
-      ...(input.request.effort ? { effort: input.request.effort } : {}),
-      ...(input.includeResume && input.request.sessionId
-        ? { resume: input.request.sessionId }
-        : {}),
-      ...(input.includeMcpServers && input.mcpServers ? { mcpServers: input.mcpServers } : {}),
-    };
-
-    const query = this.queryFactory({
-      prompt: input.request.prompt,
-      abortController: input.abortController,
-      options,
-    });
-
-    input.request.onQueryStart?.(query);
-
-    const messages: ClaudeSDKMessage[] = [];
-    let text = "";
-    let sawStreamText = false;
-    let sessionId: string | undefined;
-    let costUsd: number | undefined;
-    let durationMs: number | undefined;
-    let turnCount: number | undefined;
-
-    for await (const message of query) {
-      messages.push(message);
-      input.request.onMessage?.(message);
-
-      sessionId = readSessionId(message) ?? sessionId;
-      const streamChunk = extractStreamTextDelta(message);
-      if (streamChunk) {
-        sawStreamText = true;
-        text += streamChunk;
-        input.request.onTextDelta?.(streamChunk);
-      }
-      const thinkingChunk = extractStreamThinkingDelta(message);
-      if (thinkingChunk) {
-        input.request.onThinkingDelta?.(thinkingChunk);
-      }
-
-      if (isResultMessage(message)) {
-        costUsd = message.total_cost_usd;
-        durationMs = message.duration_ms;
-        turnCount = message.num_turns;
-
-        if (!sawStreamText && message.subtype === "success") {
-          text = message.result;
-        }
-      } else if (!sawStreamText && isAssistantMessage(message)) {
-        const assistantText = extractAssistantText(message);
-        if (assistantText) {
-          text += assistantText;
-        }
-      }
-    }
-
-    return {
-      text,
-      sessionId,
-      costUsd,
-      durationMs,
-      turnCount,
-      messages,
-    };
-  }
 }
 
-type RunAttempt = {
+function buildWorkerSignature(input: {
+  request: RunRequest;
+  permissionMode: ClaudePermissionMode;
+  mcpServers?: Record<string, ClaudeMcpServerConfig>;
   includeMcpServers: boolean;
   includeResume: boolean;
   settingSources: NonNullable<Options["settingSources"]>;
-  label: string;
-};
+}): string {
+  return JSON.stringify({
+    cwd: input.request.cwd,
+    model: input.request.model ?? "",
+    permissionMode: input.permissionMode,
+    thinking: input.request.thinking ?? { type: "adaptive" },
+    effort: input.request.effort ?? "",
+    systemPrompt: buildSystemPrompt(input.request.systemPrompt),
+    settingSources: input.settingSources,
+    includeMcpServers: input.includeMcpServers,
+    mcpServers: input.includeMcpServers ? toStableMcpSignature(input.mcpServers) : "",
+    includeResume: input.includeResume,
+    resumeSessionId: input.includeResume ? (input.request.sessionId ?? "") : "",
+  });
+}
+
+function toStableMcpSignature(
+  mcpServers?: Record<string, ClaudeMcpServerConfig>,
+): Array<[string, ClaudeMcpServerConfig]> {
+  if (!mcpServers) {
+    return [];
+  }
+  return Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b));
+}
 
 function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean }): RunAttempt[] {
   const attempts: RunAttempt[] = [];
@@ -329,6 +634,18 @@ async function loadMcpServers(
   } catch {
     return undefined;
   }
+}
+
+function buildUserPromptMessage(prompt: string): ClaudeSDKUserMessage {
+  return {
+    type: "user",
+    session_id: "",
+    message: {
+      role: "user",
+      content: prompt,
+    },
+    parent_tool_use_id: null,
+  };
 }
 
 function readSessionId(message: ClaudeSDKMessage): string | undefined {

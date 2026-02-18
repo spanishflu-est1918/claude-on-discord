@@ -8,12 +8,14 @@ import type {
   Query as SDKQuery,
   RewindFilesResult as SDKRewindFilesResult,
   SlashCommand as SDKSlashCommand,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 export type ClaudeModel = string;
 export type ClaudePermissionMode = SDKPermissionMode;
 export type ClaudeQuery = SDKQuery;
 export type ClaudeSDKMessage = SDKMessage;
+export type ClaudeSDKUserMessage = SDKUserMessage;
 export type ClaudeModelInfo = SDKModelInfo;
 export type ClaudeAccountInfo = SDKAccountInfo;
 export type ClaudeMcpServerStatus = SDKMcpServerStatus;
