@@ -117,6 +117,7 @@ Common optional variables:
 - `/new`: reset channel session/history
 - `/status`: show current channel status and totals
   - includes thread branch/root/parent info when running inside thread branches
+- `/branches`: list active thread branches with worktree/divergence info
 - `/model <name>`: set channel model
 - `/systemprompt set <text>`: set per-channel system prompt (session restarts)
 - `/systemprompt show`: view current per-channel system prompt

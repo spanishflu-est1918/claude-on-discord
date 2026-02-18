@@ -302,6 +302,25 @@ function firstOutputLine(output: string): string {
   return output.split(/\r?\n/, 1)[0]?.trim() ?? "";
 }
 
+function parseAheadBehind(output: string): { behind: number; ahead: number } | null {
+  const line = firstOutputLine(output);
+  const match = line.match(/^(\d+)\s+(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  const behindText = match[1];
+  const aheadText = match[2];
+  if (!behindText || !aheadText) {
+    return null;
+  }
+  const behind = Number.parseInt(behindText, 10);
+  const ahead = Number.parseInt(aheadText, 10);
+  if (!Number.isFinite(behind) || !Number.isFinite(ahead)) {
+    return null;
+  }
+  return { behind, ahead };
+}
+
 function sanitizeThreadToken(input: string): string {
   const base = input
     .trim()
@@ -1053,6 +1072,83 @@ export async function startApp(config: AppConfig): Promise<void> {
               `Total channel cost: \`$${totalCost.toFixed(4)}\``,
             ];
             await interaction.reply(lines.join("\n"));
+            break;
+          }
+          case "branches": {
+            const state = sessions.getState(channelId, guildId);
+            const metas = repository
+              .listThreadBranchMetaEntries()
+              .map((entry) => parseThreadBranchMeta(entry.value))
+              .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+            const currentMeta = metas.find((meta) => meta.channelId === channelId);
+            const rootChannelId = currentMeta?.rootChannelId ?? channelId;
+            const rootChannel = repository.getChannel(rootChannelId);
+            const rootWorkingDir = rootChannel?.workingDir ?? state.channel.workingDir;
+            const baseBranch = (await detectBranchName(rootWorkingDir)) ?? "main";
+
+            const activeBranches = metas
+              .filter(
+                (meta) =>
+                  meta.rootChannelId === rootChannelId &&
+                  (meta.lifecycleState === "active" || typeof meta.lifecycleState === "undefined"),
+              )
+              .sort((a, b) => a.createdAt - b.createdAt);
+
+            if (activeBranches.length === 0) {
+              await interaction.reply(
+                `No active thread branches tracked for root \`${rootChannelId}\`.`,
+              );
+              break;
+            }
+
+            const lines = [
+              `Root channel: \`${rootChannelId}\``,
+              `Base branch: \`${baseBranch}\` (from \`${rootWorkingDir}\`)`,
+              "Active thread branches:",
+            ];
+
+            for (const meta of activeBranches) {
+              const lifecycle = meta.lifecycleState ?? "active";
+              const worktreeMode =
+                meta.worktreePath ??
+                (meta.worktreeMode === "prompt" ? "pending-choice" : "inherited-parent/root");
+
+              let branchInfo = "branch=unknown";
+              let divergence = "ahead/behind=unknown";
+              if (meta.worktreePath && existsSync(meta.worktreePath)) {
+                const branchName = await detectBranchName(meta.worktreePath);
+                if (branchName) {
+                  branchInfo = `branch=${branchName}`;
+                }
+                const revList = await runCommand(
+                  ["git", "rev-list", "--left-right", "--count", `${baseBranch}...HEAD`],
+                  meta.worktreePath,
+                );
+                if (revList.exitCode === 0) {
+                  const counts = parseAheadBehind(revList.output);
+                  if (counts) {
+                    divergence = `ahead=${counts.ahead}, behind=${counts.behind}`;
+                  }
+                }
+              } else if (!meta.worktreePath) {
+                branchInfo = "branch=inherited";
+                divergence = "ahead/behind=n/a";
+              }
+
+              lines.push(
+                `- ${meta.name} (\`${meta.channelId}\`): lifecycle=${lifecycle}; worktree=${worktreeMode}; ${branchInfo}; ${divergence}`,
+              );
+            }
+
+            const chunks = chunkDiscordText(lines.join("\n"));
+            await interaction.reply(chunks[0] ?? "No active thread branches.");
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                await interaction.followUp(chunk);
+              }
+            }
             break;
           }
           case "bash": {

@@ -12,6 +12,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
+    .setName("branches")
+    .setDescription("List active thread branches and git divergence"),
+  new SlashCommandBuilder()
     .setName("compact")
     .setDescription("Compact in-memory context and reset the Claude session"),
   new SlashCommandBuilder()
