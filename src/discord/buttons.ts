@@ -8,11 +8,16 @@ const THREAD_WORKTREE_KEEP_PREFIX = "thread:worktree:keep:";
 const THREAD_WORKTREE_CREATE_PREFIX = "thread:worktree:create:";
 const THREAD_CLEANUP_KEEP_PREFIX = "thread:cleanup:keep:";
 const THREAD_CLEANUP_REMOVE_PREFIX = "thread:cleanup:remove:";
+const DIFF_SUMMARY_PREFIX = "diff:summary:";
+const DIFF_FILES_PREFIX = "diff:files:";
+const DIFF_STAT_PREFIX = "diff:stat:";
+const DIFF_PATCH_PREFIX = "diff:patch:";
 
 export type RunControlAction = "interrupt" | "abort";
 export type ProjectSwitchAction = "keep" | "fresh";
 export type ThreadWorktreeAction = "keep" | "create";
 export type ThreadCleanupAction = "keep" | "remove";
+export type DiffViewAction = "summary" | "files" | "stat" | "patch";
 
 export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
   const interruptButton = new ButtonBuilder()
@@ -148,6 +153,68 @@ export function parseThreadCleanupCustomId(
     const channelId = customId.slice(THREAD_CLEANUP_REMOVE_PREFIX.length);
     if (channelId) {
       return { action: "remove", channelId };
+    }
+  }
+
+  return null;
+}
+
+export function buildDiffViewButtons(requestId: string): ActionRowBuilder<ButtonBuilder>[] {
+  const summaryButton = new ButtonBuilder()
+    .setCustomId(`${DIFF_SUMMARY_PREFIX}${requestId}`)
+    .setLabel("Refresh")
+    .setStyle(ButtonStyle.Secondary);
+  const filesButton = new ButtonBuilder()
+    .setCustomId(`${DIFF_FILES_PREFIX}${requestId}`)
+    .setLabel("Files")
+    .setStyle(ButtonStyle.Secondary);
+  const statButton = new ButtonBuilder()
+    .setCustomId(`${DIFF_STAT_PREFIX}${requestId}`)
+    .setLabel("Stat")
+    .setStyle(ButtonStyle.Secondary);
+  const patchButton = new ButtonBuilder()
+    .setCustomId(`${DIFF_PATCH_PREFIX}${requestId}`)
+    .setLabel("Patch")
+    .setStyle(ButtonStyle.Primary);
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      summaryButton,
+      filesButton,
+      statButton,
+      patchButton,
+    ),
+  ];
+}
+
+export function parseDiffViewCustomId(
+  customId: string,
+): { action: DiffViewAction; requestId: string } | null {
+  if (customId.startsWith(DIFF_SUMMARY_PREFIX)) {
+    const requestId = customId.slice(DIFF_SUMMARY_PREFIX.length);
+    if (requestId) {
+      return { action: "summary", requestId };
+    }
+  }
+
+  if (customId.startsWith(DIFF_FILES_PREFIX)) {
+    const requestId = customId.slice(DIFF_FILES_PREFIX.length);
+    if (requestId) {
+      return { action: "files", requestId };
+    }
+  }
+
+  if (customId.startsWith(DIFF_STAT_PREFIX)) {
+    const requestId = customId.slice(DIFF_STAT_PREFIX.length);
+    if (requestId) {
+      return { action: "stat", requestId };
+    }
+  }
+
+  if (customId.startsWith(DIFF_PATCH_PREFIX)) {
+    const requestId = customId.slice(DIFF_PATCH_PREFIX.length);
+    if (requestId) {
+      return { action: "patch", requestId };
     }
   }
 

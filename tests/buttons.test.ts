@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { ButtonStyle } from "discord.js";
 import {
+  buildDiffViewButtons,
   buildProjectSwitchButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
+  parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
@@ -79,6 +81,10 @@ describe("discord buttons", () => {
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:")).toBeNull();
     expect(parseThreadCleanupCustomId("thread:cleanup:keep:")).toBeNull();
     expect(parseThreadCleanupCustomId("thread:cleanup:remove:")).toBeNull();
+    expect(parseDiffViewCustomId("diff:summary:")).toBeNull();
+    expect(parseDiffViewCustomId("diff:files:")).toBeNull();
+    expect(parseDiffViewCustomId("diff:stat:")).toBeNull();
+    expect(parseDiffViewCustomId("diff:patch:")).toBeNull();
   });
 
   test("builds and parses thread worktree choice buttons", () => {
@@ -136,6 +142,41 @@ describe("discord buttons", () => {
     expect(parseThreadCleanupCustomId("thread:cleanup:remove:thread-2")).toEqual({
       action: "remove",
       channelId: "thread-2",
+    });
+  });
+
+  test("builds and parses diff view buttons", () => {
+    const rows = buildDiffViewButtons("req-77");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(4);
+
+    const ids = components
+      .map((component) => component.toJSON())
+      .map((json) => ("custom_id" in json ? json.custom_id : undefined));
+    expect(ids).toEqual([
+      "diff:summary:req-77",
+      "diff:files:req-77",
+      "diff:stat:req-77",
+      "diff:patch:req-77",
+    ]);
+
+    expect(parseDiffViewCustomId("diff:summary:req-77")).toEqual({
+      action: "summary",
+      requestId: "req-77",
+    });
+    expect(parseDiffViewCustomId("diff:files:req-77")).toEqual({
+      action: "files",
+      requestId: "req-77",
+    });
+    expect(parseDiffViewCustomId("diff:stat:req-77")).toEqual({
+      action: "stat",
+      requestId: "req-77",
+    });
+    expect(parseDiffViewCustomId("diff:patch:req-77")).toEqual({
+      action: "patch",
+      requestId: "req-77",
     });
   });
 });

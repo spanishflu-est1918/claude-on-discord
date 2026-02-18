@@ -120,6 +120,8 @@ Common optional variables:
 - `/status`: show current channel status and totals
   - includes thread branch/root/parent info when running inside thread branches
 - `/branches`: list active thread branches with worktree/divergence info
+- `/diff [base] [patch]`: show git diff for current lane (working-tree or thread branch compare)
+  - returns compact summary with Discord controls: `Refresh`, `Files`, `Stat`, `Patch`
 - `/model <name>`: set channel model
 - `/systemprompt set <text>`: set per-channel system prompt (session restarts)
 - `/systemprompt show`: view current per-channel system prompt

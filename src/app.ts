@@ -10,10 +10,12 @@ import type { AppConfig } from "./config";
 import { Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
 import {
+  buildDiffViewButtons,
   buildProjectSwitchButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
+  parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
@@ -319,6 +321,150 @@ function parseAheadBehind(output: string): { behind: number; ahead: number } | n
     return null;
   }
   return { behind, ahead };
+}
+
+function clipOutput(text: string, maxChars = 8000): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const hiddenChars = text.length - maxChars;
+  return `${text.slice(0, maxChars)}\n... [truncated ${hiddenChars} chars]`;
+}
+
+type DiffMode = "working-tree" | "thread-branch";
+type DiffDetailAction = "files" | "stat" | "patch";
+
+type DiffContext = {
+  channelId: string;
+  guildId: string;
+  workingDir: string;
+  mode: DiffMode;
+  baseRef?: string;
+  rangeRef?: string;
+};
+
+function diffArgsForAction(context: DiffContext, action: DiffDetailAction): string[] {
+  if (action === "files") {
+    return ["git", "diff", "--name-only", ...(context.rangeRef ? [context.rangeRef] : [])];
+  }
+  if (action === "stat") {
+    return ["git", "diff", "--stat", ...(context.rangeRef ? [context.rangeRef] : [])];
+  }
+  return ["git", "diff", ...(context.rangeRef ? [context.rangeRef] : [])];
+}
+
+function linesFromOutput(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function buildDiffContext(input: {
+  channelId: string;
+  guildId: string;
+  workingDir: string;
+  baseInput: string | null;
+  repository: Repository;
+}): Promise<DiffContext> {
+  const threadMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(input.channelId));
+  const hasThreadWorktree = Boolean(
+    threadMeta?.worktreePath && existsSync(threadMeta.worktreePath),
+  );
+
+  if (!threadMeta || !hasThreadWorktree) {
+    return {
+      channelId: input.channelId,
+      guildId: input.guildId,
+      workingDir: input.workingDir,
+      mode: "working-tree",
+    };
+  }
+
+  const rootChannel = input.repository.getChannel(threadMeta.rootChannelId);
+  const rootWorkingDir = rootChannel?.workingDir ?? input.workingDir;
+  const detectedBase = await detectBranchName(rootWorkingDir);
+  const baseRef = input.baseInput?.trim() || detectedBase || "main";
+  return {
+    channelId: input.channelId,
+    guildId: input.guildId,
+    workingDir: input.workingDir,
+    mode: "thread-branch",
+    baseRef,
+    rangeRef: `${baseRef}...HEAD`,
+  };
+}
+
+async function buildDiffSummary(context: DiffContext): Promise<string> {
+  const lines: string[] = [`Project: \`${context.workingDir}\``, `Mode: \`${context.mode}\``];
+
+  const currentBranch = await detectBranchName(context.workingDir);
+  if (currentBranch) {
+    lines.push(`Branch: \`${currentBranch}\``);
+  }
+  if (context.baseRef) {
+    lines.push(`Base: \`${context.baseRef}\``);
+  }
+
+  if (context.mode === "working-tree") {
+    const statusResult = await runCommand(["git", "status", "--short"], context.workingDir);
+    lines.push("Status:");
+    lines.push("```bash");
+    lines.push(statusResult.output || "(clean working tree)");
+    lines.push("```");
+  } else if (context.baseRef) {
+    const divergence = await runCommand(
+      ["git", "rev-list", "--left-right", "--count", `${context.baseRef}...HEAD`],
+      context.workingDir,
+    );
+    if (divergence.exitCode === 0) {
+      const counts = parseAheadBehind(divergence.output);
+      if (counts) {
+        lines.push(`Divergence: ahead=\`${counts.ahead}\`, behind=\`${counts.behind}\``);
+      }
+    }
+  }
+
+  const filesResult = await runCommand(diffArgsForAction(context, "files"), context.workingDir);
+  const fileLines = filesResult.exitCode === 0 ? linesFromOutput(filesResult.output) : [];
+  lines.push(`Changed files: \`${fileLines.length}\``);
+  if (fileLines.length > 0) {
+    lines.push("Files (first 12):");
+    for (const file of fileLines.slice(0, 12)) {
+      lines.push(`- \`${file}\``);
+    }
+    if (fileLines.length > 12) {
+      lines.push(`- ... ${fileLines.length - 12} more`);
+    }
+  }
+
+  const statResult = await runCommand(diffArgsForAction(context, "stat"), context.workingDir);
+  lines.push("Stat:");
+  lines.push("```bash");
+  lines.push(statResult.output || "(no differences)");
+  lines.push("```");
+  lines.push("Use buttons: `Files` `Stat` `Patch` `Refresh`.");
+
+  return lines.join("\n");
+}
+
+async function buildDiffDetail(context: DiffContext, action: DiffDetailAction): Promise<string> {
+  const result = await runCommand(diffArgsForAction(context, action), context.workingDir);
+  const output = result.output || "(no differences)";
+
+  if (action === "files") {
+    return [`Diff files (\`${context.mode}\`)`, "```bash", clipOutput(output, 12000), "```"].join(
+      "\n",
+    );
+  }
+  if (action === "stat") {
+    return [`Diff stat (\`${context.mode}\`)`, "```bash", clipOutput(output, 12000), "```"].join(
+      "\n",
+    );
+  }
+  return [`Diff patch (\`${context.mode}\`)`, "```diff", clipOutput(output, 12000), "```"].join(
+    "\n",
+  );
 }
 
 function sanitizeThreadToken(input: string): string {
@@ -758,9 +904,21 @@ export async function startApp(config: AppConfig): Promise<void> {
     string,
     { channelId: string; guildId: string; workingDir: string }
   >();
+  const pendingDiffViews = new Map<string, DiffContext>();
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
+
+  const rememberDiffView = (requestId: string, context: DiffContext) => {
+    pendingDiffViews.set(requestId, context);
+    while (pendingDiffViews.size > 250) {
+      const oldest = pendingDiffViews.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      pendingDiffViews.delete(oldest);
+    }
+  };
 
   const clearActiveRunsWithSessionReset = (reason: string) => {
     const activeChannelIds = stopController.getActiveChannelIds();
@@ -782,6 +940,7 @@ export async function startApp(config: AppConfig): Promise<void> {
     shutdownPromise = (async () => {
       console.log(`Shutting down (${reason})...`);
       pendingProjectSwitches.clear();
+      pendingDiffViews.clear();
       clearActiveRunsWithSessionReset(`shutdown:${reason}`);
 
       if (discordClient) {
@@ -1107,6 +1266,74 @@ export async function startApp(config: AppConfig): Promise<void> {
           return;
         }
 
+        const diffView = parseDiffViewCustomId(interaction.customId);
+        if (diffView) {
+          const context = pendingDiffViews.get(diffView.requestId);
+          if (!context) {
+            await interaction.reply({
+              content: "Diff view expired. Run `/diff` again.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          if (interaction.channelId !== context.channelId) {
+            await interaction.reply({
+              content: "This diff view belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const latestState = sessions.getState(context.channelId, context.guildId).channel;
+          if (latestState.workingDir !== context.workingDir) {
+            pendingDiffViews.delete(diffView.requestId);
+            await interaction.reply({
+              content: "Project changed since this diff snapshot. Run `/diff` again.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          if (diffView.action === "summary") {
+            const refreshedContext = await buildDiffContext({
+              channelId: context.channelId,
+              guildId: context.guildId,
+              workingDir: context.workingDir,
+              baseInput: context.baseRef ?? null,
+              repository,
+            });
+            rememberDiffView(diffView.requestId, refreshedContext);
+            const summary = await buildDiffSummary(refreshedContext);
+            const chunks = chunkDiscordText(summary);
+            await interaction.update({
+              content: chunks[0] ?? "(no diff output)",
+              components: buildDiffViewButtons(diffView.requestId),
+            });
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                await interaction.followUp(chunk);
+              }
+            }
+            return;
+          }
+
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const detail = await buildDiffDetail(context, diffView.action);
+          const chunks = chunkDiscordText(detail);
+          await interaction.editReply(chunks[0] ?? "(no diff output)");
+          for (let i = 1; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            if (chunk) {
+              await interaction.followUp({
+                content: chunk,
+                flags: MessageFlags.Ephemeral,
+              });
+            }
+          }
+          return;
+        }
+
         const control = parseRunControlCustomId(interaction.customId);
         if (!control) {
           await interaction.reply({
@@ -1265,6 +1492,42 @@ export async function startApp(config: AppConfig): Promise<void> {
 
             const chunks = chunkDiscordText(lines.join("\n"));
             await interaction.reply(chunks[0] ?? "No active thread branches.");
+            for (let i = 1; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              if (chunk) {
+                await interaction.followUp(chunk);
+              }
+            }
+            break;
+          }
+          case "diff": {
+            const state = sessions.getState(channelId, guildId);
+            const baseInput = interaction.options.getString("base");
+            const includePatch = interaction.options.getBoolean("patch") ?? false;
+            await interaction.deferReply();
+
+            const context = await buildDiffContext({
+              channelId,
+              guildId,
+              workingDir: state.channel.workingDir,
+              baseInput,
+              repository,
+            });
+            const requestId = crypto.randomUUID();
+            rememberDiffView(requestId, context);
+
+            const summary = await buildDiffSummary(context);
+            let payload = summary;
+            if (includePatch) {
+              const patchDetail = await buildDiffDetail(context, "patch");
+              payload = `${summary}\n\n${patchDetail}`;
+            }
+
+            const chunks = chunkDiscordText(payload);
+            await interaction.editReply({
+              content: chunks[0] ?? "(no diff output)",
+              components: buildDiffViewButtons(requestId),
+            });
             for (let i = 1; i < chunks.length; i++) {
               const chunk = chunks[i];
               if (chunk) {
