@@ -1572,14 +1572,14 @@ function toStreamingPreview(
   const trimmedText = text.trim();
   const trimmedThinking = thinking.trim();
   if (!trimmedText && !trimmedThinking && !toolPanel) {
-    return "Thinking...";
+    return "_Thinking..._";
   }
 
   const parts: string[] = [];
   if (trimmedThinking) {
-    parts.push(`*Thinking*\n${trimmedThinking}`);
+    parts.push(`_Thinking_\n${trimmedThinking}`);
   } else if (!trimmedText) {
-    parts.push("*Thinking...*");
+    parts.push("_Thinking..._");
   }
   if (toolPanel) {
     parts.push(toolPanel);
@@ -1588,7 +1588,7 @@ function toStreamingPreview(
     if (trimmedThinking || toolPanel) {
       parts.push("---");
     }
-    parts.push(`*Answer so far*\n${trimmedText}`);
+    parts.push(trimmedText);
   }
 
   const combined = parts.join("\n\n");
@@ -3217,9 +3217,7 @@ export async function startApp(
                 components: [],
               });
 
-              const finalAnswerBlock = `Answer so far:\n${finalText}`;
-              const answerFullyVisibleInStatus = finalPreview.includes(finalAnswerBlock);
-              if (!answerFullyVisibleInStatus) {
+              if (finalPreview.includes("...[truncated live preview]...")) {
                 const chunks = chunkDiscordText(finalText);
                 for (const chunk of chunks) {
                   if (
