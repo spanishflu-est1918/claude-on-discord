@@ -9,7 +9,12 @@ import { StopController } from "./claude/stop";
 import type { AppConfig } from "./config";
 import { Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
-import { buildStopButtons, parseRunControlCustomId } from "./discord/buttons";
+import {
+  buildProjectSwitchButtons,
+  buildStopButtons,
+  parseProjectSwitchCustomId,
+  parseRunControlCustomId,
+} from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
@@ -259,6 +264,10 @@ export async function startApp(config: AppConfig): Promise<void> {
   });
   const stopController = new StopController();
   const runner = new ClaudeRunner();
+  const pendingProjectSwitches = new Map<
+    string,
+    { channelId: string; guildId: string; workingDir: string }
+  >();
 
   await registerSlashCommands({
     token: config.discordToken,
@@ -269,6 +278,40 @@ export async function startApp(config: AppConfig): Promise<void> {
   await startDiscordClient({
     token: config.discordToken,
     onButtonInteraction: async (interaction) => {
+      const projectSwitch = parseProjectSwitchCustomId(interaction.customId);
+      if (projectSwitch) {
+        const pending = pendingProjectSwitches.get(projectSwitch.requestId);
+        if (!pending) {
+          await interaction.reply({
+            content: "Project switch request expired. Run /project again.",
+            ephemeral: true,
+          });
+          return;
+        }
+        if (interaction.channelId !== pending.channelId) {
+          await interaction.reply({
+            content: "This project switch belongs to a different channel.",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        pendingProjectSwitches.delete(projectSwitch.requestId);
+        const state = sessions.switchProject(
+          pending.channelId,
+          pending.guildId,
+          pending.workingDir,
+          {
+            fresh: projectSwitch.action === "fresh",
+          },
+        );
+        await interaction.update({
+          content: `Project set to \`${state.channel.workingDir}\`${projectSwitch.action === "fresh" ? " with fresh session." : " (context kept)."}`,
+          components: [],
+        });
+        return;
+      }
+
       const control = parseRunControlCustomId(interaction.customId);
       if (!control) {
         await interaction.reply({ content: "Unknown control button.", ephemeral: true });
@@ -354,33 +397,27 @@ export async function startApp(config: AppConfig): Promise<void> {
           break;
         }
         case "project": {
-          const inputPath = interaction.options.getString("path");
-          const fresh = interaction.options.getBoolean("fresh") ?? false;
-          if (inputPath) {
-            const resolvedPath = resolvePath(inputPath);
-            const state = sessions.switchProject(channelId, guildId, resolvedPath, { fresh });
-            await interaction.reply(
-              `Project set to \`${state.channel.workingDir}\`${fresh ? " with fresh session." : "."}`,
-            );
-            break;
-          }
-
           if (process.platform !== "darwin") {
-            await interaction.reply("`path` is required on non-macOS systems.");
+            await interaction.reply("Finder picker is only available on macOS.");
             break;
           }
 
-          await interaction.deferReply({ ephemeral: true });
           const selectedPath = await pickFolderWithFinder();
           if (!selectedPath) {
-            await interaction.editReply("Folder selection cancelled.");
+            await interaction.reply("Folder selection cancelled.");
             break;
           }
 
-          const state = sessions.switchProject(channelId, guildId, selectedPath, { fresh });
-          await interaction.editReply(
-            `Project set to \`${state.channel.workingDir}\`${fresh ? " with fresh session." : "."}`,
-          );
+          const requestId = crypto.randomUUID();
+          pendingProjectSwitches.set(requestId, {
+            channelId,
+            guildId,
+            workingDir: selectedPath,
+          });
+          await interaction.reply({
+            content: `Selected project \`${selectedPath}\`. Keep current context or clear it?`,
+            components: buildProjectSwitchButtons(requestId),
+          });
           break;
         }
         case "model": {

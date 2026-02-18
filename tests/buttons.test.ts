@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildStopButtons, parseRunControlCustomId } from "../src/discord/buttons";
+import {
+  buildProjectSwitchButtons,
+  buildStopButtons,
+  parseProjectSwitchCustomId,
+  parseRunControlCustomId,
+} from "../src/discord/buttons";
 
 describe("discord buttons", () => {
   test("builds interrupt and abort controls with channel-bound ids", () => {
@@ -30,9 +35,36 @@ describe("discord buttons", () => {
     });
   });
 
+  test("builds and parses project switch buttons", () => {
+    const rows = buildProjectSwitchButtons("req-1");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(2);
+
+    const keep = components[0]?.toJSON();
+    const fresh = components[1]?.toJSON();
+    const keepId = keep && "custom_id" in keep ? keep.custom_id : undefined;
+    const freshId = fresh && "custom_id" in fresh ? fresh.custom_id : undefined;
+
+    expect(keepId).toBe("project:keep:req-1");
+    expect(freshId).toBe("project:fresh:req-1");
+
+    expect(parseProjectSwitchCustomId("project:keep:req-1")).toEqual({
+      action: "keep",
+      requestId: "req-1",
+    });
+    expect(parseProjectSwitchCustomId("project:fresh:req-1")).toEqual({
+      action: "fresh",
+      requestId: "req-1",
+    });
+  });
+
   test("returns null for unknown/invalid ids", () => {
     expect(parseRunControlCustomId("noop")).toBeNull();
     expect(parseRunControlCustomId("run:interrupt:")).toBeNull();
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
+    expect(parseProjectSwitchCustomId("project:keep:")).toBeNull();
+    expect(parseProjectSwitchCustomId("project:fresh:")).toBeNull();
   });
 });
