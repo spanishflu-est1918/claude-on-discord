@@ -1,221 +1,107 @@
 # claude-on-discord
 
-`claude-on-discord` is a local-first Discord bridge for Claude Code.
-It gives you a channel-based coding workflow in Discord while keeping real filesystem/project execution on your machine.
+Claude Code in Discord. Real filesystem. Real tools. No SSH required.
 
-## Why This Exists
+Each channel becomes a coding lane — its own project, session, and context. Create a thread and it inherits the parent context, becoming a parallel branch. Everything runs on your machine and streams back to Discord.
 
-- Claude Code is excellent in terminal, but Discord is always open on desktop + mobile.
-- You can run real coding/help workflows from Discord without SSHing into your machine.
-- Each Discord channel can act like a separate working lane with its own project/session context.
+> Inspired by [claude-code-telegram](https://github.com/punkpeye/claude-code-telegram) — built on Discord because Discord has threads.
 
-## Current Feature Set
-
-- Per-channel working directory, model, and session state
-- `/project` switching with keep/clear context controls
-- Session safety on project switch (`keep` restarts session if directory changes)
-- Channel topic sync on project switch (project + git branch when available)
-- Streaming text + thinking preview in status updates
-- Stop controls on active runs:
-  - `Interrupt` (soft stop)
-  - `Abort` (hard stop)
-- Per-channel custom system prompt:
-  - `/systemprompt set`
-  - `/systemprompt show`
-  - `/systemprompt clear`
-- Automatic thread branching:
-  - when a new Discord thread starts, it inherits parent context automatically
-  - inherited context includes project, model, in-memory turns, and system prompt
-  - optional auto-worktree mode can provision per-thread git worktrees
-  - prompt context includes lightweight thread-branch metadata for branch-aware Q&A
-- Direct shell execution via `/bash`
-- Browser screenshots via `/screenshot` (agent-browser)
-- Git worktree utilities via `/worktree`
-  - optional automatic setup on create (`yarn install`/`pnpm install`/`bun install`/`npm install`)
-- GitHub PR creation via `/pr open|draft` (requires `gh` CLI)
-- Cost tracking via `/cost`
-- Attachment input staging and generated file output back into Discord
-- Attachment directive support in model output (`ATTACH: <path>`) for reliable file delivery
-- Multi-user mention policy controls:
-  - global default via `REQUIRE_MENTION_IN_MULTI_USER_CHANNELS`
-  - per-channel override via `/mentions`
-- MCP config loading from project `.claude/mcp.json`
-- Recovery ladder for `Claude Code process exited with code 1` failure modes
-
-## Power Feature: Thread Branching
-
-- Branching is Discord-native: create a thread, and it becomes a branch lane automatically.
-- New threads inherit parent execution context:
-  - working directory
-  - model
-  - in-memory conversation turns
-  - per-channel system prompt
-- Prompts include lightweight branch/thread topology metadata so Claude can answer lineage questions when asked.
-- Result: parallel coding tracks without losing local execution guarantees.
+---
 
 ## Quick Start
 
-### 1. Install
+**Requires**: [Bun](https://bun.sh), a Claude subscription, a Discord bot token
 
 ```bash
+git clone https://github.com/spanishflu-est1918/claude-on-discord
+cd claude-on-discord
 bun install
+bun run setup    # interactive: writes .env, prints Discord invite URL
 ```
 
-Optional local CLI entrypoint:
+Invite the bot to your server, then:
 
 ```bash
-node ./bin/claude-on-discord.js help
+bun start
 ```
 
-### 2. Run Interactive Setup
+---
 
-```bash
-bun run setup
-```
+## How It Works
 
-This writes `.env` and prints a Discord invite URL with the required scopes.
-Setup can optionally open the invite URL in your browser immediately.
+- **Channel = coding lane** — each channel has its own working directory, model, and Claude session
+- **Thread = branch** — create a Discord thread and it inherits parent context automatically (project, model, conversation, system prompt)
+- **Streams everything** — partial text, thinking previews, tool events, all live-edited in a single Discord message
+- **Your machine** — files are real, tools are real, Claude Code runs locally with full filesystem access
 
-### 3. Invite the Bot
-
-Use the URL from `bun run init`, authorize it in your target server, then run:
-
-```bash
-bun run dev
-```
-
-or:
-
-```bash
-bun run start
-```
-
-Equivalent CLI commands:
-
-```bash
-claude-on-discord setup
-claude-on-discord init
-claude-on-discord dev
-claude-on-discord start
-```
-
-`bun run start` now performs startup preflight checks (working dir, database path, Discord auth/guild reachability) and prints actionable diagnostics before the bot boots.
-
-## Required Configuration
-
-Required environment variables:
-
-- `DISCORD_TOKEN`: bot token
-- `APPLICATION_ID`: Discord application ID
-- `DISCORD_GUILD_ID`: guild/server ID for slash command registration
-
-Common optional variables:
-
-- `DEFAULT_WORKING_DIR`: default project root (default: `~/www`)
-- `DATABASE_PATH`: sqlite path (default: `./data/claude-on-discord.sqlite`)
-- `DEFAULT_MODEL`: Claude model alias/name (default: `sonnet`)
-- `AUTO_THREAD_WORKTREE`: auto-provision per-thread git worktrees (default: `false`)
-- `REQUIRE_MENTION_IN_MULTI_USER_CHANNELS`: require explicit `@bot` mention once a guild channel has multiple human participants (default: `false`)
-- `WORKTREE_BOOTSTRAP`: run setup automatically after creating worktrees (default: `true`)
-- `WORKTREE_BOOTSTRAP_COMMAND`: optional custom setup command for new worktrees
-- `CLAUDE_PERMISSION_MODE`: SDK permission mode (default: `bypassPermissions`)
+---
 
 ## Commands
 
-- `/project [path]`: switch project directory
-  - no `path` on macOS: opens Finder picker
-  - with `path`: resolves relative to current channel project dir unless absolute/`~/`
-  - follow-up buttons let you keep or clear context
-- `/new`: reset channel session/history
-- `/status`: show current channel status and totals
-  - includes thread branch/root/parent info when running inside thread branches
-- `/branches`: list active thread branches with worktree/divergence info
-- `/diff`: show current lane patch as a single `.diff` attachment (or `(no diff output)`)
-- `/model <name>`: set channel model
-- `/systemprompt set <text>`: set per-channel system prompt (session restarts)
-- `/systemprompt show`: view current per-channel system prompt
-- `/systemprompt clear`: clear per-channel system prompt (session restarts)
-- `/mentions set <mode>`: set per-channel mention policy (`default`, `required`, `off`)
-- `/mentions show`: show current channel mention mode and effective policy
-- `/mentions clear`: clear per-channel mention policy override (back to global default)
-- `/bash <command>`: run shell command directly in current project
-- `!<command>` in channel messages: direct shell execution bypassing Claude/session
-- `/screenshot [url] [full]`: capture a webpage screenshot through `agent-browser`
-- `/pr open|draft [base] [title] [body]`: create a GitHub PR from current branch
-  - default base resolves from thread root branch or origin default branch
-  - requires clean working tree and commits ahead of base
-- `/pr status|view|checks`: inspect PR state/details/checks for current branch
-- `/pr merge [method] [delete_branch] [admin] confirm:true`: merge current branch PR
-  - safety checks: confirm flag, OPEN state, non-draft, clean working tree
-- `/worktree create|list|remove|thread`: git worktree operations
-  - `create`: auto-generates path when omitted
-    - auto-runs setup for new worktree
-  - `remove`: defaults to current project dir when omitted
-  - `thread`: provision/switch this thread to dedicated worktree
-- `/compact`: compact in-memory context and reset session
-- `/cost`: show total channel spend/turns
+| Command | What it does |
+|---------|-------------|
+| `/project [path]` | Switch working directory — no path on macOS opens Finder picker |
+| `/new` | Reset session and history |
+| `/model <name>` | Switch Claude model |
+| `/bash <command>` | Run shell command directly in current project |
+| `!<command>` | Direct shell shortcut from any channel message |
+| `/systemprompt set/show/clear` | Per-channel system prompt |
+| `/worktree create/list/remove/thread` | Git worktree management |
+| `/pr open/draft/status/merge` | GitHub PR workflow (requires `gh` CLI) |
+| `/diff` | Current lane patch as a `.diff` attachment |
+| `/screenshot [url]` | Webpage screenshot via agent-browser |
+| `/cost` | Per-channel spend and turn count |
+| `/status` | Channel status, session, branch info |
+| `/branches` | Active thread branches with worktree info |
+| `/compact` | Compact context and reset session |
 
-## Runtime Behavior
+While Claude is running, **Interrupt** (soft stop) and **Abort** (hard stop) buttons appear inline.
 
-- Each channel maps to one row in `channels` (working dir, model, session ID).
-- First message in a new Discord thread auto-clones parent channel context.
-- If project changes with context kept, session ID is reset to avoid stale resume failures.
-- During active runs, the bot streams partial answer/thinking previews and shows stop buttons.
-- Messages are serialized per channel; if a new message arrives while a run is active, it is queued to run next.
-- Interrupted runs with no final text are rendered as `Interrupted.`.
-- Multi-user guild channels can require explicit `@bot` mention before response (global + per-channel override).
+---
 
-## Attachments
+## Configuration
 
-- Input attachments are downloaded to temp files and added to Claude prompt context.
-- Generated files can be sent back to Discord automatically via:
-  - SDK `files_persisted` events
-  - explicit model directives like `ATTACH: /absolute/or/relative/path`
-  - path extraction fallback from final model text
+Copy `.env.example` → `.env`:
 
-Known limitation:
+```env
+# Required
+DISCORD_TOKEN=            # Discord bot token
+APPLICATION_ID=           # Discord application ID
+DISCORD_GUILD_ID=         # Your server ID
 
-- Outgoing image attachment reliability is still inconsistent in some real Discord flows.
-- Tracked as technical debt in `gleaming-moseying-codd.md`.
+# Optional
+DEFAULT_WORKING_DIR=~/www
+DEFAULT_MODEL=sonnet
+AUTO_THREAD_WORKTREE=false
+REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=false
+```
+
+Full reference: [.env.example](.env.example)
+
+---
+
+## More Features
+
+- **MCP support** — loads `.claude/mcp.json` from your project directory automatically
+- **Attachment I/O** — send files in, Claude can send files back to Discord
+- **Per-channel system prompts** — different context per project lane
+- **Multi-user mention policy** — require `@bot` mention in shared channels (global + per-channel)
+- **Cost tracking** — SQLite-backed per-channel spend and turn counts
+- **Startup preflight** — checks working dir, database, and Discord auth with actionable diagnostics on failure
+
+---
 
 ## Development
 
-Run lint:
-
 ```bash
-bun run lint
+bun run dev        # Watch mode
+bun run typecheck  # TypeScript
+bun run lint       # Biome
+bun test           # Tests
 ```
 
-Typecheck:
+Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
 
-```bash
-bun run typecheck
-```
+---
 
-Run tests:
-
-```bash
-bun test
-```
-
-## Documentation
-
-- `docs/README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/TROUBLESHOOTING.md`
-- `docs/SECURITY.md`
-- `docs/WEBSITE_BRIEF.md`
-
-## Positioning / Next
-
-- This project is moving beyond prototype status and should be documented like a product.
-- Next documentation steps:
-  - GitHub-ready docs structure (`README`, setup guide, troubleshooting, architecture notes)
-  - Website/landing page with workflow demos and use-cases
-  - Later: `npx`-friendly distribution flow
-- Post-MVP roadmap for branch power users:
-  - Optional thread→worktree binding (auto-create per-thread git worktree)
-  - Branch diffs summarized in Discord (`/diff` with compact review output)
-  - PR policy/guardrails and templates on top of `/pr`
-  - Conductor-style PR review buttons that send structured review prompts to the agent
-  - Revisit `!` message-prefix semantics so it can act as intentional direct bash mode
+Built with [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) + [discord.js](https://discord.js.org)
