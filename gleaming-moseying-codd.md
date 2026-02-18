@@ -288,6 +288,13 @@ User types in channel
 37. Branch navigation commands (list/switch/history)
 38. Optional branch naming and branch-specific system prompts
 
+### Phase 8: Branch Operations Automation (Post-MVP)
+
+39. Optional thread-to-worktree binding (one thread branch, one git worktree)
+40. Branch diff summaries in Discord (`/diff` compact + detailed modes)
+41. PR automation (`/pr` draft/open) targeting root/main branch
+42. Branch policy guardrails (allowed base branches, required checks, PR template)
+
 ---
 
 ## Verification

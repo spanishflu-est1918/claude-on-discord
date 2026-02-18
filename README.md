@@ -34,6 +34,17 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 - MCP config loading from project `.claude/mcp.json`
 - Recovery ladder for `Claude Code process exited with code 1` failure modes
 
+## Power Feature: Thread Branching
+
+- Branching is Discord-native: create a thread, and it becomes a branch lane automatically.
+- New threads inherit parent execution context:
+  - working directory
+  - model
+  - in-memory conversation turns
+  - per-channel system prompt
+- Prompts include lightweight branch/thread topology metadata so Claude can answer lineage questions when asked.
+- Result: parallel coding tracks without losing local execution guarantees.
+
 ## Quick Start
 
 ### 1. Install
@@ -115,6 +126,7 @@ Common optional variables:
 ## Runtime Behavior
 
 - Each channel maps to one row in `channels` (working dir, model, session ID).
+- First message in a new Discord thread auto-clones parent channel context.
 - If project changes with context kept, session ID is reset to avoid stale resume failures.
 - During active runs, the bot streams partial answer/thinking previews and shows stop buttons.
 - Interrupted runs with no final text are rendered as `Interrupted.`.
@@ -164,5 +176,7 @@ bun test
   - GitHub-ready docs structure (`README`, setup guide, troubleshooting, architecture notes)
   - Website/landing page with workflow demos and use-cases
   - Later: `npx`-friendly distribution flow
-- Planned product feature:
-  - Threaded conversation management with session forking (branch a conversation path from Discord)
+- Post-MVP roadmap for branch power users:
+  - Optional thread→worktree binding (auto-create per-thread git worktree)
+  - Branch diffs summarized in Discord (`/diff` with compact review output)
+  - PR flow from thread branch to root/main (`/pr` draft/open)

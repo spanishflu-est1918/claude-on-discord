@@ -22,6 +22,7 @@
 - `src/claude/session.ts`: per-channel state lifecycle and project switching rules
 - `src/claude/stop.ts`: interrupt/abort tracking for active runs
 - `src/db/repository.ts`: channel/session/settings persistence
+- `src/discord/thread-branch.ts`: thread metadata parsing + branch-awareness prompt context
 
 ## Data Model
 
@@ -29,24 +30,30 @@ SQLite tables:
 
 - `channels`: channel → working dir/session/model mapping
 - `session_costs`: per-turn cost/duration/model accounting
-- `settings`: key/value storage (includes per-channel system prompts)
+- `settings`: key/value storage (includes per-channel system prompts and thread branch metadata)
 
 Per-channel system prompt key pattern:
 
 - `channel_system_prompt:<channel_id>`
 
+Thread branch metadata key pattern:
+
+- `channel_thread_branch:<channel_id>`
+
 ## Message Flow
 
 1. User sends a message in Discord.
-2. Bot resolves channel state (`working_dir`, model, session).
-3. Attachments are staged to local temp files and appended to prompt context.
-4. Bot starts a Claude SDK query with:
+2. If this is a new thread, bot auto-inherits parent context into thread channel state.
+3. Bot resolves channel state (`working_dir`, model, session).
+4. Attachments are staged to local temp files and appended to prompt context.
+5. Lightweight thread-branch topology metadata is injected into prompt context for branch-aware Q&A.
+6. Bot starts a Claude SDK query with:
    - cwd
    - optional session resume
    - system prompt (bridge policy + optional per-channel system prompt)
    - streaming enabled
-5. Stream events update Discord status preview (thinking + answer deltas).
-6. Final text is posted, generated files are attached, costs/session are saved.
+7. Stream events update Discord status preview (thinking + answer deltas).
+8. Final text is posted, generated files are attached, costs/session are saved.
 
 ## Reliability Strategy
 

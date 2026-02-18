@@ -8,3 +8,7 @@ This directory holds project docs that are too detailed for the top-level `READM
 - `TROUBLESHOOTING.md`: common failures, diagnosis steps, and fixes
 - `SECURITY.md`: security posture, token handling, and operational risks
 - `WEBSITE_BRIEF.md`: positioning and content brief for the future website
+
+Current standout capability:
+
+- Discord thread branching with automatic context inheritance and branch-aware prompt metadata.
