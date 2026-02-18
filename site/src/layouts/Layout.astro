@@ -1,0 +1,179 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'claude-on-discord — Claude Code in Discord',
+  description = 'Claude Code running on your machine, accessible from any Discord channel. Threads are branches. Channels are projects.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-[#1E1F22] text-[#DBDEE1] font-sans antialiased">
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --dc-bg:        #1E1F22;
+    --dc-sidebar:   #2B2D31;
+    --dc-surface:   #313338;
+    --dc-surface-2: #383A40;
+    --dc-surface-3: #404249;
+    --dc-blurple:   #5865F2;
+    --dc-blurple-h: #4752C4;
+    --dc-blurple-l: #7983f5;
+    --dc-green:     #23A55A;
+    --dc-red:       #F23F42;
+    --dc-yellow:    #F0B232;
+    --dc-text:      #DBDEE1;
+    --dc-muted:     #80848E;
+    --dc-white:     #FFFFFF;
+  }
+
+  * { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
+
+  body { font-family: 'Inter', 'gg sans', 'Noto Sans', sans-serif; }
+
+  code, pre, .mono {
+    font-family: 'Fira Code', 'Consolas', ui-monospace, monospace;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--dc-sidebar); }
+  ::-webkit-scrollbar-thumb { background: var(--dc-surface-3); border-radius: 3px; }
+
+  /* Gradient text */
+  .text-gradient {
+    background: linear-gradient(120deg, var(--dc-blurple) 0%, var(--dc-blurple-l) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Section label accent */
+  .section-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dc-blurple);
+    margin-bottom: 0.75rem;
+  }
+  .section-label::before {
+    content: '';
+    display: block;
+    width: 3px;
+    height: 14px;
+    background: var(--dc-blurple);
+    border-radius: 2px;
+  }
+
+  /* Glow variants */
+  .blurple-glow {
+    box-shadow: 0 0 0 1px rgba(88,101,242,0.25), 0 8px 40px rgba(88,101,242,0.18);
+  }
+  .blurple-glow-sm {
+    box-shadow: 0 0 0 1px rgba(88,101,242,0.2), 0 4px 20px rgba(88,101,242,0.12);
+  }
+
+  /* Card hover */
+  .card-hover {
+    transition: background 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease, transform 0.08s ease;
+  }
+  .card-hover:hover {
+    background: var(--dc-surface-2) !important;
+    transform: translateY(-2px);
+  }
+
+  /* Feature card: blurple left accent on hover */
+  .feature-card {
+    border-left: 3px solid transparent;
+    transition: background 0.08s ease, border-color 0.08s ease, transform 0.08s ease;
+  }
+  .feature-card:hover {
+    background: var(--dc-surface-2) !important;
+    border-left-color: var(--dc-blurple);
+    transform: translateY(-2px);
+  }
+
+  /* Buttons */
+  .btn-blurple {
+    background: var(--dc-blurple);
+    transition: background 0.08s ease, transform 0.08s ease, box-shadow 0.08s ease;
+  }
+  .btn-blurple:hover {
+    background: var(--dc-blurple-h);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(88,101,242,0.4);
+  }
+  .btn-ghost {
+    transition: background 0.08s ease, transform 0.08s ease;
+  }
+  .btn-ghost:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Hero background glow */
+  .hero-bg {
+    background:
+      radial-gradient(ellipse 55% 60% at 75% 55%, rgba(88,101,242,0.1) 0%, transparent 65%),
+      #1E1F22;
+  }
+
+  /* Mock UI tilt */
+  .discord-mock {
+    transform: perspective(1100px) rotateY(-6deg) rotateX(2deg);
+    transform-origin: center center;
+    transition: transform 0.3s ease;
+  }
+  .discord-mock:hover {
+    transform: perspective(1100px) rotateY(-2deg) rotateX(0deg);
+  }
+
+  /* Stat number */
+  .stat-num {
+    font-size: 3.5rem;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+
+  /* Divider */
+  .blurple-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(88,101,242,0.4) 30%, rgba(88,101,242,0.4) 70%, transparent);
+  }
+
+  /* Stripe subtle */
+  .stripe-subtle {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 8px,
+      rgba(88,101,242,0.025) 8px,
+      rgba(88,101,242,0.025) 16px
+    );
+  }
+</style>

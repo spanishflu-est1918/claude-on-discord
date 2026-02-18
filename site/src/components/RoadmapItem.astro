@@ -1,0 +1,22 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  status?: 'planned' | 'in-progress';
+}
+
+const { title, description, status = 'planned' } = Astro.props;
+const label = status === 'in-progress' ? 'In Progress' : 'Planned';
+const labelColor = status === 'in-progress' ? 'bg-[#5865F2] text-white' : 'bg-[#383A40] text-[#96989D]';
+---
+
+<div class="bg-[#2B2D31] rounded-md p-4 border border-[#1E1F22] flex gap-4 card-hover">
+  <div class="shrink-0 w-8 h-8 rounded-full bg-[#383A40] flex items-center justify-center text-[#5865F2] font-bold text-sm">→</div>
+  <div class="flex-1 min-w-0">
+    <div class="flex items-center gap-2 mb-1 flex-wrap">
+      <div class="font-semibold text-[#DBDEE1] text-sm">{title}</div>
+      <span class={`text-xs px-2 py-0.5 rounded-full font-medium ${labelColor}`}>{label}</span>
+    </div>
+    <div class="text-sm text-[#96989D] leading-relaxed" set:html={description} />
+  </div>
+</div>

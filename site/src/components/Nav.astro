@@ -1,0 +1,23 @@
+---
+const GITHUB = 'https://github.com/spanishflu-est1918/claude-on-discord';
+const SETUP = `${GITHUB}/blob/main/docs/SETUP.md`;
+---
+
+<nav class="bg-[#1E1F22] border-b border-[#2B2D31] px-6 py-3 flex items-center justify-between sticky top-0 z-50 backdrop-blur-sm">
+  <div class="flex items-center gap-2">
+    <!-- Discord-style server icon -->
+    <div class="w-8 h-8 rounded-[10px] bg-[#5865F2] flex items-center justify-center text-white font-black text-sm shrink-0">C</div>
+    <span class="font-bold text-[#DBDEE1] text-sm tracking-tight">claude-on-discord</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <a href={SETUP} class="text-sm font-medium text-[#B5BAC1] hover:text-white transition-colors hidden sm:block">
+      Docs
+    </a>
+    <a
+      href={GITHUB}
+      class="btn-blurple px-4 py-1.5 rounded-[3px] font-semibold text-sm text-white"
+    >
+      GitHub ↗
+    </a>
+  </div>
+</nav>

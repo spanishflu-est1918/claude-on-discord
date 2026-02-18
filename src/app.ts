@@ -1492,12 +1492,12 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
   return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
 }
 
-function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string | null {
+function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string {
   const allEntries = trace.order
     .map((id) => trace.byId.get(id))
     .filter((entry): entry is LiveToolEntry => Boolean(entry));
   if (allEntries.length === 0) {
-    return null;
+    return "Tools:\n(waiting for first tool call)";
   }
 
   const running = allEntries.filter(

@@ -1,0 +1,371 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
+import FeatureCard from '../components/FeatureCard.astro';
+
+const GITHUB = 'https://github.com/spanishflu-est1918/claude-on-discord';
+const SETUP  = `${GITHUB}/blob/main/docs/SETUP.md`;
+const ARCH   = `${GITHUB}/blob/main/docs/ARCHITECTURE.md`;
+
+const features = [
+  { title: 'thread-branching',     icon: '#', description: 'Threads inherit parent context. <code class="text-[#5865F2]">/diff</code>, <code class="text-[#5865F2]">/pr</code>, git worktrees. Full branch workflow.' },
+  { title: 'per-channel-sessions', icon: '#', description: 'Working dir, model, history, system prompt &mdash; per channel. Switch projects by switching channels.' },
+  { title: 'live-streaming',       icon: '#', description: 'Text and thinking stream into one message. <strong class="text-[#DBDEE1]">Interrupt</strong> or <strong class="text-[#DBDEE1]">Abort</strong> mid-run.' },
+  { title: 'pr-management',        icon: '#', description: '<code class="text-[#5865F2]">/pr open</code>, <code class="text-[#5865F2]">draft</code>, <code class="text-[#5865F2]">status</code>, <code class="text-[#5865F2]">merge</code>. Full GitHub workflow, safety checks included.' },
+  { title: 'system-prompts',       icon: '#', description: 'One channel is your Rails expert. Another is your TS reviewer. Prompts persist.' },
+  { title: 'mcp-support',          icon: '#', description: 'Loads <code class="text-[#5865F2]">.claude/mcp.json</code> automatically. Your existing tools work out of the box.' },
+  { title: 'direct-shell',         icon: '#', description: '<code class="text-[#5865F2]">/bash</code> for raw command execution. <code class="text-[#5865F2]">/worktree</code> for git branch management.' },
+];
+
+const roadmapShipped = [
+  { slug: 'thinking-mode',       icon: '🧠' },
+  { slug: 'worktree-per-thread', icon: '🌿' },
+];
+const roadmapPlanned = [
+  { slug: 'npx-distribution', icon: '📦' },
+  { slug: 'tmux-attach',      icon: '🖥️'  },
+  { slug: 'cost-tracking',    icon: '💰' },
+];
+---
+
+<Layout>
+  <Nav />
+
+  <!-- ─── Hero ──────────────────────────────────────────────────────────── -->
+  <section class="hero-bg px-6 pt-16 pb-24 md:pt-20 md:pb-32 border-b border-[#2B2D31]">
+    <div class="max-w-6xl mx-auto flex flex-col lg:flex-row items-center gap-14 lg:gap-20">
+
+      <!-- Left -->
+      <div class="flex-1 min-w-0 lg:max-w-[480px]">
+        <div class="inline-flex items-center gap-2 bg-[#2B2D31] border border-[#383A40] rounded-full px-3.5 py-1.5 text-[11px] font-semibold text-[#5865F2] mb-8 blurple-glow-sm">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#5865F2] animate-pulse"></span>
+          Open Source &middot; MIT
+        </div>
+        <h1 class="text-[64px] sm:text-7xl md:text-[88px] font-black leading-[0.9] tracking-tight mb-6">
+          <span class="text-white">Claude Code.</span><br />
+          <span class="text-gradient">In Discord.</span>
+        </h1>
+        <p class="text-[17px] text-[#96989D] max-w-md mb-10 leading-relaxed">
+          Full Claude Code, running on your machine &mdash; reachable from any channel, on any device.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <a href={GITHUB} class="btn-blurple px-6 py-3 rounded font-bold text-white text-sm inline-flex items-center gap-1.5">
+            GitHub <span class="opacity-70">&rarr;</span>
+          </a>
+          <a href={SETUP} class="btn-ghost bg-[#2B2D31] border border-[#383A40] px-6 py-3 rounded font-bold text-[#DBDEE1] text-sm">
+            Setup Guide
+          </a>
+        </div>
+      </div>
+
+      <!-- Right: tilted Discord mock -->
+      <div class="flex-1 w-full max-w-[500px] lg:max-w-none">
+        <div class="discord-mock bg-[#313338] rounded-xl overflow-hidden blurple-glow border border-[#1E1F22]">
+          <!-- Window chrome -->
+          <div class="bg-[#1E1F22] px-4 py-2.5 flex items-center gap-1.5 border-b border-[#2B2D31]">
+            <div class="w-3 h-3 rounded-full bg-[#F23F42]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#F0B232]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#23A55A]"></div>
+            <span class="text-[#4f5257] text-[11px] ml-2 font-medium mono">Discord</span>
+          </div>
+          <div class="flex h-[280px]">
+            <!-- Sidebar -->
+            <div class="w-44 bg-[#2B2D31] border-r border-[#1E1F22] flex flex-col shrink-0">
+              <div class="px-3 py-3 border-b border-[#1E1F22] flex items-center gap-2">
+                <div class="w-6 h-6 rounded-md bg-[#5865F2] flex items-center justify-center text-white font-black text-[10px] shrink-0">C</div>
+                <span class="text-[#DBDEE1] text-[11px] font-bold truncate">my-workspace</span>
+              </div>
+              <div class="px-2 py-2 flex-1 overflow-hidden text-[11px]">
+                <div class="text-[#4f5257] text-[9px] font-bold uppercase tracking-widest px-1 mb-1">Projects</div>
+                <div class="space-y-px">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-[3px] bg-[#404249] text-[#DBDEE1]">
+                    <span class="text-[#5865F2] text-[10px] font-bold">#</span>
+                    <span class="font-medium truncate">api-rewrite</span>
+                    <span class="ml-auto w-1.5 h-1.5 rounded-full bg-[#23A55A] shrink-0"></span>
+                  </div>
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[#4f5257] text-[10px]">#</span>
+                    <span class="truncate">frontend</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[#4f5257] text-[10px]">#</span>
+                    <span class="truncate">infra</span>
+                  </div>
+                </div>
+                <div class="text-[#4f5257] text-[9px] font-bold uppercase tracking-widest px-1 mb-1 mt-3">Threads</div>
+                <div class="space-y-px">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[9px]">&#x1F4AC;</span>
+                    <span class="truncate">add-auth</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[9px]">&#x1F4AC;</span>
+                    <span class="truncate">fix-pagination</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Chat -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-[#2B2D31] flex items-center gap-1.5">
+                <span class="text-[#5865F2] font-bold text-sm">#</span>
+                <span class="text-[#DBDEE1] text-[13px] font-semibold">api-rewrite</span>
+              </div>
+              <div class="flex-1 px-4 py-3 space-y-3 overflow-hidden">
+                <!-- User msg -->
+                <div class="flex gap-2.5 items-start">
+                  <div class="w-7 h-7 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-[10px] font-black shrink-0">G</div>
+                  <div class="text-[11px]">
+                    <span class="text-[#DBDEE1] font-semibold">gorka</span>
+                    <span class="text-[#4f5257] ml-1.5">Today 11:42</span>
+                    <div class="text-[#DBDEE1] mt-0.5">migrate auth to JWT, add refresh token rotation</div>
+                  </div>
+                </div>
+                <!-- Claude msg -->
+                <div class="flex gap-2.5 items-start">
+                  <div class="w-7 h-7 rounded-full bg-[#23A55A] flex items-center justify-center text-white text-[9px] font-black shrink-0">AI</div>
+                  <div class="flex-1 min-w-0 text-[11px]">
+                    <span class="text-[#DBDEE1] font-semibold">Claude</span>
+                    <span class="text-[#4f5257] ml-1.5">Today 11:42</span>
+                    <div class="mt-1 bg-[#2B2D31] rounded-[4px] px-3 py-2 border-l-[3px] border-[#5865F2]">
+                      <div class="text-[#80848E] text-[10px] mb-1 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-[#5865F2] animate-pulse inline-block"></span>
+                        Reading 8 files&hellip;
+                      </div>
+                      <div class="text-[#DBDEE1] leading-relaxed">Found auth module. Writing tests first, then wiring refresh token rotation&hellip;</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="px-3 pb-3">
+                <div class="bg-[#383A40] rounded-[6px] px-3 py-1.5 text-[#4f5257] text-[11px]">
+                  Message <span class="text-[#5865F2]">#api-rewrite</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ─── Stats bar ─────────────────────────────────────────────────────── -->
+  <div class="border-b border-[#2B2D31] bg-[#2B2D31]">
+    <div class="max-w-5xl mx-auto px-6 py-8 grid grid-cols-3 divide-x divide-[#383A40]">
+      <div class="flex flex-col items-center px-4 gap-1.5">
+        <span class="stat-num text-white">Local</span>
+        <span class="text-[#80848E] text-xs text-center">runs on your machine<br />your code stays yours</span>
+      </div>
+      <div class="flex flex-col items-center px-4 gap-1.5">
+        <span class="stat-num text-gradient">0¢</span>
+        <span class="text-[#80848E] text-xs text-center">extra API cost<br />uses your Claude Code auth</span>
+      </div>
+      <div class="flex flex-col items-center px-4 gap-1.5">
+        <span class="stat-num text-[#23A55A]">MIT</span>
+        <span class="text-[#80848E] text-xs text-center">open source<br />self-hosted, no lock-in</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Why Discord ────────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20 stripe-subtle">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Why Discord</div>
+      <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
+        Not just always open.<br />The right interface.
+      </h2>
+      <p class="text-[#96989D] text-lg max-w-xl mb-14 leading-relaxed">
+        Other bots give you a chat window. Discord gives you a workspace &mdash; channels, threads, search, slash commands, mobile. The structure that makes async agent work actually manageable.
+      </p>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] blurple-glow card-hover">
+          <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none"># channel</div>
+          <div class="text-white font-bold text-xl mb-2">= Project</div>
+          <p class="text-[#80848E] text-sm leading-relaxed">Own working dir, session, model, system prompt. Switch projects by switching channels.</p>
+        </div>
+        <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] card-hover">
+          <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none">&#x1F4AC; thread</div>
+          <div class="text-white font-bold text-xl mb-2">= Branch</div>
+          <p class="text-[#80848E] text-sm leading-relaxed">Create a thread, get a parallel coding lane. Context inherited. Optional git worktree.</p>
+        </div>
+        <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] card-hover">
+          <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none">&#x1F4F1; mobile</div>
+          <div class="text-white font-bold text-xl mb-2">= Included</div>
+          <p class="text-[#80848E] text-sm leading-relaxed">Search, slash commands, attachments, notifications. Discord solved the interface problem.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Claude Code ────────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20 bg-[#2B2D31]">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Claude Code</div>
+      <h2 class="text-4xl md:text-5xl font-black mb-10 leading-[1.05] text-white">
+        Not a chatbot.<br />An agent.
+      </h2>
+
+      <div class="grid md:grid-cols-2 gap-12 items-start">
+        <!-- Left: what it does -->
+        <div>
+          <p class="text-[#96989D] text-lg leading-relaxed mb-6">
+            Reads your entire codebase. Runs shell commands. Manages git, installs packages, runs tests, opens PRs. The kind of depth you need for a real refactor &mdash; not just a suggestion.
+          </p>
+          <p class="text-[#96989D] text-lg leading-relaxed">
+            claude-on-discord puts it where you already work. Kick off a task, close your laptop, check back on your phone. The work continues. You don't have to babysit a terminal.
+          </p>
+        </div>
+
+        <!-- Right: agent-native angle -->
+        <div class="space-y-4">
+          <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
+            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Discord is already your agent hub</div>
+            <p class="text-[#80848E] text-sm leading-relaxed">
+              If you run <a href="https://openclaw.dev" class="text-[#5865F2] hover:underline">OpenClaw</a> or other bots, your server is already a coordination layer. <span class="text-[#DBDEE1]">#api-rewrite</span> is Claude Code. <span class="text-[#DBDEE1]">#research</span> is a search agent. <span class="text-[#DBDEE1]">#deploys</span> is your CI bot. One surface. Everything talks.
+            </p>
+          </div>
+          <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
+            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Threads as parallel experiments</div>
+            <p class="text-[#80848E] text-sm leading-relaxed">
+              Spin up a thread for a risky refactor. If it works, merge. If it doesn't, abandon. No branch cleanup, no stash juggling &mdash; just open threads and close the ones that didn't pan out.
+            </p>
+          </div>
+          <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
+            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Async by default</div>
+            <p class="text-[#80848E] text-sm leading-relaxed">
+              Claude Code runs to completion on your machine. You get notified when it's done. You can interrupt if it's going wrong. The flow is async &mdash; like code review, not like pair programming.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Features ──────────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Features</div>
+      <h2 class="text-4xl font-black mb-10 text-white">Everything. From Discord.</h2>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+        {features.map((f) => (
+          <FeatureCard title={f.title} description={f.description} icon={f.icon} />
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Quick Start ───────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20 bg-[#2B2D31]">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Quick Start</div>
+      <h2 class="text-4xl font-black mb-8 text-white">Up in five minutes.</h2>
+      <div class="grid md:grid-cols-2 gap-6 items-start">
+        <div class="bg-[#1E1F22] rounded-lg overflow-hidden border border-[#383A40] blurple-glow">
+          <div class="bg-[#2B2D31] px-4 py-2 flex items-center gap-1.5 border-b border-[#383A40]">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#F23F42]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[#F0B232]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[#23A55A]"></span>
+            <span class="text-[#4f5257] text-[11px] ml-1.5 mono">bash</span>
+          </div>
+          <pre class="mono text-[13px] leading-[1.9] px-5 py-4 overflow-x-auto"><code><span class="text-[#80848E]"># Clone and install</span>
+<span class="text-[#DBDEE1]">git clone https://github.com/spanishflu-est1918/claude-on-discord</span>
+<span class="text-[#DBDEE1]">cd claude-on-discord &amp;&amp; bun install</span>
+
+<span class="text-[#80848E]"># Interactive setup: writes .env, prints invite URL</span>
+<span class="text-[#DBDEE1]">bun run setup</span>
+
+<span class="text-[#80848E]"># Start</span>
+<span class="text-[#DBDEE1]">bun start</span></code></pre>
+        </div>
+        <div class="space-y-4">
+          <div class="bg-[#1E1F22] rounded-md px-4 py-3 border border-[#383A40] flex items-start gap-3">
+            <span class="text-[#23A55A] text-lg mt-0.5">&#10003;</span>
+            <div>
+              <div class="text-[#DBDEE1] text-sm font-semibold mb-0.5">No extra API key</div>
+              <div class="text-[#80848E] text-xs">Uses your existing Claude Code credentials.</div>
+            </div>
+          </div>
+          <div class="bg-[#1E1F22] rounded-md px-4 py-3 border border-[#383A40] flex items-start gap-3">
+            <span class="text-[#23A55A] text-lg mt-0.5">&#10003;</span>
+            <div>
+              <div class="text-[#DBDEE1] text-sm font-semibold mb-0.5">Interactive setup wizard</div>
+              <div class="text-[#80848E] text-xs">Writes your <code class="text-[#5865F2]">.env</code>, generates your bot invite URL.</div>
+            </div>
+          </div>
+          <div class="bg-[#1E1F22] rounded-md px-4 py-3 border border-[#383A40] flex items-start gap-3">
+            <span class="text-[#23A55A] text-lg mt-0.5">&#10003;</span>
+            <div>
+              <div class="text-[#DBDEE1] text-sm font-semibold mb-0.5">Needs: Bun + Claude Code</div>
+              <div class="text-[#80848E] text-xs leading-relaxed">
+                <a href="https://bun.sh" class="text-[#5865F2] hover:underline">bun.sh</a> &middot;
+                <a href="https://claude.ai/code" class="text-[#5865F2] hover:underline">claude.ai/code</a> &middot;
+                <a href={SETUP} class="text-[#5865F2] hover:underline">Full setup guide &rarr;</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Roadmap ───────────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Roadmap</div>
+      <h2 class="text-4xl font-black mb-10 text-white">Where it's going.</h2>
+
+      <div class="bg-[#2B2D31] rounded-xl border border-[#1E1F22] overflow-hidden max-w-sm blurple-glow">
+        <!-- Server header -->
+        <div class="px-5 py-4 border-b border-[#1E1F22] bg-[#232428] flex items-center gap-3">
+          <div class="w-8 h-8 rounded-xl bg-[#5865F2] flex items-center justify-center text-white font-black text-sm shrink-0">C</div>
+          <div>
+            <div class="text-[#DBDEE1] text-sm font-bold tracking-tight">claude-on-discord</div>
+            <div class="text-[#80848E] text-[11px]">roadmap</div>
+          </div>
+        </div>
+
+        <div class="px-3 py-4">
+          <!-- Shipped -->
+          <div class="flex items-center gap-1.5 px-2 mb-2">
+            <span class="text-[#80848E] text-[10px] font-bold uppercase tracking-widest">&#9660; Shipped</span>
+          </div>
+          {roadmapShipped.map((item) => (
+            <div class="flex items-center gap-3 px-3 py-2 rounded-[4px] cursor-default group mb-0.5">
+              <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
+              <span class="text-[#80848E] line-through text-[13px] flex-1">{item.slug}</span>
+              <span class="text-[11px] font-semibold text-[#23A55A] bg-[#23A55A]/10 px-2 py-0.5 rounded-full shrink-0">✓</span>
+            </div>
+          ))}
+
+          <!-- Planned -->
+          <div class="flex items-center gap-1.5 px-2 mb-2 mt-5">
+            <span class="text-[#80848E] text-[10px] font-bold uppercase tracking-widest">&#9660; Planned</span>
+          </div>
+          {roadmapPlanned.map((item) => (
+            <div class="flex items-center gap-3 px-3 py-2 rounded-[4px] hover:bg-[#35373C] cursor-default group transition-colors duration-75 mb-0.5">
+              <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
+              <span class="text-[#80848E] group-hover:text-[#DBDEE1] text-[13px] transition-colors">{item.slug}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Footer ────────────────────────────────────────────────────────── -->
+  <footer class="px-6 py-10 bg-[#1E1F22] flex flex-wrap items-center justify-between gap-4 border-t border-[#2B2D31]">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-[10px] bg-[#5865F2] flex items-center justify-center text-white font-black text-sm">C</div>
+      <div>
+        <div class="font-bold text-[#DBDEE1] text-sm">claude-on-discord</div>
+        <div class="text-[#4f5257] text-xs">Claude Agent SDK &middot; discord.js</div>
+      </div>
+    </div>
+    <div class="flex gap-6 text-sm font-medium text-[#80848E]">
+      <a href={GITHUB} class="hover:text-[#5865F2] transition-colors">GitHub</a>
+      <a href={SETUP}  class="hover:text-[#5865F2] transition-colors">Setup</a>
+      <a href={ARCH}   class="hover:text-[#5865F2] transition-colors">Architecture</a>
+    </div>
+  </footer>
+</Layout>

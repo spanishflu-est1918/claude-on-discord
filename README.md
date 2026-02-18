@@ -28,6 +28,14 @@ System prompts persist per channel and survive session resets. Switch projects, 
 
 ---
 
+## Claude Code vs other AI tools
+
+Claude Code goes deeper than general-purpose AI assistants. It reads your entire codebase, runs shell commands, manages git history, installs packages, runs tests, opens PRs. It's built for the kind of work that actually requires understanding a real codebase — complex refactors, architectural decisions, features that have to land right.
+
+If you're already running agents in Discord — OpenClaw or otherwise — Claude Code belongs there too. Same surface. Different depth. Use the right tool for the task.
+
+---
+
 ## How It Works
 
 - **Channel = coding lane** — each channel has its own working directory, model, and Claude session
@@ -39,7 +47,7 @@ System prompts persist per channel and survive session resets. Switch projects, 
 
 ## Quick Start
 
-**Requires**: [Bun](https://bun.sh), a Claude subscription, a Discord bot token
+**Requires**: [Bun](https://bun.sh) · [Claude Code](https://claude.ai/code) (installed + authenticated) · a Discord account
 
 ```bash
 git clone https://github.com/spanishflu-est1918/claude-on-discord
@@ -53,6 +61,8 @@ Invite the bot to your server, then:
 ```bash
 bun start
 ```
+
+**First time?** See the [full setup guide](docs/SETUP.md) — it walks through creating the Discord app, getting your credentials, and first run.
 
 ---
 
@@ -107,6 +117,19 @@ Full reference: [.env.example](.env.example)
 - **Multi-user mention policy** — require `@bot` mention in shared channels (global + per-channel)
 - **Cost tracking** — SQLite-backed per-channel spend and turn counts
 - **Startup preflight** — checks working dir, database, and Discord auth before boot
+
+---
+
+## Roadmap
+
+- `→` Thinking mode — extended thinking per channel for deep analysis and architectural work
+- `→` `npx` distribution — `npx claude-on-discord setup`, no clone required
+- `→` tmux attach — attach to running tmux sessions from Discord, monitor builds and dev servers from your phone
+- `→` Fix double threads — deduplicate thread creation events at the gateway level
+- `→` Worktree per thread, fully automatic
+- `→` PR review conductor — structured review buttons with targeted prompts
+- `→` Multi-guild support
+- `→` Orphan process reaper — detect/kill stale Claude subprocesses and clear stuck channel run state
 
 ---
 
