@@ -662,22 +662,28 @@ export async function startApp(config: AppConfig): Promise<void> {
           sessions.setSessionId(channelId, result.sessionId);
         }
 
-        const outputText = result.text.trim() || "(No response text)";
+        const outputText = result.text.trim();
+        const finalText =
+          outputText.length > 0
+            ? outputText
+            : stopController.wasInterrupted(channelId)
+              ? "Interrupted."
+              : "(No response text)";
         sessions.appendTurn(channelId, {
           role: "assistant",
-          content: outputText,
+          content: finalText,
         });
 
-        const chunks = chunkDiscordText(outputText);
+        const chunks = chunkDiscordText(finalText);
         if (chunks.length === 0) {
           await status.edit({
-            content: "(No response text)",
+            content: finalText,
             components: [],
           });
         } else {
           const firstChunk = chunks[0];
           await status.edit({
-            content: firstChunk ?? "(No response text)",
+            content: firstChunk ?? finalText,
             components: [],
           });
           for (let i = 1; i < chunks.length; i++) {

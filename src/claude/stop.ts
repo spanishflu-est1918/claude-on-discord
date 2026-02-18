@@ -4,6 +4,7 @@ export interface ActiveRun {
   query: ClaudeQuery;
   abortController: AbortController;
   startedAt: number;
+  interrupted: boolean;
 }
 
 export class StopController {
@@ -11,11 +12,12 @@ export class StopController {
 
   register(
     channelId: string,
-    run: Omit<ActiveRun, "startedAt"> & { startedAt?: number },
+    run: Omit<ActiveRun, "startedAt" | "interrupted"> & { startedAt?: number },
   ): ActiveRun {
     const value: ActiveRun = {
       ...run,
       startedAt: run.startedAt ?? Date.now(),
+      interrupted: false,
     };
     this.activeRuns.set(channelId, value);
     return value;
@@ -33,6 +35,11 @@ export class StopController {
     this.activeRuns.delete(channelId);
   }
 
+  wasInterrupted(channelId: string): boolean {
+    const active = this.activeRuns.get(channelId);
+    return active?.interrupted ?? false;
+  }
+
   async interrupt(channelId: string): Promise<boolean> {
     const active = this.activeRuns.get(channelId);
     if (!active) {
@@ -40,6 +47,7 @@ export class StopController {
     }
     try {
       await active.query.interrupt();
+      active.interrupted = true;
       return true;
     } catch {
       return false;

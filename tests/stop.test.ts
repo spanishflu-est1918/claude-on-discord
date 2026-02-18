@@ -59,6 +59,7 @@ describe("StopController", () => {
     const success = await controller.interrupt("channel-1");
     expect(success).toBe(true);
     expect(state.interrupted).toBe(true);
+    expect(controller.wasInterrupted("channel-1")).toBe(true);
   });
 
   test("interrupt returns false when query throws", async () => {
@@ -85,6 +86,7 @@ describe("StopController", () => {
     expect(aborted).toBe(true);
     expect(abortController.signal.aborted).toBe(true);
     expect(controller.isActive("channel-1")).toBe(false);
+    expect(controller.wasInterrupted("channel-1")).toBe(false);
   });
 
   test("setModel and stopTask pass through to query", async () => {
