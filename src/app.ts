@@ -1578,11 +1578,20 @@ function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
       elapsed ? ` (${elapsed})` : ""
     }`;
     lines.push(header);
-    if (entry.inputPreview) {
-      lines.push(`   input: ${entry.inputPreview}`);
-    }
+
+    const detailLines: string[] = [];
     if (entry.summary) {
-      lines.push(`   summary: ${entry.summary}`);
+      detailLines.push(`summary: ${entry.summary}`);
+    }
+    if (entry.inputPreview) {
+      detailLines.push(`input: ${entry.inputPreview}`);
+    }
+    if (detailLines.length > 0) {
+      lines.push("```bash");
+      for (const detailLine of detailLines) {
+        lines.push(detailLine);
+      }
+      lines.push("```");
     }
   }
 
