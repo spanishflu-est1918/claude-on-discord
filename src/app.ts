@@ -400,15 +400,12 @@ export async function startApp(config: AppConfig): Promise<void> {
           break;
         }
         case "project": {
+          await interaction.deferReply();
+
           if (process.platform !== "darwin") {
-            await interaction.reply({
-              content: "Finder picker is only available on macOS.",
-              flags: MessageFlags.Ephemeral,
-            });
+            await interaction.editReply("Finder picker is only available on macOS.");
             break;
           }
-
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const selectedPath = await pickFolderWithFinder();
           if (!selectedPath) {
             await interaction.editReply("Folder selection cancelled.");
