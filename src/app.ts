@@ -83,7 +83,7 @@ export async function startApp(config: AppConfig): Promise<void> {
   await registerSlashCommands({
     token: config.discordToken,
     clientId: config.discordClientId,
-    ...(config.discordGuildId ? { guildId: config.discordGuildId } : {}),
+    guildId: config.discordGuildId,
   });
 
   await startDiscordClient({

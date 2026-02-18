@@ -7,7 +7,7 @@ const envSchema = z.object({
   APPLICATION_ID: z.string().trim().optional(),
   DISCORD_CLIENT_ID: z.string().trim().optional(),
   DISCORD_PUBLIC_KEY: z.string().trim().optional(),
-  DISCORD_GUILD_ID: z.string().trim().optional().default(""),
+  DISCORD_GUILD_ID: z.string().trim().min(1, "DISCORD_GUILD_ID is required"),
   DEFAULT_WORKING_DIR: z.string().trim().default("~/www"),
   DATABASE_PATH: z.string().trim().default("./data/claude-on-discord.sqlite"),
   DEFAULT_MODEL: z.string().trim().default("sonnet"),
@@ -20,7 +20,7 @@ export type AppConfig = {
   discordToken: string;
   discordClientId: string;
   discordPublicKey?: string;
-  discordGuildId?: string;
+  discordGuildId: string;
   defaultWorkingDir: string;
   databasePath: string;
   defaultModel: string;
@@ -60,7 +60,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     discordToken: value.DISCORD_TOKEN,
     discordClientId,
     ...(value.DISCORD_PUBLIC_KEY ? { discordPublicKey: value.DISCORD_PUBLIC_KEY } : {}),
-    ...(value.DISCORD_GUILD_ID ? { discordGuildId: value.DISCORD_GUILD_ID } : {}),
+    discordGuildId: value.DISCORD_GUILD_ID,
     defaultWorkingDir: resolvedWorkingDir,
     databasePath: resolvedDbPath,
     defaultModel: value.DEFAULT_MODEL,
