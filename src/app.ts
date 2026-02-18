@@ -3207,20 +3207,18 @@ export async function startApp(
                 content: finalText,
               });
 
-              const chunks = chunkDiscordText(finalText);
-              if (chunks.length === 0) {
-                await status.edit({
-                  content: finalText,
-                  components: [],
-                });
-              } else {
-                const firstChunk = chunks[0];
-                await status.edit({
-                  content: firstChunk ?? finalText,
-                  components: [],
-                });
-                for (let i = 1; i < chunks.length; i++) {
-                  const chunk = chunks[i];
+              const finalToolPanel = buildLiveToolPanel(runToolTrace);
+              const finalPreview = toStreamingPreview(finalText, streamedThinking, finalToolPanel);
+              await status.edit({
+                content: finalPreview,
+                components: [],
+              });
+
+              const finalAnswerBlock = `Answer so far:\n${finalText}`;
+              const answerFullyVisibleInStatus = finalPreview.includes(finalAnswerBlock);
+              if (!answerFullyVisibleInStatus) {
+                const chunks = chunkDiscordText(finalText);
+                for (const chunk of chunks) {
                   if (
                     chunk &&
                     "send" in message.channel &&
