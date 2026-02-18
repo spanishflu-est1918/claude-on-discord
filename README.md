@@ -1,28 +1,126 @@
 # claude-on-discord
 
-Personal Claude Code bridge for Discord, powered by Bun + TypeScript.
+`claude-on-discord` is a local-first Discord bridge for Claude Code.
+It gives you a channel-based coding workflow in Discord while keeping real filesystem/project execution on your machine.
 
-## Setup
+## Why This Exists
 
-Install dependencies:
+- Claude Code is excellent in terminal, but Discord is always open on desktop + mobile.
+- You can run real coding/help workflows from Discord without SSHing into your machine.
+- Each Discord channel can act like a separate working lane with its own project/session context.
+
+## Current Feature Set
+
+- Per-channel working directory, model, and session state
+- `/project` switching with keep/clear context controls
+- Session safety on project switch (`keep` restarts session if directory changes)
+- Streaming text + thinking preview in status updates
+- Stop controls on active runs:
+  - `Interrupt` (soft stop)
+  - `Abort` (hard stop)
+- Per-channel custom system prompt:
+  - `/systemprompt set`
+  - `/systemprompt show`
+  - `/systemprompt clear`
+- Direct shell execution via `/bash`
+- Git worktree utilities via `/worktree`
+- Cost tracking via `/cost`
+- Attachment input staging and generated file output back into Discord
+- MCP config loading from project `.claude/mcp.json`
+- Recovery ladder for `Claude Code process exited with code 1` failure modes
+
+## Quick Start
+
+### 1. Install
 
 ```bash
 bun install
 ```
 
-Run interactive setup:
+### 2. Run Interactive Setup
 
 ```bash
 bun run init
 ```
 
-This writes `.env` and prints your invite URL.
+This writes `.env` and prints a Discord invite URL with the required scopes.
 
-Required env vars:
+### 3. Invite the Bot
 
-- `DISCORD_TOKEN` (bot token)
-- `APPLICATION_ID` (same value as client/app id)
-- `DISCORD_GUILD_ID` (server ID where slash commands are registered)
+Use the URL from `bun run init`, authorize it in your target server, then run:
+
+```bash
+bun run dev
+```
+
+or:
+
+```bash
+bun run start
+```
+
+## Required Configuration
+
+Required environment variables:
+
+- `DISCORD_TOKEN`: bot token
+- `APPLICATION_ID`: Discord application ID
+- `DISCORD_GUILD_ID`: guild/server ID for slash command registration
+
+Common optional variables:
+
+- `DEFAULT_WORKING_DIR`: default project root (default: `~/www`)
+- `DATABASE_PATH`: sqlite path (default: `./data/claude-on-discord.sqlite`)
+- `DEFAULT_MODEL`: Claude model alias/name (default: `sonnet`)
+- `CLAUDE_PERMISSION_MODE`: SDK permission mode (default: `bypassPermissions`)
+
+## Commands
+
+- `/project [path]`: switch project directory
+  - no `path` on macOS: opens Finder picker
+  - with `path`: resolves relative to current channel project dir unless absolute/`~/`
+  - follow-up buttons let you keep or clear context
+- `/new`: reset channel session/history
+- `/status`: show current channel status and totals
+- `/model <name>`: set channel model
+- `/systemprompt set <text>`: set per-channel system prompt (session restarts)
+- `/systemprompt show`: view current per-channel system prompt
+- `/systemprompt clear`: clear per-channel system prompt (session restarts)
+- `/bash <command>`: run shell command directly in current project
+- `/worktree create|list|remove`: git worktree operations
+- `/compact`: compact in-memory context and reset session
+- `/cost`: show total channel spend/turns
+
+## Runtime Behavior
+
+- Each channel maps to one row in `channels` (working dir, model, session ID).
+- If project changes with context kept, session ID is reset to avoid stale resume failures.
+- During active runs, the bot streams partial answer/thinking previews and shows stop buttons.
+- Interrupted runs with no final text are rendered as `Interrupted.`.
+
+## Attachments
+
+- Input attachments are downloaded to temp files and added to Claude prompt context.
+- Generated files can be sent back to Discord automatically when persisted by Claude.
+
+Known limitation:
+
+- Outgoing image attachment reliability is still inconsistent in some real Discord flows.
+- Tracked as technical debt in `gleaming-moseying-codd.md`.
+
+## Development
+
+Run lint:
+
+```bash
+bun run lint
+```
+
+Typecheck:
+
+```bash
+bun run typecheck
+```
 
 Run tests:
 
@@ -30,8 +128,10 @@ Run tests:
 bun test
 ```
 
-Run dev mode:
+## Positioning / Next
 
-```bash
-bun run dev
-```
+- This project is moving beyond prototype status and should be documented like a product.
+- Next documentation steps:
+  - GitHub-ready docs structure (`README`, setup guide, troubleshooting, architecture notes)
+  - Website/landing page with workflow demos and use-cases
+  - Later: `npx`-friendly distribution flow
