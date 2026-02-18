@@ -7,7 +7,6 @@ import {
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
-  buildToolPanelButtons,
   buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
@@ -15,8 +14,6 @@ import {
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
-  parseToolInspectCustomId,
-  parseToolPanelCustomId,
   parseToolViewCustomId,
 } from "../src/discord/buttons";
 
@@ -26,24 +23,19 @@ describe("discord buttons", () => {
     expect(rows).toHaveLength(1);
 
     const components = rows[0]?.components ?? [];
-    expect(components).toHaveLength(3);
+    expect(components).toHaveLength(2);
 
     const interrupt = components[0]?.toJSON();
     const abort = components[1]?.toJSON();
-    const tools = components[2]?.toJSON();
     const interruptId = interrupt && "custom_id" in interrupt ? interrupt.custom_id : undefined;
     const abortId = abort && "custom_id" in abort ? abort.custom_id : undefined;
-    const toolsId = tools && "custom_id" in tools ? tools.custom_id : undefined;
     const interruptStyle = interrupt && "style" in interrupt ? interrupt.style : undefined;
     const abortStyle = abort && "style" in abort ? abort.style : undefined;
-    const toolsStyle = tools && "style" in tools ? tools.style : undefined;
 
     expect(interruptId).toBe("run:interrupt:123");
     expect(abortId).toBe("run:abort:123");
-    expect(toolsId).toBe("run:tools:123");
     expect(interruptStyle).toBe(ButtonStyle.Secondary);
     expect(abortStyle).toBe(ButtonStyle.Secondary);
-    expect(toolsStyle).toBe(ButtonStyle.Secondary);
   });
 
   test("parses interrupt and abort ids", () => {
@@ -56,12 +48,6 @@ describe("discord buttons", () => {
       action: "abort",
       channelId: "xyz",
     });
-
-    expect(parseToolInspectCustomId("run:tools:chan-1")).toEqual({
-      action: "details",
-      channelId: "chan-1",
-    });
-    expect(parseToolInspectCustomId("run:tools:refresh:chan-1:user-1")).toBeNull();
   });
 
   test("builds and parses queue dismiss buttons", () => {
@@ -79,26 +65,6 @@ describe("discord buttons", () => {
 
     expect(parseQueueDismissCustomId("queue:dismiss:chan-9:user-5")).toEqual({
       action: "dismiss",
-      channelId: "chan-9",
-      userId: "user-5",
-    });
-  });
-
-  test("builds and parses tool panel refresh buttons", () => {
-    const rows = buildToolPanelButtons("chan-9", "user-5");
-    expect(rows).toHaveLength(1);
-
-    const components = rows[0]?.components ?? [];
-    expect(components).toHaveLength(1);
-
-    const refresh = components[0]?.toJSON();
-    const refreshId = refresh && "custom_id" in refresh ? refresh.custom_id : undefined;
-    const refreshStyle = refresh && "style" in refresh ? refresh.style : undefined;
-    expect(refreshId).toBe("run:tools:refresh:chan-9:user-5");
-    expect(refreshStyle).toBe(ButtonStyle.Secondary);
-
-    expect(parseToolPanelCustomId("run:tools:refresh:chan-9:user-5")).toEqual({
-      action: "refresh",
       channelId: "chan-9",
       userId: "user-5",
     });
@@ -157,9 +123,6 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("noop")).toBeNull();
     expect(parseRunControlCustomId("run:interrupt:")).toBeNull();
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
-    expect(parseToolInspectCustomId("run:tools:")).toBeNull();
-    expect(parseToolPanelCustomId("run:tools:refresh:")).toBeNull();
-    expect(parseToolPanelCustomId("run:tools:refresh:chan-only")).toBeNull();
     expect(parseToolViewCustomId("run:toolview:expand:chan-only")).toBeNull();
     expect(parseToolViewCustomId("run:toolview:oops:chan:tool")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();

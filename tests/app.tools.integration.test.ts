@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Client } from "discord.js";
+import { type Client, MessageFlags } from "discord.js";
 import { startApp } from "../src/app";
 import type { AppConfig } from "../src/config";
 import { openDatabase } from "../src/db/schema";
@@ -32,6 +32,53 @@ function readContent(payload: unknown): string {
     return (payload as { content: string }).content;
   }
   return "";
+}
+
+function readTextDisplayContent(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+  if (
+    !("components" in payload) ||
+    !Array.isArray((payload as { components?: unknown[] }).components)
+  ) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const componentValue of (payload as { components: unknown[] }).components) {
+    let component = componentValue;
+    if (component && typeof component === "object" && "toJSON" in component) {
+      if (typeof (component as { toJSON?: unknown }).toJSON === "function") {
+        component = (component as { toJSON: () => unknown }).toJSON();
+      }
+    }
+    if (!component || typeof component !== "object") {
+      continue;
+    }
+    if (
+      "type" in component &&
+      component.type === 10 &&
+      "content" in component &&
+      typeof component.content === "string"
+    ) {
+      parts.push(component.content);
+    }
+  }
+  return parts.join("\n");
+}
+
+function readFlags(payload: unknown): number | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (!("flags" in payload)) {
+    return null;
+  }
+  const flags = (payload as { flags?: unknown }).flags;
+  if (typeof flags === "number") {
+    return flags;
+  }
+  return null;
 }
 
 function createConfig(root: string, dbPath: string): AppConfig {
@@ -167,12 +214,24 @@ describe("startApp tool stream integration", () => {
         readContent(record.initial),
         ...record.edits.map((edit) => readContent(edit)),
       ]);
-      expect(contents.some((content) => content.includes("⏳ Bash"))).toBeTrue();
-      expect(contents.some((content) => content.includes('"command":"ls -la"'))).toBeTrue();
-      expect(contents.some((content) => content.includes("✅ Bash"))).toBeTrue();
+      expect(contents.every((content) => content.trim() === "")).toBeTrue();
+
+      const textDisplays = toolMessages.flatMap((record) => [
+        readTextDisplayContent(record.initial),
+        ...record.edits.map((edit) => readTextDisplayContent(edit)),
+      ]);
+      expect(textDisplays.some((text) => text.includes("⏳ Bash"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("ls -la"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("**Action:**"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("✅ Bash"))).toBeTrue();
       expect(
-        contents.some((content) => content.includes("Listed files in the current directory.")),
+        textDisplays.some((text) => text.includes("Listed files in the current directory.")),
       ).toBeTrue();
+      const flags = toolMessages.flatMap((record) => [
+        readFlags(record.initial),
+        ...record.edits.map((edit) => readFlags(edit)),
+      ]);
+      expect(flags.some((value) => value === MessageFlags.IsComponentsV2)).toBeTrue();
       expect(statusEdits.length).toBeGreaterThan(0);
     } finally {
       openedDb?.close();
@@ -285,8 +344,132 @@ describe("startApp tool stream integration", () => {
         readContent(record.initial),
         ...record.edits.map((edit) => readContent(edit)),
       ]);
-      expect(contents.some((content) => content.includes("WebFetch"))).toBeTrue();
-      expect(contents.some((content) => content.includes("https://example.com"))).toBeTrue();
+      expect(contents.every((content) => content.trim() === "")).toBeTrue();
+
+      const textDisplays = toolMessages.flatMap((record) => [
+        readTextDisplayContent(record.initial),
+        ...record.edits.map((edit) => readTextDisplayContent(edit)),
+      ]);
+      expect(textDisplays.some((text) => text.includes("WebFetch"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("https://example.com"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("**Action:** url:"))).toBeTrue();
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("shows task lifecycle timeline for Task tool notifications", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-tools-task-timeline-"));
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    const toolMessages: EditableMessageRecord[] = [];
+
+    try {
+      await startApp(createConfig(root, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedUserMessageHandler = options.onUserMessage as (message: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async (request: RunnerCallbacks) => {
+              request.onMessage?.({
+                type: "stream_event",
+                session_id: "s3",
+                parent_tool_use_id: null,
+                uuid: "u8",
+                event: {
+                  type: "content_block_start",
+                  content_block: {
+                    type: "tool_use",
+                    id: "tool-3",
+                    name: "Task",
+                    input: {
+                      subagent_type: "Explore",
+                      prompt: "Inspect src for TODOs and architecture hotspots.",
+                    },
+                  },
+                },
+              } as ClaudeSDKMessage);
+              request.onMessage?.({
+                type: "system",
+                subtype: "task_started",
+                task_id: "task-1",
+                tool_use_id: "tool-3",
+                description: "Inspect src for TODOs",
+                task_type: "Task",
+                uuid: "u9",
+                session_id: "s3",
+              } as ClaudeSDKMessage);
+              request.onMessage?.({
+                type: "system",
+                subtype: "task_notification",
+                task_id: "task-1",
+                status: "completed",
+                output_file: "/tmp/task-1.txt",
+                summary: "Identified two TODO hotspots.",
+                uuid: "u10",
+                session_id: "s3",
+              } as ClaudeSDKMessage);
+              return { text: "Task done.", messages: [] };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedUserMessageHandler !== "function") {
+        throw new Error("user message handler was not captured");
+      }
+
+      await capturedUserMessageHandler({
+        content: "run task tool",
+        guildId: "guild-1",
+        author: { id: "user-1" },
+        attachments: { size: 0 },
+        reactions: { cache: new Map() },
+        client: { user: { id: "bot-1" } },
+        react: async () => {},
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async (payload: unknown) => {
+            const record: EditableMessageRecord = { initial: payload, edits: [] };
+            toolMessages.push(record);
+            return {
+              edit: async (next: unknown) => {
+                record.edits.push(next);
+              },
+            };
+          },
+        },
+        reply: async () => ({
+          edit: async () => {},
+        }),
+      });
+
+      await Bun.sleep(40);
+
+      const textDisplays = toolMessages.flatMap((record) => [
+        readTextDisplayContent(record.initial),
+        ...record.edits.map((edit) => readTextDisplayContent(edit)),
+      ]);
+      expect(textDisplays.some((text) => text.includes("Task"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("Timeline"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("task started:"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("completed:"))).toBeTrue();
+      expect(textDisplays.some((text) => text.includes("**Action:** Explore:"))).toBeTrue();
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

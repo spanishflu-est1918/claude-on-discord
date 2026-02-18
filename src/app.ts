@@ -2,7 +2,13 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AttachmentBuilder, EmbedBuilder, type Message, MessageFlags } from "discord.js";
+import {
+  AttachmentBuilder,
+  ComponentType,
+  type Message,
+  MessageFlags,
+  type TextDisplayComponentData,
+} from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
@@ -16,7 +22,6 @@ import {
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
-  buildToolPanelButtons,
   buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
@@ -24,8 +29,6 @@ import {
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
-  parseToolInspectCustomId,
-  parseToolPanelCustomId,
   parseToolViewCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
@@ -1395,8 +1398,11 @@ type LiveToolEntry = {
   name: string;
   status: LiveToolStatus;
   inputPreview?: string;
+  inputDetails?: string;
+  activity?: string;
   summary?: string;
   elapsedSeconds?: number;
+  timeline: string[];
   startedAtMs: number;
   updatedAtMs: number;
   completedAtMs?: number;
@@ -1407,6 +1413,7 @@ type LiveToolTrace = {
   byId: Map<string, LiveToolEntry>;
   indexToToolId: Map<number, string>;
   inputJsonBufferByToolId: Map<string, string>;
+  taskIdToToolId: Map<string, string>;
 };
 
 function createLiveToolTrace(): LiveToolTrace {
@@ -1415,11 +1422,20 @@ function createLiveToolTrace(): LiveToolTrace {
     byId: new Map<string, LiveToolEntry>(),
     indexToToolId: new Map<number, string>(),
     inputJsonBufferByToolId: new Map<string, string>(),
+    taskIdToToolId: new Map<string, string>(),
   };
 }
 
 function clipText(value: string, maxChars: number): string {
   const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function clipRawText(value: string, maxChars: number): string {
+  const trimmed = value.trim();
   if (trimmed.length <= maxChars) {
     return trimmed;
   }
@@ -1437,31 +1453,117 @@ const THINKING_SPINNER_FRAMES = ["-", "\\", "|", "/"] as const;
 const ACTIVE_RUN_MAX_AGE_MS = 30 * 60 * 1000;
 const ACTIVE_RUN_WATCHDOG_INTERVAL_MS = 30 * 1000;
 
-function stringifyToolInput(input: unknown): string | undefined {
-  if (typeof input === "undefined") {
+function readStringField(source: unknown, keys: string[]): string | undefined {
+  if (typeof source !== "object" || source === null) {
     return undefined;
+  }
+  for (const key of keys) {
+    if (!(key in source)) {
+      continue;
+    }
+    const value = (source as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function deriveToolActivity(input: unknown): string | undefined {
+  const command = readStringField(input, ["command", "cmd", "shell_command"]);
+  if (command) {
+    return `$ ${clipText(command, 120)}`;
+  }
+  const url = readStringField(input, ["url", "uri"]);
+  if (url) {
+    return `url: ${clipText(url, 120)}`;
+  }
+  const pathValue = readStringField(input, [
+    "path",
+    "file_path",
+    "filePath",
+    "relative_workspace_path",
+    "absolute_path",
+    "cwd",
+  ]);
+  if (pathValue) {
+    return `path: ${clipText(pathValue, 120)}`;
+  }
+  const query = readStringField(input, ["query", "pattern", "glob", "regex"]);
+  if (query) {
+    return `query: ${clipText(query, 120)}`;
+  }
+  const subagentType = readStringField(input, ["subagent_type", "agent_type", "type"]);
+  const prompt = readStringField(input, ["prompt", "request", "message"]);
+  if (subagentType && prompt) {
+    return `${subagentType}: ${clipText(prompt, 100)}`;
+  }
+  const description = readStringField(input, ["description", "task", "objective"]);
+  if (description) {
+    return clipText(description, 120);
+  }
+  return undefined;
+}
+
+function summarizeToolInput(input: unknown): {
+  preview?: string;
+  details?: string;
+  activity?: string;
+} {
+  if (typeof input === "undefined") {
+    return {};
   }
   if (typeof input === "string") {
-    const clipped = clipText(input, 90);
-    if (!clipped || clipped === "{}" || clipped === "[]") {
-      return undefined;
+    const normalized = input.trim();
+    if (!normalized) {
+      return {};
     }
-    return clipped;
+    return {
+      preview: clipText(normalized, 240),
+      details: clipRawText(normalized, 2200),
+      activity: clipText(normalized, 140),
+    };
   }
   try {
-    const serialized = clipText(JSON.stringify(input), 90);
-    if (!serialized || serialized === "{}" || serialized === "[]") {
-      return undefined;
-    }
-    return serialized;
+    const compact = JSON.stringify(input);
+    const pretty = JSON.stringify(input, null, 2);
+    const empty =
+      !compact || compact === "{}" || compact === "[]" || compact === "null" || compact === '""';
+    return {
+      preview: empty ? undefined : clipText(compact, 260),
+      details: empty ? undefined : clipRawText(pretty ?? compact, 2600),
+      activity: deriveToolActivity(input),
+    };
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+function appendToolTimeline(entry: LiveToolEntry, line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const last = entry.timeline[entry.timeline.length - 1];
+  if (last === trimmed) {
+    return false;
+  }
+  entry.timeline.push(trimmed);
+  if (entry.timeline.length > 8) {
+    entry.timeline.splice(0, entry.timeline.length - 8);
+  }
+  return true;
 }
 
 function ensureLiveToolEntry(
   trace: LiveToolTrace,
-  input: { id: string; name?: string; inputPreview?: string },
+  input: {
+    id: string;
+    name?: string;
+    inputPreview?: string;
+    inputDetails?: string;
+    activity?: string;
+  },
 ): LiveToolEntry {
   const existing = trace.byId.get(input.id);
   if (existing) {
@@ -1470,6 +1572,12 @@ function ensureLiveToolEntry(
     }
     if (input.inputPreview) {
       existing.inputPreview = input.inputPreview;
+    }
+    if (input.inputDetails) {
+      existing.inputDetails = input.inputDetails;
+    }
+    if (input.activity) {
+      existing.activity = input.activity;
     }
     existing.updatedAtMs = Date.now();
     return existing;
@@ -1480,6 +1588,9 @@ function ensureLiveToolEntry(
     name: input.name ?? "tool",
     status: "queued",
     inputPreview: input.inputPreview,
+    inputDetails: input.inputDetails,
+    activity: input.activity,
+    timeline: [],
     startedAtMs: Date.now(),
     updatedAtMs: Date.now(),
   };
@@ -1488,9 +1599,15 @@ function ensureLiveToolEntry(
   return created;
 }
 
-function extractToolStartFromStreamEvent(
-  message: ClaudeSDKMessage,
-): { id: string; index?: number; name?: string; inputPreview?: string } | null {
+function extractToolStartFromStreamEvent(message: ClaudeSDKMessage): {
+  id: string;
+  index?: number;
+  name?: string;
+  inputPreview?: string;
+  inputDetails?: string;
+  activity?: string;
+  inputBufferSeed?: string;
+} | null {
   if (message.type !== "stream_event") {
     return null;
   }
@@ -1524,11 +1641,22 @@ function extractToolStartFromStreamEvent(
       : typeof event.content_block_index === "number"
         ? event.content_block_index
         : undefined;
+  let inputBufferSeed: string | undefined;
+  if (typeof block.input === "string") {
+    inputBufferSeed = block.input;
+  } else if (typeof block.input !== "undefined") {
+    try {
+      inputBufferSeed = JSON.stringify(block.input);
+    } catch {
+      inputBufferSeed = undefined;
+    }
+  }
   return {
     id,
     index: eventIndex,
     name: block.name ?? block.tool_name,
-    inputPreview: stringifyToolInput(block.input),
+    ...summarizeToolInput(block.input),
+    inputBufferSeed,
   };
 }
 
@@ -1543,6 +1671,12 @@ function collectToolIdsFromMessage(trace: LiveToolTrace, message: ClaudeSDKMessa
   }
   if (message.type === "system" && message.subtype === "task_started" && message.tool_use_id) {
     ids.add(message.tool_use_id);
+  }
+  if (message.type === "system" && message.subtype === "task_notification") {
+    const taskToolId = trace.taskIdToToolId.get(message.task_id);
+    if (taskToolId) {
+      ids.add(taskToolId);
+    }
   }
   if (message.type === "tool_use_summary") {
     for (const toolUseId of message.preceding_tool_use_ids) {
@@ -1635,7 +1769,15 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       entry.status = "running";
       changed = true;
     }
+    if (streamStart.activity && appendToolTimeline(entry, `start: ${streamStart.activity}`)) {
+      changed = true;
+    } else if (appendToolTimeline(entry, "start")) {
+      changed = true;
+    }
     entry.updatedAtMs = now;
+    if (streamStart.inputBufferSeed && !trace.inputJsonBufferByToolId.has(streamStart.id)) {
+      trace.inputJsonBufferByToolId.set(streamStart.id, streamStart.inputBufferSeed);
+    }
     if (typeof streamStart.index === "number") {
       trace.indexToToolId.set(streamStart.index, streamStart.id);
     }
@@ -1650,14 +1792,34 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       trace.inputJsonBufferByToolId.set(toolId, nextBuffer);
       const entry = ensureLiveToolEntry(trace, { id: toolId });
       const parsed = parsePossiblyPartialJson(nextBuffer);
-      const preview =
+      const summarized =
         parsed !== null
-          ? stringifyToolInput(parsed)
-          : clipText(nextBuffer.replace(/\s+/g, " "), 90);
-      if (preview && entry.inputPreview !== preview) {
-        entry.inputPreview = preview;
+          ? summarizeToolInput(parsed)
+          : {
+              preview: clipText(nextBuffer.replace(/\s+/g, " "), 260),
+              details: clipRawText(nextBuffer, 2600),
+            };
+      if (summarized.preview && entry.inputPreview !== summarized.preview) {
+        entry.inputPreview = summarized.preview;
         entry.updatedAtMs = now;
         changed = true;
+      }
+      if (
+        summarized.details &&
+        entry.inputDetails !== summarized.details &&
+        (parsed !== null ||
+          !entry.inputDetails ||
+          summarized.details.length >= entry.inputDetails.length)
+      ) {
+        entry.inputDetails = summarized.details;
+        entry.updatedAtMs = now;
+        changed = true;
+      }
+      if (summarized.activity && entry.activity !== summarized.activity) {
+        entry.activity = summarized.activity;
+        if (appendToolTimeline(entry, `focus: ${summarized.activity}`)) {
+          changed = true;
+        }
       }
     }
   }
@@ -1675,18 +1837,56 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       entry.elapsedSeconds = message.elapsed_time_seconds;
       changed = true;
     }
+    if (appendToolTimeline(entry, `progress: ${formatElapsedSeconds(entry) ?? "running"}`)) {
+      changed = true;
+    }
     entry.updatedAtMs = now;
   }
 
   if (message.type === "system" && message.subtype === "task_started") {
     const linkedToolId =
       message.tool_use_id ?? findLatestRunningTaskToolId(trace) ?? `task:${message.task_id}`;
+    trace.taskIdToToolId.set(message.task_id, linkedToolId);
     const entry = ensureLiveToolEntry(trace, {
       id: linkedToolId,
       name: message.task_type || "Task",
     });
     entry.status = "running";
     entry.summary = clipText(message.description, 120);
+    if (
+      (!entry.activity || /^task$/i.test(entry.activity)) &&
+      message.description.trim().length > 0
+    ) {
+      entry.activity = clipText(message.description, 120);
+    }
+    if (appendToolTimeline(entry, `task started: ${clipText(message.description, 140)}`)) {
+      changed = true;
+    }
+    entry.updatedAtMs = now;
+    changed = true;
+  }
+
+  if (message.type === "system" && message.subtype === "task_notification") {
+    const linkedToolId =
+      trace.taskIdToToolId.get(message.task_id) ??
+      findLatestRunningTaskToolId(trace) ??
+      `task:${message.task_id}`;
+    const entry = ensureLiveToolEntry(trace, {
+      id: linkedToolId,
+      name: "Task",
+    });
+    if (message.status === "completed") {
+      entry.status = "done";
+    } else if (message.status === "failed") {
+      entry.status = "failed";
+    } else {
+      entry.status = "interrupted";
+    }
+    entry.summary = clipText(message.summary, 180);
+    entry.completedAtMs = now;
+    if (appendToolTimeline(entry, `${message.status}: ${clipText(message.summary, 140)}`)) {
+      changed = true;
+    }
     entry.updatedAtMs = now;
     changed = true;
   }
@@ -1699,6 +1899,9 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       entry.summary = clipText(message.summary, 120);
       entry.status = "done";
       entry.completedAtMs = now;
+      if (appendToolTimeline(entry, `summary: ${clipText(message.summary, 140)}`)) {
+        changed = true;
+      }
       entry.updatedAtMs = now;
       changed = true;
     }
@@ -1709,6 +1912,9 @@ function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage
       if (entry.status === "queued" || entry.status === "running") {
         entry.status = "failed";
         entry.completedAtMs = now;
+        if (appendToolTimeline(entry, "result: failed")) {
+          changed = true;
+        }
         entry.updatedAtMs = now;
         changed = true;
       }
@@ -1768,9 +1974,8 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
 }
 
 type LiveToolRenderPayload = {
-  content: string;
-  embeds: [EmbedBuilder];
-  components: ReturnType<typeof buildToolViewButtons>;
+  flags: MessageFlags.IsComponentsV2;
+  components: Array<TextDisplayComponentData | ReturnType<typeof buildToolViewButtons>[number]>;
 };
 
 function toolStatusLabel(status: LiveToolStatus): string {
@@ -1788,114 +1993,44 @@ function toolStatusLabel(status: LiveToolStatus): string {
   }
 }
 
-function toolStatusColor(status: LiveToolStatus): number {
-  switch (status) {
-    case "queued":
-      return 0x5865f2;
-    case "running":
-      return 0xfee75c;
-    case "done":
-      return 0x57f287;
-    case "failed":
-      return 0xed4245;
-    case "interrupted":
-      return 0xeb459e;
-  }
-}
-
-function buildSingleLiveToolMessageContent(entry: LiveToolEntry): string {
-  const elapsed = formatElapsedSeconds(entry);
-  const header = [`${toolStatusIcon(entry.status)} ${entry.name}`, elapsed ? `(${elapsed})` : ""]
-    .filter(Boolean)
-    .join(" ");
-  const detail = entry.summary ?? entry.inputPreview;
-  if (!detail) {
-    return header;
-  }
-  return [header, "```bash", clipText(detail, 1800), "```"].join("\n");
-}
-
 function buildSingleLiveToolMessage(
   entry: LiveToolEntry,
   input: { channelId: string; expanded: boolean },
 ): LiveToolRenderPayload {
   const elapsed = formatElapsedSeconds(entry) ?? "n/a";
-  const embed = new EmbedBuilder()
-    .setColor(toolStatusColor(entry.status))
-    .setTitle(`${toolStatusIcon(entry.status)} ${entry.name}`)
-    .setFooter({ text: "Claude tool stream" })
-    .setTimestamp(new Date(entry.updatedAtMs))
-    .addFields(
-      { name: "Status", value: toolStatusLabel(entry.status), inline: true },
-      { name: "Elapsed", value: elapsed, inline: true },
-      { name: "Tool ID", value: `\`${entry.id}\``, inline: false },
-    );
-
+  const lines = [
+    `### ${toolStatusIcon(entry.status)} ${entry.name}`,
+    "",
+    `**Status:** ${toolStatusLabel(entry.status)}`,
+    `**Elapsed:** ${elapsed}`,
+    `**Tool ID:** \`${entry.id}\``,
+  ];
+  if (entry.activity) {
+    lines.push(`**Action:** ${entry.activity}`);
+  }
+  if (!input.expanded && entry.inputPreview) {
+    lines.push(`**Input:** \`${clipText(entry.inputPreview, 140)}\``);
+  }
   if (input.expanded && entry.summary) {
-    embed.addFields({
-      name: "Summary",
-      value: clipText(entry.summary, 900),
-      inline: false,
-    });
+    lines.push("", "**Summary**", clipText(entry.summary, 900));
   }
-  if (input.expanded && entry.inputPreview) {
-    embed.addFields({
-      name: "Input",
-      value: `\`\`\`json\n${clipText(entry.inputPreview, 850)}\n\`\`\``,
-      inline: false,
-    });
+  if (input.expanded && entry.inputDetails) {
+    lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
+  } else if (input.expanded && entry.inputPreview) {
+    lines.push("", "**Input**", `\`${clipText(entry.inputPreview, 700)}\``);
   }
+  if (input.expanded && entry.timeline.length > 0) {
+    lines.push("", "**Timeline**", ...entry.timeline.slice(-6).map((item) => `- ${item}`));
+  }
+  const details: TextDisplayComponentData = {
+    type: ComponentType.TextDisplay,
+    content: clipRawText(lines.join("\n"), 3600),
+  };
 
   return {
-    content: input.expanded
-      ? buildSingleLiveToolMessageContent(entry)
-      : `${toolStatusIcon(entry.status)} ${entry.name}${elapsed !== "n/a" ? ` (${elapsed})` : ""}`,
-    embeds: [embed],
-    components: buildToolViewButtons(input.channelId, entry.id, input.expanded),
+    flags: MessageFlags.IsComponentsV2,
+    components: [details, ...buildToolViewButtons(input.channelId, entry.id, input.expanded)],
   };
-}
-
-function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
-  const entries = trace.order
-    .map((id) => trace.byId.get(id))
-    .filter((entry): entry is LiveToolEntry => Boolean(entry));
-  if (entries.length === 0) {
-    return "No tool calls captured yet for this channel.";
-  }
-
-  const lines: string[] = ["Tool Calls:"];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (!entry) {
-      continue;
-    }
-    const elapsed = formatElapsedSeconds(entry);
-    const header = `${index + 1}. ${toolStatusIcon(entry.status)} ${entry.name} [${entry.id.slice(0, 10)}]${
-      elapsed ? ` (${elapsed})` : ""
-    }`;
-    lines.push(header);
-
-    const detailLines: string[] = [];
-    if (entry.summary) {
-      detailLines.push(`summary: ${entry.summary}`);
-    }
-    if (entry.inputPreview) {
-      detailLines.push(`input: ${entry.inputPreview}`);
-    }
-    if (detailLines.length > 0) {
-      lines.push("```bash");
-      for (const detailLine of detailLines) {
-        lines.push(detailLine);
-      }
-      lines.push("```");
-    }
-  }
-
-  const joined = lines.join("\n");
-  if (joined.length <= maxChars) {
-    return joined;
-  }
-  return `${joined.slice(0, Math.max(0, maxChars - 27))}\n...[truncated tool details]...`;
 }
 
 function toStreamingPreview(
@@ -1999,6 +2134,7 @@ export async function startApp(
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
   const liveToolExpandStateByChannel = new Map<string, Map<string, boolean>>();
+  const suspendedChannels = new Set<string>();
   const discordDispatchStats = {
     rateLimitHits: 0,
     lastRateLimitAtMs: 0,
@@ -2057,6 +2193,16 @@ export async function startApp(
     }
     const aborted = stopController.abortAll();
     console.warn(`Cleared ${aborted.length} active run(s) due to ${reason}.`);
+  };
+
+  const abortChannelRunWithSessionReset = (channelId: string, reason: string) => {
+    const aborted = stopController.abort(channelId);
+    if (!aborted) {
+      return false;
+    }
+    sessions.setSessionId(channelId, null);
+    console.warn(`Aborted active run for channel ${channelId} (${reason}).`);
+    return true;
   };
 
   const startStaleRunWatchdog = () => {
@@ -2153,6 +2299,14 @@ export async function startApp(
         if (shuttingDown) {
           return;
         }
+
+        if (event.type === "unarchived") {
+          suspendedChannels.delete(event.threadId);
+        } else {
+          suspendedChannels.add(event.threadId);
+          abortChannelRunWithSessionReset(event.threadId, `thread ${event.type}`);
+        }
+
         const meta = parseThreadBranchMeta(repository.getThreadBranchMeta(event.threadId));
         if (!meta) {
           return;
@@ -2559,53 +2713,6 @@ export async function startApp(
               expanded,
             }),
           );
-          return;
-        }
-
-        const toolInspect = parseToolInspectCustomId(interaction.customId);
-        if (toolInspect) {
-          if (interaction.channelId !== toolInspect.channelId) {
-            await interaction.reply({
-              content: "This tools panel belongs to a different channel.",
-              flags: MessageFlags.Ephemeral,
-            });
-            return;
-          }
-
-          const trace = liveToolTracesByChannel.get(toolInspect.channelId);
-          await interaction.reply({
-            content: trace
-              ? buildLiveToolDetails(trace)
-              : "No tool calls captured yet for this channel.",
-            flags: MessageFlags.Ephemeral,
-            components: buildToolPanelButtons(toolInspect.channelId, interaction.user.id),
-          });
-          return;
-        }
-
-        const toolPanel = parseToolPanelCustomId(interaction.customId);
-        if (toolPanel) {
-          if (interaction.channelId !== toolPanel.channelId) {
-            await interaction.reply({
-              content: "This tools panel belongs to a different channel.",
-              flags: MessageFlags.Ephemeral,
-            });
-            return;
-          }
-          if (interaction.user.id !== toolPanel.userId) {
-            await interaction.reply({
-              content: "Only the requesting user can refresh this tools panel.",
-              flags: MessageFlags.Ephemeral,
-            });
-            return;
-          }
-          const trace = liveToolTracesByChannel.get(toolPanel.channelId);
-          await interaction.update({
-            content: trace
-              ? buildLiveToolDetails(trace)
-              : "No tool calls captured yet for this channel.",
-            components: buildToolPanelButtons(toolPanel.channelId, toolPanel.userId),
-          });
           return;
         }
 
@@ -3569,6 +3676,9 @@ export async function startApp(
       },
       onUserMessage: async (message) => {
         const channelId = message.channel.id;
+        if (suspendedChannels.has(channelId)) {
+          return;
+        }
         const channelSendTarget = canSendMessage(message.channel) ? message.channel : null;
         const queueChannelMessage = async (
           payload: Parameters<typeof message.reply>[0],
@@ -3604,6 +3714,9 @@ export async function startApp(
         const run = previousRun
           .catch(() => undefined)
           .then(async () => {
+            if (suspendedChannels.has(channelId)) {
+              return;
+            }
             if (shuttingDown) {
               try {
                 await queueChannelMessage("⚠️ Bot is shutting down. Please retry in a moment.");

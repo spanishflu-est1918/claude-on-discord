@@ -37,8 +37,16 @@ export type UpsertChannelInput = {
 const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
 const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
 const CHANNEL_MENTIONS_MODE_PREFIX = "channel_mentions_mode:";
+const CHANNEL_PERMISSION_MODE_PREFIX = "channel_permission_mode:";
 
 export type ChannelMentionsMode = "default" | "required" | "off";
+export type ChannelPermissionMode =
+  | "default"
+  | "plan"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "delegate"
+  | "dontAsk";
 
 function channelSystemPromptKey(channelId: string): string {
   return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
@@ -50,6 +58,10 @@ function channelThreadBranchKey(channelId: string): string {
 
 function channelMentionsModeKey(channelId: string): string {
   return `${CHANNEL_MENTIONS_MODE_PREFIX}${channelId}`;
+}
+
+function channelPermissionModeKey(channelId: string): string {
+  return `${CHANNEL_PERMISSION_MODE_PREFIX}${channelId}`;
 }
 
 function mapChannelRow(row: ChannelRow): ChannelRecord {
@@ -376,6 +388,29 @@ export class Repository {
 
   clearChannelMentionsMode(channelId: string): void {
     this.deleteSetting(channelMentionsModeKey(channelId));
+  }
+
+  getChannelPermissionMode(channelId: string): ChannelPermissionMode | null {
+    const raw = this.getSetting(channelPermissionModeKey(channelId));
+    if (
+      raw === "default" ||
+      raw === "plan" ||
+      raw === "acceptEdits" ||
+      raw === "bypassPermissions" ||
+      raw === "delegate" ||
+      raw === "dontAsk"
+    ) {
+      return raw;
+    }
+    return null;
+  }
+
+  setChannelPermissionMode(channelId: string, mode: ChannelPermissionMode): void {
+    this.setSetting(channelPermissionModeKey(channelId), mode);
+  }
+
+  clearChannelPermissionMode(channelId: string): void {
+    this.deleteSetting(channelPermissionModeKey(channelId));
   }
 
   listThreadBranchMetaEntries(): Array<{ channelId: string; value: string }> {

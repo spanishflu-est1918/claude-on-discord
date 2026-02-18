@@ -2,8 +2,6 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 
 const INTERRUPT_PREFIX = "run:interrupt:";
 const ABORT_PREFIX = "run:abort:";
-const TOOLS_DETAILS_PREFIX = "run:tools:";
-const TOOLS_REFRESH_PREFIX = "run:tools:refresh:";
 const TOOL_VIEW_PREFIX = "run:toolview:";
 const QUEUE_DISMISS_PREFIX = "queue:dismiss:";
 const PROJECT_KEEP_PREFIX = "project:keep:";
@@ -18,8 +16,6 @@ const DIFF_STAT_PREFIX = "diff:stat:";
 const DIFF_PATCH_PREFIX = "diff:patch:";
 
 export type RunControlAction = "interrupt" | "abort";
-export type ToolInspectAction = "details";
-export type ToolPanelAction = "refresh";
 export type ToolViewAction = "expand" | "collapse";
 export type QueueNoticeAction = "dismiss";
 export type ProjectSwitchAction = "keep" | "fresh";
@@ -40,15 +36,7 @@ export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuil
     .setStyle(ButtonStyle.Secondary)
     .setEmoji("🛑");
 
-  const toolsButton = new ButtonBuilder()
-    .setCustomId(`${TOOLS_DETAILS_PREFIX}${channelId}`)
-    .setLabel("Tools")
-    .setStyle(ButtonStyle.Secondary)
-    .setEmoji("🛠️");
-
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(interruptButton, abortButton, toolsButton),
-  ];
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(interruptButton, abortButton)];
 }
 
 export function buildQueueDismissButtons(
@@ -131,53 +119,6 @@ export function parseQueueDismissCustomId(
     return null;
   }
   return { action: "dismiss", channelId, userId };
-}
-
-export function parseToolInspectCustomId(
-  customId: string,
-): { action: ToolInspectAction; channelId: string } | null {
-  if (customId.startsWith(TOOLS_REFRESH_PREFIX)) {
-    return null;
-  }
-  if (!customId.startsWith(TOOLS_DETAILS_PREFIX)) {
-    return null;
-  }
-  const channelId = customId.slice(TOOLS_DETAILS_PREFIX.length);
-  if (!channelId) {
-    return null;
-  }
-  return { action: "details", channelId };
-}
-
-export function buildToolPanelButtons(
-  channelId: string,
-  userId: string,
-): ActionRowBuilder<ButtonBuilder>[] {
-  const refreshButton = new ButtonBuilder()
-    .setCustomId(`${TOOLS_REFRESH_PREFIX}${channelId}:${userId}`)
-    .setLabel("Refresh")
-    .setStyle(ButtonStyle.Secondary)
-    .setEmoji("🔄");
-  return [new ActionRowBuilder<ButtonBuilder>().addComponents(refreshButton)];
-}
-
-export function parseToolPanelCustomId(
-  customId: string,
-): { action: ToolPanelAction; channelId: string; userId: string } | null {
-  if (!customId.startsWith(TOOLS_REFRESH_PREFIX)) {
-    return null;
-  }
-  const suffix = customId.slice(TOOLS_REFRESH_PREFIX.length);
-  const separator = suffix.indexOf(":");
-  if (separator <= 0 || separator >= suffix.length - 1) {
-    return null;
-  }
-  const channelId = suffix.slice(0, separator);
-  const userId = suffix.slice(separator + 1);
-  if (!channelId || !userId) {
-    return null;
-  }
-  return { action: "refresh", channelId, userId };
 }
 
 export function buildToolViewButtons(
