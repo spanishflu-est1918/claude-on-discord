@@ -295,11 +295,7 @@ class ChannelWorker {
     }
     if (index === 0) {
       run.aborted = true;
-      try {
-        await this.query.interrupt();
-      } catch {
-        // Ignore interrupt errors and wait for stream termination or result.
-      }
+      this.close("Operation aborted.");
       return;
     }
     this.pendingRuns.splice(index, 1);
