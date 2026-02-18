@@ -32,6 +32,7 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 - Browser screenshots via `/screenshot` (agent-browser)
 - Git worktree utilities via `/worktree`
   - optional automatic setup on create (`yarn install`/`pnpm install`/`bun install`/`npm install`)
+- GitHub PR creation via `/pr open|draft` (requires `gh` CLI)
 - Cost tracking via `/cost`
 - Attachment input staging and generated file output back into Discord
 - MCP config loading from project `.claude/mcp.json`
@@ -131,6 +132,9 @@ Common optional variables:
 - `/systemprompt clear`: clear per-channel system prompt (session restarts)
 - `/bash <command>`: run shell command directly in current project
 - `/screenshot [url] [full]`: capture a webpage screenshot through `agent-browser`
+- `/pr open|draft [base] [title] [body]`: create a GitHub PR from current branch
+  - default base resolves from thread root branch or origin default branch
+  - requires clean working tree and commits ahead of base
 - `/worktree create|list|remove|thread`: git worktree operations
   - `create`: auto-generates path when omitted
     - auto-runs setup for new worktree
@@ -195,4 +199,4 @@ bun test
 - Post-MVP roadmap for branch power users:
   - Optional thread→worktree binding (auto-create per-thread git worktree)
   - Branch diffs summarized in Discord (`/diff` with compact review output)
-  - PR flow from thread branch to root/main (`/pr` draft/open)
+  - PR policy/guardrails and templates on top of `/pr`

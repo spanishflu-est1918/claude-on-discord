@@ -72,3 +72,12 @@ Checks:
 1. Ensure `agent-browser` is installed and available in PATH.
 2. Confirm target URL is reachable from the bot host.
 3. Retry with explicit URL: `/screenshot url:https://example.com`
+
+## `/pr` Fails
+
+Checks:
+
+1. Ensure `gh` is installed and authenticated (`gh auth status`).
+2. Confirm you are on a branch (not detached HEAD).
+3. Commit/stash all local changes before `/pr`.
+4. Confirm branch has commits ahead of base branch.

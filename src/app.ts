@@ -26,6 +26,12 @@ import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
 import { buildDiffDelivery } from "./discord/diff-delivery";
 import {
+  buildPrCreateArgs,
+  extractFirstUrl,
+  type PrCreateAction,
+  parseOriginDefaultBranch,
+} from "./discord/pr";
+import {
   buildThreadBranchAwarenessPrompt,
   buildThreadBranchStatusLines,
   parseThreadBranchMeta,
@@ -302,6 +308,35 @@ async function detectBranchName(workingDir: string): Promise<string | null> {
     return null;
   }
   return parseGitBranch(result.output);
+}
+
+async function detectOriginDefaultBranch(workingDir: string): Promise<string | null> {
+  const result = await runCommand(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], workingDir);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return parseOriginDefaultBranch(result.output);
+}
+
+async function resolvePrBaseBranch(input: {
+  channelId: string;
+  workingDir: string;
+  repository: Repository;
+}): Promise<string> {
+  const threadMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(input.channelId));
+  if (threadMeta) {
+    const rootChannel = input.repository.getChannel(threadMeta.rootChannelId);
+    const rootBranch = rootChannel ? await detectBranchName(rootChannel.workingDir) : null;
+    if (rootBranch) {
+      return rootBranch;
+    }
+  }
+
+  const originDefault = await detectOriginDefaultBranch(input.workingDir);
+  if (originDefault) {
+    return originDefault;
+  }
+  return "main";
 }
 
 async function syncChannelTopic(channel: unknown, workingDir: string): Promise<void> {
@@ -1719,6 +1754,113 @@ export async function startApp(
               files: delivery.files,
               components: buildDiffViewButtons(requestId),
             });
+            break;
+          }
+          case "pr": {
+            const state = sessions.getState(channelId, guildId);
+            const action = interaction.options.getSubcommand(true) as PrCreateAction;
+            const baseInput = interaction.options.getString("base")?.trim() || null;
+            const titleInput = interaction.options.getString("title")?.trim() || null;
+            const bodyInput = interaction.options.getString("body")?.trim() || null;
+            await interaction.deferReply();
+
+            const headResult = await runCommand(
+              ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+              state.channel.workingDir,
+            );
+            if (headResult.exitCode !== 0) {
+              await interaction.editReply(
+                `Not a git repository: \`${state.channel.workingDir}\`\n` +
+                  `\`\`\`bash\n${clipOutput(headResult.output || "(no output)", 1800)}\n\`\`\``,
+              );
+              break;
+            }
+
+            const headBranch = parseGitBranch(headResult.output);
+            if (!headBranch) {
+              await interaction.editReply(
+                "Current repository is in detached HEAD state. Checkout a branch before `/pr`.",
+              );
+              break;
+            }
+
+            const baseBranch =
+              baseInput ??
+              (await resolvePrBaseBranch({
+                channelId,
+                workingDir: state.channel.workingDir,
+                repository,
+              }));
+            if (baseBranch === headBranch) {
+              await interaction.editReply(
+                `Head and base are both \`${headBranch}\`. Use \`/pr base:<branch>\` or switch branches.`,
+              );
+              break;
+            }
+
+            const dirtyResult = await runCommand(
+              ["git", "status", "--porcelain"],
+              state.channel.workingDir,
+            );
+            if (dirtyResult.exitCode === 0 && dirtyResult.output.trim().length > 0) {
+              await interaction.editReply(
+                "Working tree has uncommitted changes. Commit or stash before opening a PR.",
+              );
+              break;
+            }
+
+            const aheadResult = await runCommand(
+              ["git", "rev-list", "--count", `${baseBranch}..${headBranch}`],
+              state.channel.workingDir,
+            );
+            if (aheadResult.exitCode === 0) {
+              const aheadText = firstOutputLine(aheadResult.output);
+              const ahead = Number.parseInt(aheadText, 10);
+              if (Number.isFinite(ahead) && ahead <= 0) {
+                await interaction.editReply(
+                  `No commits ahead of \`${baseBranch}\` on \`${headBranch}\`. Nothing to PR.`,
+                );
+                break;
+              }
+            }
+
+            const ghVersion = await runCommand(["gh", "--version"], state.channel.workingDir);
+            if (ghVersion.exitCode !== 0) {
+              await interaction.editReply(
+                "GitHub CLI (`gh`) is not available. Install it and run `/pr` again.",
+              );
+              break;
+            }
+
+            let prArgs: string[];
+            try {
+              prArgs = buildPrCreateArgs({
+                action,
+                baseBranch,
+                headBranch,
+                ...(titleInput ? { title: titleInput } : {}),
+                ...(bodyInput ? { body: bodyInput } : {}),
+              });
+            } catch (error) {
+              await interaction.editReply(formatErrorMessage(error));
+              break;
+            }
+
+            const createResult = await runCommand(prArgs, state.channel.workingDir);
+            if (createResult.exitCode !== 0) {
+              await interaction.editReply(
+                `Failed to create PR (\`${headBranch}\` -> \`${baseBranch}\`).\n` +
+                  `\`\`\`bash\n${clipOutput(createResult.output || "(no output)", 1800)}\n\`\`\``,
+              );
+              break;
+            }
+
+            const prUrl = extractFirstUrl(createResult.output);
+            const prType = action === "draft" ? "Draft PR" : "PR";
+            await interaction.editReply(
+              `${prType} created (\`${headBranch}\` -> \`${baseBranch}\`).` +
+                (prUrl ? `\n${prUrl}` : ""),
+            );
             break;
           }
           case "bash": {

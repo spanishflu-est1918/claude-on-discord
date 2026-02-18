@@ -1,4 +1,20 @@
-import { REST, Routes, SlashCommandBuilder } from "discord.js";
+import { REST, Routes, SlashCommandBuilder, type SlashCommandSubcommandBuilder } from "discord.js";
+
+function addPrOptions(subcommand: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+  return subcommand
+    .addStringOption((option) =>
+      option.setName("base").setDescription("Base branch (default: root branch or origin default)"),
+    )
+    .addStringOption((option) =>
+      option.setName("title").setDescription("PR title (optional; defaults to commit-based fill)"),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("body")
+        .setDescription("PR body (optional; requires title)")
+        .setMaxLength(4000),
+    );
+}
 
 const slashCommands = [
   new SlashCommandBuilder()
@@ -63,6 +79,15 @@ const slashCommands = [
       subcommand.setName("clear").setDescription("Clear current channel system prompt"),
     ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
+  new SlashCommandBuilder()
+    .setName("pr")
+    .setDescription("Create a GitHub pull request from current branch")
+    .addSubcommand((subcommand) =>
+      addPrOptions(subcommand.setName("open").setDescription("Create/open a regular pull request")),
+    )
+    .addSubcommand((subcommand) =>
+      addPrOptions(subcommand.setName("draft").setDescription("Create a draft pull request")),
+    ),
   new SlashCommandBuilder()
     .setName("worktree")
     .setDescription("Manage git worktrees")
