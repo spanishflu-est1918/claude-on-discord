@@ -16,15 +16,7 @@ const slashCommands = [
     .setDescription("List active thread branches and git divergence"),
   new SlashCommandBuilder()
     .setName("diff")
-    .setDescription("Show git diff for this channel (working tree or thread branch)")
-    .addStringOption((option) =>
-      option.setName("base").setDescription("Base branch/ref for thread branch comparison"),
-    )
-    .addBooleanOption((option) =>
-      option
-        .setName("patch")
-        .setDescription("Also include diff summary metadata after the patch output"),
-    ),
+    .setDescription("Show git diff for this channel (working tree or thread branch)"),
   new SlashCommandBuilder()
     .setName("compact")
     .setDescription("Compact in-memory context and reset the Claude session"),

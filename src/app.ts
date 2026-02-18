@@ -524,77 +524,6 @@ async function buildDiffContext(input: {
   };
 }
 
-async function buildDiffSummary(context: DiffContext): Promise<string> {
-  const lines: string[] = [`Project: \`${context.workingDir}\``, `Mode: \`${context.mode}\``];
-  const snapshot = await buildWorkingTreeDiffSnapshot(context.workingDir);
-  const taggedFiles = buildTaggedFileLines(snapshot);
-
-  const currentBranch = await detectBranchName(context.workingDir);
-  if (currentBranch) {
-    lines.push(`Branch: \`${currentBranch}\``);
-  }
-  if (context.baseRef) {
-    lines.push(`Base: \`${context.baseRef}\``);
-  }
-
-  if (context.mode === "working-tree") {
-    const statusResult = await runCommand(["git", "status", "--short"], context.workingDir);
-    lines.push("Status:");
-    lines.push("```bash");
-    lines.push(statusResult.output || "(clean working tree)");
-    lines.push("```");
-  } else if (context.baseRef) {
-    const divergence = await runCommand(
-      ["git", "rev-list", "--left-right", "--count", `${context.baseRef}...HEAD`],
-      context.workingDir,
-    );
-    if (divergence.exitCode === 0) {
-      const counts = parseAheadBehind(divergence.output);
-      if (counts) {
-        lines.push(`Divergence: ahead=\`${counts.ahead}\`, behind=\`${counts.behind}\``);
-      }
-    }
-  }
-
-  lines.push(
-    `Live changes: staged=\`${snapshot.stagedFiles.length}\`, unstaged=\`${snapshot.unstagedFiles.length}\`, untracked=\`${snapshot.untrackedFiles.length}\``,
-  );
-  lines.push(`Changed files: \`${taggedFiles.length}\``);
-
-  if (taggedFiles.length > 0) {
-    lines.push("Files (first 12):");
-    for (const file of taggedFiles.slice(0, 12)) {
-      lines.push(`- \`${file}\``);
-    }
-    if (taggedFiles.length > 12) {
-      lines.push(`- ... ${taggedFiles.length - 12} more`);
-    }
-  }
-
-  lines.push("Live stat:");
-  lines.push("```bash");
-  lines.push("Staged:");
-  lines.push(snapshot.stagedStat || "(none)");
-  lines.push("");
-  lines.push("Unstaged:");
-  lines.push(snapshot.unstagedStat || "(none)");
-  if (snapshot.untrackedFiles.length > 0) {
-    lines.push("");
-    lines.push("Untracked:");
-    lines.push(snapshot.untrackedFiles.join("\n"));
-  }
-  lines.push("```");
-
-  const patchPreview = buildLivePatchText(snapshot);
-  lines.push("Live patch preview:");
-  lines.push("```diff");
-  lines.push(clipOutput(patchPreview || "(no differences)", 3500));
-  lines.push("```");
-  lines.push("Use buttons: `Files` `Stat` `Patch` `Refresh`.");
-
-  return lines.join("\n");
-}
-
 async function buildDiffDetail(context: DiffContext, action: DiffDetailAction): Promise<string> {
   const snapshot = await buildWorkingTreeDiffSnapshot(context.workingDir);
   const taggedFiles = buildTaggedFileLines(snapshot);
@@ -1670,28 +1599,20 @@ export async function startApp(config: AppConfig): Promise<void> {
           }
           case "diff": {
             const state = sessions.getState(channelId, guildId);
-            const baseInput = interaction.options.getString("base");
-            const includeSummary = interaction.options.getBoolean("patch") ?? false;
             await interaction.deferReply();
 
             const context = await buildDiffContext({
               channelId,
               guildId,
               workingDir: state.channel.workingDir,
-              baseInput,
+              baseInput: null,
               repository,
             });
             const requestId = crypto.randomUUID();
             rememberDiffView(requestId, context);
 
             const patchDetail = await buildDiffDetail(context, "patch");
-            let payload = patchDetail;
-            if (includeSummary) {
-              const summary = await buildDiffSummary(context);
-              payload = `${patchDetail}\n\n${summary}`;
-            }
-
-            const delivery = buildDiffDelivery(payload, "diff");
+            const delivery = buildDiffDelivery(patchDetail, "diff");
             await interaction.editReply({
               content: delivery.content,
               files: delivery.files,
