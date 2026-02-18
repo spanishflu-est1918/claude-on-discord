@@ -19,6 +19,7 @@ import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
+import type { ThreadBranchMeta } from "./types";
 
 function getMessagePrompt(message: Message): string {
   if (message.content.trim().length > 0) {
@@ -247,6 +248,104 @@ async function syncChannelTopic(channel: unknown, workingDir: string): Promise<v
   } catch {
     // Ignore topic update failures when permissions/channel type do not allow it.
   }
+}
+
+type ThreadBootstrapChannel = {
+  id: string;
+  parentId: string | null;
+  isThread: () => boolean;
+};
+
+function isThreadBootstrapChannel(channel: unknown): channel is ThreadBootstrapChannel {
+  return (
+    typeof channel === "object" &&
+    channel !== null &&
+    "id" in channel &&
+    typeof (channel as { id?: unknown }).id === "string" &&
+    "parentId" in channel &&
+    "isThread" in channel &&
+    typeof (channel as { isThread?: unknown }).isThread === "function"
+  );
+}
+
+function cloneThreadBranchName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return "thread-branch";
+  }
+  return trimmed.slice(0, 90);
+}
+
+function parseThreadBranchMeta(raw: string | null): ThreadBranchMeta | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<ThreadBranchMeta>;
+    if (
+      !parsed ||
+      typeof parsed.channelId !== "string" ||
+      typeof parsed.guildId !== "string" ||
+      typeof parsed.rootChannelId !== "string" ||
+      (typeof parsed.parentChannelId !== "string" && parsed.parentChannelId !== null) ||
+      typeof parsed.name !== "string" ||
+      typeof parsed.createdAt !== "number"
+    ) {
+      return null;
+    }
+    return parsed as ThreadBranchMeta;
+  } catch {
+    return null;
+  }
+}
+
+async function maybeInheritThreadContext(input: {
+  channel: unknown;
+  channelId: string;
+  guildId: string;
+  sessions: SessionManager;
+  repository: Repository;
+}): Promise<void> {
+  const existing = input.repository.getChannel(input.channelId);
+  if (existing) {
+    return;
+  }
+
+  if (!isThreadBootstrapChannel(input.channel) || !input.channel.isThread()) {
+    input.sessions.ensureChannel(input.channelId, input.guildId);
+    return;
+  }
+
+  const parentChannelId = input.channel.parentId;
+  if (!parentChannelId) {
+    input.sessions.ensureChannel(input.channelId, input.guildId);
+    return;
+  }
+
+  const parent = input.repository.getChannel(parentChannelId);
+  if (!parent) {
+    input.sessions.ensureChannel(input.channelId, input.guildId);
+    return;
+  }
+
+  input.sessions.cloneChannelContext(parentChannelId, input.channelId, input.guildId);
+  const parentPrompt = input.repository.getChannelSystemPrompt(parentChannelId);
+  if (parentPrompt) {
+    input.repository.setChannelSystemPrompt(input.channelId, parentPrompt);
+  }
+  const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(parentChannelId));
+  const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
+  input.repository.setThreadBranchMeta(
+    input.channelId,
+    JSON.stringify({
+      channelId: input.channelId,
+      guildId: input.guildId,
+      rootChannelId,
+      parentChannelId,
+      name: cloneThreadBranchName((input.channel as { name?: string }).name ?? ""),
+      createdAt: Date.now(),
+    }),
+  );
 }
 
 async function cleanupFiles(paths: string[]): Promise<void> {
@@ -487,6 +586,13 @@ export async function startApp(config: AppConfig): Promise<void> {
         }
         const channelId = interaction.channelId;
         const guildId = interaction.guildId ?? "dm";
+        await maybeInheritThreadContext({
+          channel: interaction.channel,
+          channelId,
+          guildId,
+          sessions,
+          repository,
+        });
 
         switch (interaction.commandName) {
           case "new": {
@@ -512,7 +618,6 @@ export async function startApp(config: AppConfig): Promise<void> {
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
             const lines = [
               `Project: \`${state.channel.workingDir}\``,
-              `Branch: \`${state.branch.name}\` (\`${state.branch.id}\`)`,
               `Model: \`${state.channel.model}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
@@ -672,51 +777,6 @@ export async function startApp(config: AppConfig): Promise<void> {
             );
             break;
           }
-          case "branch": {
-            const action = interaction.options.getSubcommand(true);
-            const state = sessions.getState(channelId, guildId);
-
-            if (action === "current") {
-              const parent = state.branch.parentBranchId ?? "none";
-              await interaction.reply(
-                `Current branch: \`${state.branch.name}\` (\`${state.branch.id}\`, parent: \`${parent}\`)`,
-              );
-              break;
-            }
-
-            if (action === "list") {
-              const lines = state.branches.map((branch) => {
-                const marker = branch.id === state.branch.id ? "*" : " ";
-                const parent = branch.parentBranchId ?? "root";
-                return `${marker} \`${branch.name}\` (\`${branch.id}\`, parent: \`${parent}\`)`;
-              });
-              await interaction.reply(`Branches:\n${lines.join("\n")}`);
-              break;
-            }
-
-            if (action === "fork") {
-              const requestedName = interaction.options.getString("name") ?? undefined;
-              const created = sessions.forkBranch(channelId, guildId, requestedName);
-              await interaction.reply(
-                `Forked branch to \`${created.name}\` (\`${created.id}\`) from \`${created.parentBranchId ?? "none"}\`. Session restarted.`,
-              );
-              break;
-            }
-
-            const target = interaction.options.getString("target", true);
-            const switched = sessions.switchBranch(channelId, guildId, target);
-            if (!switched) {
-              await interaction.reply({
-                content: `Branch not found: \`${target}\`. Use \`/branch list\`.`,
-                flags: MessageFlags.Ephemeral,
-              });
-              break;
-            }
-            await interaction.reply(
-              `Switched to branch \`${switched.name}\` (\`${switched.id}\`). Session restarted.`,
-            );
-            break;
-          }
           case "worktree": {
             const state = sessions.getState(channelId, guildId);
             const action = interaction.options.getString("action", true);
@@ -797,6 +857,13 @@ export async function startApp(config: AppConfig): Promise<void> {
         }
         const channelId = message.channel.id;
         const guildId = message.guildId ?? "dm";
+        await maybeInheritThreadContext({
+          channel: message.channel,
+          channelId,
+          guildId,
+          sessions,
+          repository,
+        });
         const state = sessions.getState(channelId, guildId);
         const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
         const stagedAttachments = await stageAttachments(message);

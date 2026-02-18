@@ -23,9 +23,9 @@ It gives you a channel-based coding workflow in Discord while keeping real files
   - `/systemprompt set`
   - `/systemprompt show`
   - `/systemprompt clear`
-- Conversation branching:
-  - `/branch current|list|fork|switch`
-  - fork keeps context snapshot and restarts Claude session on branch changes
+- Automatic thread branching:
+  - when a new Discord thread starts, it inherits parent context automatically
+  - inherited context includes project, model, in-memory turns, and system prompt
 - Direct shell execution via `/bash`
 - Git worktree utilities via `/worktree`
 - Cost tracking via `/cost`
@@ -103,10 +103,6 @@ Common optional variables:
 - `/new`: reset channel session/history
 - `/status`: show current channel status and totals
 - `/model <name>`: set channel model
-- `/branch current`: show active conversation branch
-- `/branch list`: list branches in this channel
-- `/branch fork [name]`: fork current branch and switch to it
-- `/branch switch <target>`: switch branch by id or name
 - `/systemprompt set <text>`: set per-channel system prompt (session restarts)
 - `/systemprompt show`: view current per-channel system prompt
 - `/systemprompt clear`: clear per-channel system prompt (session restarts)

@@ -27,14 +27,14 @@ export type UpsertChannelInput = {
 };
 
 const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
-const CHANNEL_BRANCH_STATE_PREFIX = "channel_branch_state:";
+const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
 
 function channelSystemPromptKey(channelId: string): string {
   return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
 }
 
-function channelBranchStateKey(channelId: string): string {
-  return `${CHANNEL_BRANCH_STATE_PREFIX}${channelId}`;
+function channelThreadBranchKey(channelId: string): string {
+  return `${CHANNEL_THREAD_BRANCH_PREFIX}${channelId}`;
 }
 
 function mapChannelRow(row: ChannelRow): ChannelRecord {
@@ -216,15 +216,37 @@ export class Repository {
     this.deleteSetting(channelSystemPromptKey(channelId));
   }
 
-  getChannelBranchState(channelId: string): string | null {
-    return this.getSetting(channelBranchStateKey(channelId));
+  getThreadBranchMeta(channelId: string): string | null {
+    return this.getSetting(channelThreadBranchKey(channelId));
   }
 
-  setChannelBranchState(channelId: string, stateJson: string): void {
-    this.setSetting(channelBranchStateKey(channelId), stateJson);
+  setThreadBranchMeta(channelId: string, metaJson: string): void {
+    this.setSetting(channelThreadBranchKey(channelId), metaJson);
   }
 
-  clearChannelBranchState(channelId: string): void {
-    this.deleteSetting(channelBranchStateKey(channelId));
+  clearThreadBranchMeta(channelId: string): void {
+    this.deleteSetting(channelThreadBranchKey(channelId));
+  }
+
+  listThreadBranchMetaEntries(): Array<{ channelId: string; value: string }> {
+    const rows = this.database
+      .query<Pick<SettingRow, "key" | "value">, { pattern: string }>(
+        `
+        SELECT key, value
+        FROM settings
+        WHERE key LIKE $pattern;
+        `,
+      )
+      .all({ pattern: `${CHANNEL_THREAD_BRANCH_PREFIX}%` });
+
+    return rows
+      .map((row) => {
+        const channelId = row.key.slice(CHANNEL_THREAD_BRANCH_PREFIX.length);
+        if (!channelId) {
+          return null;
+        }
+        return { channelId, value: row.value };
+      })
+      .filter((entry): entry is { channelId: string; value: string } => entry !== null);
   }
 }

@@ -32,9 +32,6 @@ describe("SessionManager", () => {
     expect(state.channel.workingDir).toBe("/Users/gorkolas/www");
     expect(state.channel.model).toBe("sonnet");
     expect(state.channel.sessionId).toBeNull();
-    expect(state.branch.id).toBe("main");
-    expect(state.branch.name).toBe("main");
-    expect(state.branches.map((branch) => branch.id)).toEqual(["main"]);
     expect(state.history).toEqual([]);
   });
 
@@ -111,52 +108,31 @@ describe("SessionManager", () => {
     expect(state.history).toEqual([]);
   });
 
-  test("forkBranch creates a new active branch with copied history", () => {
+  test("cloneChannelContext copies model, working dir, and history to target channel", () => {
     const manager = createSessionManager();
-    manager.getState("channel-1", "guild-1");
-    manager.appendTurn("channel-1", { role: "user", content: "original prompt" });
+    manager.getState("source", "guild-1");
+    manager.setModel("source", "opus");
+    manager.setWorkingDir("source", "/tmp/source-project");
+    manager.setSessionId("source", "session-123");
+    manager.appendTurn("source", { role: "assistant", content: "from-source" });
 
-    const created = manager.forkBranch("channel-1", "guild-1", "experiment");
-    const state = manager.getState("channel-1", "guild-1");
-
-    expect(created.name).toBe("experiment");
-    expect(created.parentBranchId).toBe("main");
-    expect(state.branch.id).toBe(created.id);
-    expect(state.history.map((turn) => turn.content)).toEqual(["original prompt"]);
-    expect(state.branches.length).toBe(2);
+    const cloned = manager.cloneChannelContext("source", "target", "guild-1");
+    expect(cloned.channel.workingDir).toBe("/tmp/source-project");
+    expect(cloned.channel.model).toBe("opus");
+    expect(cloned.channel.sessionId).toBeNull();
+    expect(cloned.history.map((turn) => turn.content)).toEqual(["from-source"]);
   });
 
-  test("switchBranch isolates history by branch", () => {
+  test("fresh project switch clears history", () => {
     const manager = createSessionManager();
     manager.getState("channel-1", "guild-1");
-    manager.appendTurn("channel-1", { role: "assistant", content: "from-main" });
-    const created = manager.forkBranch("channel-1", "guild-1", "feature-a");
-    manager.appendTurn("channel-1", { role: "assistant", content: "from-feature" });
-
-    const switchedMain = manager.switchBranch("channel-1", "guild-1", "main");
-    const mainState = manager.getState("channel-1", "guild-1");
-
-    expect(switchedMain?.id).toBe("main");
-    expect(mainState.history.map((turn) => turn.content)).toEqual(["from-main"]);
-
-    const switchedFeature = manager.switchBranch("channel-1", "guild-1", created.id);
-    const featureState = manager.getState("channel-1", "guild-1");
-    expect(switchedFeature?.id).toBe(created.id);
-    expect(featureState.history.map((turn) => turn.content)).toEqual(["from-main", "from-feature"]);
-  });
-
-  test("fresh project switch resets branches back to main", () => {
-    const manager = createSessionManager();
-    manager.getState("channel-1", "guild-1");
-    manager.forkBranch("channel-1", "guild-1", "feature-x");
+    manager.appendTurn("channel-1", { role: "assistant", content: "old" });
 
     const state = manager.switchProject("channel-1", "guild-1", "/tmp/new-project", {
       fresh: true,
     });
 
     expect(state.channel.workingDir).toBe("/tmp/new-project");
-    expect(state.branch.id).toBe("main");
-    expect(state.branches.map((branch) => branch.id)).toEqual(["main"]);
     expect(state.history).toEqual([]);
   });
 });

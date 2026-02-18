@@ -97,20 +97,27 @@ describe("Repository", () => {
     expect(repo.getChannelSystemPrompt("c1")).toBeNull();
   });
 
-  test("stores and clears channel branch state", () => {
+  test("stores, lists, and clears thread branch metadata", () => {
     const repo = createRepository();
 
-    expect(repo.getChannelBranchState("c1")).toBeNull();
-    repo.setChannelBranchState(
+    expect(repo.getThreadBranchMeta("c1")).toBeNull();
+    repo.setThreadBranchMeta(
       "c1",
       JSON.stringify({
-        activeBranchId: "main",
-        branches: [{ id: "main", name: "main", parentBranchId: null, createdAt: 1 }],
+        channelId: "c1",
+        guildId: "g1",
+        rootChannelId: "c1",
+        parentChannelId: null,
+        name: "main",
+        createdAt: 1,
       }),
     );
-    expect(repo.getChannelBranchState("c1")).not.toBeNull();
+    const listed = repo.listThreadBranchMetaEntries();
+    expect(repo.getThreadBranchMeta("c1")).not.toBeNull();
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.channelId).toBe("c1");
 
-    repo.clearChannelBranchState("c1");
-    expect(repo.getChannelBranchState("c1")).toBeNull();
+    repo.clearThreadBranchMeta("c1");
+    expect(repo.getThreadBranchMeta("c1")).toBeNull();
   });
 });

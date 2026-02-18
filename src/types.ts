@@ -57,16 +57,13 @@ export interface SettingRecord {
   updatedAt: number;
 }
 
-export interface ChannelBranch {
-  id: string;
+export interface ThreadBranchMeta {
+  channelId: string;
+  guildId: string;
+  rootChannelId: string;
+  parentChannelId: string | null;
   name: string;
-  parentBranchId: string | null;
   createdAt: number;
-}
-
-export interface ChannelBranchState {
-  activeBranchId: string;
-  branches: ChannelBranch[];
 }
 
 export interface RingBufferSnapshot<T> {
