@@ -2,9 +2,38 @@
 
 Claude Code in Discord. Real filesystem. Real tools. No SSH required.
 
-Each channel becomes a coding lane — its own project, session, and context. Create a thread and it inherits the parent context, becoming a parallel branch. Everything runs on your machine and streams back to Discord.
-
 > Inspired by [claude-code-telegram](https://github.com/punkpeye/claude-code-telegram) — built on Discord because Discord has threads.
+
+---
+
+## Thread Branching
+
+Create a Discord thread and it becomes a parallel coding lane — automatically.
+
+The new thread inherits everything from the parent channel: working directory, model, conversation history, and system prompt. No setup. No context loss. Just branch and go.
+
+Enable `AUTO_THREAD_WORKTREE=true` and each thread also gets its own git worktree, fully bootstrapped (`bun install` / `pnpm install` / etc. runs automatically). Real parallel branches, not just separate chats.
+
+---
+
+## Per-Channel System Prompts
+
+Every channel can have its own system prompt. One channel is your Rails expert. Another is your senior TypeScript reviewer. Another speaks only in bash one-liners.
+
+```
+/systemprompt set You are a senior Rails developer. Be terse. No explanations unless asked.
+```
+
+System prompts persist per channel and survive session resets. Switch projects, the prompt stays.
+
+---
+
+## How It Works
+
+- **Channel = coding lane** — each channel has its own working directory, model, and Claude session
+- **Thread = branch** — inherits full parent context, optionally gets its own git worktree
+- **Streams everything** — partial text, thinking previews, tool events, live-edited in a single message
+- **Your machine** — files are real, tools are real, Claude Code runs locally
 
 ---
 
@@ -24,15 +53,6 @@ Invite the bot to your server, then:
 ```bash
 bun start
 ```
-
----
-
-## How It Works
-
-- **Channel = coding lane** — each channel has its own working directory, model, and Claude session
-- **Thread = branch** — create a Discord thread and it inherits parent context automatically (project, model, conversation, system prompt)
-- **Streams everything** — partial text, thinking previews, tool events, all live-edited in a single Discord message
-- **Your machine** — files are real, tools are real, Claude Code runs locally with full filesystem access
 
 ---
 
@@ -84,10 +104,9 @@ Full reference: [.env.example](.env.example)
 
 - **MCP support** — loads `.claude/mcp.json` from your project directory automatically
 - **Attachment I/O** — send files in, Claude can send files back to Discord
-- **Per-channel system prompts** — different context per project lane
 - **Multi-user mention policy** — require `@bot` mention in shared channels (global + per-channel)
 - **Cost tracking** — SQLite-backed per-channel spend and turn counts
-- **Startup preflight** — checks working dir, database, and Discord auth with actionable diagnostics on failure
+- **Startup preflight** — checks working dir, database, and Discord auth before boot
 
 ---
 
