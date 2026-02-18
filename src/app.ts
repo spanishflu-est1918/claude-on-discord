@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Message } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
@@ -16,6 +19,51 @@ function getMessagePrompt(message: Message): string {
     return message.content;
   }
   return "User sent attachments. Describe what they sent and ask how to help.";
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+async function stageAttachments(message: Message): Promise<{
+  stagedPaths: string[];
+  promptSuffix: string;
+}> {
+  if (message.attachments.size === 0) {
+    return { stagedPaths: [], promptSuffix: "" };
+  }
+
+  const stagedPaths: string[] = [];
+  const promptLines: string[] = ["", "User included attachments saved locally:"];
+  let index = 0;
+
+  for (const attachment of message.attachments.values()) {
+    const filename = sanitizeFilename(attachment.name ?? `attachment-${index + 1}.bin`);
+    const targetPath = path.join(tmpdir(), `claude-on-discord-${Date.now()}-${index}-${filename}`);
+
+    try {
+      const response = await fetch(attachment.url);
+      if (!response.ok) {
+        promptLines.push(`- ${filename}: failed to download (${response.status})`);
+        index += 1;
+        continue;
+      }
+
+      const buffer = await response.arrayBuffer();
+      await Bun.write(targetPath, buffer);
+      stagedPaths.push(targetPath);
+      promptLines.push(`- ${filename}: ${targetPath}`);
+    } catch {
+      promptLines.push(`- ${filename}: failed to download`);
+    }
+
+    index += 1;
+  }
+
+  return {
+    stagedPaths,
+    promptSuffix: promptLines.join("\n"),
+  };
 }
 
 async function addReaction(message: Message, emoji: string): Promise<void> {
@@ -114,6 +162,16 @@ async function runCommand(
     exitCode,
     output,
   };
+}
+
+async function cleanupFiles(paths: string[]): Promise<void> {
+  for (const filePath of paths) {
+    try {
+      await unlink(filePath);
+    } catch {
+      // Ignore cleanup errors.
+    }
+  }
 }
 
 async function runBashCommand(
@@ -345,19 +403,21 @@ export async function startApp(config: AppConfig): Promise<void> {
       const channelId = message.channel.id;
       const guildId = message.guildId ?? "dm";
       const state = sessions.getState(channelId, guildId);
+      const stagedAttachments = await stageAttachments(message);
 
       await addReaction(message, "🧠");
       const status = await message.reply({
         content: "Thinking...",
         components: buildStopButtons(channelId),
       });
-      const prompt = getMessagePrompt(message);
+      const prompt = `${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
       const seededPrompt = buildSeededPrompt(
         prompt,
         state.history,
         Boolean(state.channel.sessionId),
       );
       const abortController = new AbortController();
+      const persistedFilenames = new Set<string>();
       let streamedText = "";
       let streamClosed = false;
       let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -410,6 +470,13 @@ export async function startApp(config: AppConfig): Promise<void> {
             streamedText += textDelta;
             scheduleStreamPreview();
           },
+          onMessage: (sdkMessage) => {
+            if (sdkMessage.type === "system" && sdkMessage.subtype === "files_persisted") {
+              for (const file of sdkMessage.files) {
+                persistedFilenames.add(file.filename);
+              }
+            }
+          },
         });
 
         if (streamFlushTimer) {
@@ -451,6 +518,25 @@ export async function startApp(config: AppConfig): Promise<void> {
           }
         }
 
+        if ("send" in message.channel && typeof message.channel.send === "function") {
+          for (const filename of persistedFilenames) {
+            const absolutePath = path.isAbsolute(filename)
+              ? filename
+              : path.resolve(state.channel.workingDir, filename);
+            if (!existsSync(absolutePath)) {
+              continue;
+            }
+            try {
+              await message.channel.send({
+                content: `Generated file: \`${filename}\``,
+                files: [absolutePath],
+              });
+            } catch {
+              // Ignore attachment send failures.
+            }
+          }
+        }
+
         await removeReaction(message, "🧠");
         await addReaction(message, "✅");
       } catch (error) {
@@ -469,6 +555,7 @@ export async function startApp(config: AppConfig): Promise<void> {
         await removeReaction(message, "🧠");
         await addReaction(message, "❌");
       } finally {
+        await cleanupFiles(stagedAttachments.stagedPaths);
         stopController.clear(channelId);
       }
     },
