@@ -10,6 +10,8 @@ function isThreadBranchMeta(value: unknown): value is ThreadBranchMeta {
     typeof candidate.guildId === "string" &&
     typeof candidate.rootChannelId === "string" &&
     (typeof candidate.parentChannelId === "string" || candidate.parentChannelId === null) &&
+    (typeof candidate.forkSourceSessionId === "string" ||
+      typeof candidate.forkSourceSessionId === "undefined") &&
     typeof candidate.name === "string" &&
     typeof candidate.createdAt === "number" &&
     Number.isFinite(candidate.createdAt) &&

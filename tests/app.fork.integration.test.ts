@@ -95,14 +95,17 @@ describe("startApp fork slash command", () => {
     }
   });
 
-  test("initializes a fork thread session when thread metadata is available", async () => {
+  test("stores parent session as fork source without eager bootstrap run", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "app-fork-session-"));
     const dbPath = path.join(root, "state.sqlite");
     let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
     let openedDb:
       | {
           close: () => void;
-          query: <T>(sql: string) => { get: (params: Record<string, string>) => T | null };
+          query: <T>(sql: string) => {
+            get: (params: Record<string, string>) => T | null;
+            run: (params: Record<string, string>) => unknown;
+          };
         }
       | undefined;
     let runCalls = 0;
@@ -126,7 +129,10 @@ describe("startApp fork slash command", () => {
           const db = openDatabase(databasePath);
           openedDb = db as unknown as {
             close: () => void;
-            query: <T>(sql: string) => { get: (params: Record<string, string>) => T | null };
+            query: <T>(sql: string) => {
+              get: (params: Record<string, string>) => T | null;
+              run: (params: Record<string, string>) => unknown;
+            };
           };
           return db;
         },
@@ -143,7 +149,7 @@ describe("startApp fork slash command", () => {
             run: async () => {
               runCalls += 1;
               return {
-                text: "SESSION_READY",
+                text: "ok",
                 sessionId: "thread-session-1",
                 messages: [],
               };
@@ -155,6 +161,21 @@ describe("startApp fork slash command", () => {
       if (typeof capturedSlashHandler !== "function") {
         throw new Error("slash handler was not captured");
       }
+
+      openedDb
+        ?.query(
+          `
+            INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+            VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);
+          `,
+        )
+        .run({
+          channel_id: "channel-1",
+          guild_id: "guild-1",
+          working_dir: root,
+          session_id: "parent-session-1",
+          model: "sonnet",
+        });
 
       const replies: Array<{ content?: string; flags?: number }> = [];
       await capturedSlashHandler({
@@ -190,6 +211,7 @@ describe("startApp fork slash command", () => {
       let row: {
         session_id: string | null;
       } | null = null;
+      let threadMetaRaw: string | null = null;
       while (Date.now() < waitUntil) {
         row =
           openedDb
@@ -197,13 +219,21 @@ describe("startApp fork slash command", () => {
               "SELECT session_id FROM channels WHERE channel_id = $channel_id;",
             )
             .get({ channel_id: "thread-1" }) ?? null;
-        if (runCalls >= 1 && row?.session_id === "thread-session-1") {
+        threadMetaRaw =
+          openedDb
+            ?.query<{ value: string | null }>(
+              "SELECT value FROM settings WHERE key = $key;",
+            )
+            .get({ key: "channel_thread_branch:thread-1" })?.value ?? null;
+        if (row && threadMetaRaw) {
           break;
         }
         await Bun.sleep(10);
       }
-      expect(runCalls).toBe(1);
-      expect(row?.session_id).toBe("thread-session-1");
+      const threadMeta = threadMetaRaw ? (JSON.parse(threadMetaRaw) as Record<string, unknown>) : null;
+      expect(runCalls).toBe(0);
+      expect(row?.session_id).toBeNull();
+      expect(threadMeta?.forkSourceSessionId).toBe("parent-session-1");
       expect(replies[0]?.content).toContain("Forked into thread <#thread-1>");
     } finally {
       openedDb?.close();

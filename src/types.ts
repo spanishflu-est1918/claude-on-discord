@@ -70,6 +70,7 @@ export interface ThreadBranchMeta {
   guildId: string;
   rootChannelId: string;
   parentChannelId: string | null;
+  forkSourceSessionId?: string;
   name: string;
   createdAt: number;
   worktreePath?: string;

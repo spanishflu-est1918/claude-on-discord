@@ -60,6 +60,21 @@ describe("thread branch metadata helpers", () => {
     expect(parsed?.archivedAt).toBe(20);
   });
 
+  test("parseThreadBranchMeta accepts fork source session id", () => {
+    const parsed = parseThreadBranchMeta(
+      JSON.stringify({
+        channelId: "c1",
+        guildId: "g1",
+        rootChannelId: "root",
+        parentChannelId: "p1",
+        forkSourceSessionId: "session-parent-1",
+        name: "feature-a",
+        createdAt: 10,
+      }),
+    );
+    expect(parsed?.forkSourceSessionId).toBe("session-parent-1");
+  });
+
   test("buildThreadBranchAwarenessPrompt includes related thread lineage for a thread channel", () => {
     const entries = [
       {

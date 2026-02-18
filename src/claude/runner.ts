@@ -18,6 +18,7 @@ export type QueryFactoryInput = {
     | "permissionMode"
     | "model"
     | "resume"
+    | "forkSession"
     | "mcpServers"
     | "settingSources"
     | "thinking"
@@ -36,6 +37,7 @@ export interface RunRequest {
   resumeFallbackPrompt?: string;
   cwd: string;
   sessionId?: string;
+  forkSession?: boolean;
   model?: string;
   systemPrompt?: string;
   thinking?: Options["thinking"];
@@ -178,6 +180,7 @@ interface WorkerConfig {
   effort?: Options["effort"];
   systemPrompt?: string;
   resumeSessionId?: string;
+  forkSession?: boolean;
   mcpServers?: Record<string, ClaudeMcpServerConfig>;
   settingSources: NonNullable<Options["settingSources"]>;
 }
@@ -207,6 +210,7 @@ class ChannelWorker {
       ...(config.model ? { model: config.model } : {}),
       ...(config.effort ? { effort: config.effort } : {}),
       ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
+      ...(config.resumeSessionId && config.forkSession ? { forkSession: true } : {}),
       ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
     };
 
@@ -460,6 +464,7 @@ export class ClaudeRunner {
             effort: request.effort,
             systemPrompt: request.systemPrompt,
             resumeSessionId: attempt.includeResume ? request.sessionId : undefined,
+            forkSession: attempt.includeResume ? request.forkSession : undefined,
             mcpServers: attempt.includeMcpServers ? mcpServers : undefined,
             settingSources: attempt.settingSources,
           });
@@ -512,6 +517,7 @@ function buildWorkerSignature(input: {
     mcpServers: input.includeMcpServers ? toStableMcpSignature(input.mcpServers) : "",
     includeResume: input.includeResume,
     resumeSessionId: input.includeResume ? (input.request.sessionId ?? "") : "",
+    forkSession: input.includeResume ? Boolean(input.request.forkSession) : false,
   });
 }
 

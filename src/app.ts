@@ -57,7 +57,7 @@ import {
 } from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
 import { runWorktreeBootstrap, type WorktreeBootstrapResult } from "./discord/worktree-bootstrap";
-import type { ClaudeSDKMessage } from "./types";
+import type { ClaudePermissionMode, ClaudeSDKMessage } from "./types";
 
 export type StartAppRuntimeOverrides = {
   openDatabase?: typeof openDatabase;
@@ -254,6 +254,20 @@ function resolveMentionRequirementForChannel(input: {
     return { requireMention: false, mode };
   }
   return { requireMention: input.defaultRequireMention, mode };
+}
+
+function resolvePermissionModeForChannel(input: {
+  sessionPermissionMode?: ClaudePermissionMode;
+  defaultPermissionMode: ClaudePermissionMode;
+}): {
+  permissionMode: ClaudePermissionMode;
+  mode: ClaudePermissionMode | "default";
+} {
+  const mode = input.sessionPermissionMode ?? "default";
+  if (mode === "default") {
+    return { permissionMode: input.defaultPermissionMode, mode };
+  }
+  return { permissionMode: mode, mode };
 }
 
 function compactHistory(
@@ -887,13 +901,6 @@ async function maybeInheritThreadContext(input: {
   autoThreadWorktree: boolean;
   worktreeBootstrap: boolean;
   worktreeBootstrapCommand?: string;
-  bootstrapThreadSession?: (input: {
-    channelId: string;
-    workingDir: string;
-    model: string;
-    systemPrompt?: string;
-    history: Array<{ role: "user" | "assistant"; content: string }>;
-  }) => Promise<string | null>;
 }): Promise<void> {
   const existing = input.repository.getChannel(input.channelId);
   if (existing) {
@@ -925,33 +932,7 @@ async function maybeInheritThreadContext(input: {
   }
   const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(parentChannelId));
   const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
-  const maybeBootstrapThreadSession = async (): Promise<void> => {
-    if (!input.bootstrapThreadSession) {
-      return;
-    }
-    const state = input.sessions.getState(input.channelId, input.guildId);
-    if (state.channel.sessionId) {
-      return;
-    }
-    try {
-      const sessionId = await input.bootstrapThreadSession({
-        channelId: input.channelId,
-        workingDir: state.channel.workingDir,
-        model: state.channel.model,
-        ...(parentPrompt ? { systemPrompt: parentPrompt } : {}),
-        history: state.history.map((entry) => ({
-          role: entry.role,
-          content: entry.content,
-        })),
-      });
-      if (sessionId) {
-        input.sessions.setSessionId(input.channelId, sessionId);
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.warn(`Thread session bootstrap failed for ${input.channelId}: ${detail}`);
-    }
-  };
+  const forkSourceSessionId = parent.sessionId ?? undefined;
 
   if (input.autoThreadWorktree) {
     const provisioned = await maybeProvisionThreadWorktree({
@@ -986,10 +967,10 @@ async function maybeInheritThreadContext(input: {
       ...(provisioned
         ? { worktreePath: provisioned.worktreePath, worktreeMode: "worktree" as const }
         : { worktreeMode: "inherited" as const }),
+      ...(forkSourceSessionId ? { forkSourceSessionId } : {}),
       lifecycleState: "active",
       cleanupState: "none",
     });
-    await maybeBootstrapThreadSession();
     return;
   }
 
@@ -1001,10 +982,10 @@ async function maybeInheritThreadContext(input: {
     name: threadName,
     createdAt: Date.now(),
     worktreeMode: "prompt",
+    ...(forkSourceSessionId ? { forkSourceSessionId } : {}),
     lifecycleState: "active",
     cleanupState: "none",
   });
-  await maybeBootstrapThreadSession();
 
   if (!canSendMessage(input.channel)) {
     return;
@@ -1029,6 +1010,7 @@ function saveThreadBranchMeta(
     guildId: string;
     rootChannelId: string;
     parentChannelId: string | null;
+    forkSourceSessionId?: string;
     name: string;
     createdAt: number;
     worktreePath?: string;
@@ -2098,34 +2080,6 @@ export async function startApp(
     config.activeRunWatchdogIntervalMs ?? ACTIVE_RUN_WATCHDOG_INTERVAL_MS;
   const stopController = new StopController();
   const runner = runtimeOverrides.createRunner?.() ?? new ClaudeRunner();
-  const bootstrapThreadSession = async (input: {
-    channelId: string;
-    workingDir: string;
-    model: string;
-    systemPrompt?: string;
-    history: Array<{ role: "user" | "assistant"; content: string }>;
-  }): Promise<string | null> => {
-    const bootstrapPrompt = buildSeededPrompt(
-      [
-        "Initialize a new independent thread session from the provided conversation context.",
-        "Do not call any tools.",
-        "Reply with exactly: SESSION_READY",
-      ].join("\n"),
-      input.history,
-      false,
-    );
-
-    const result = await runner.run({
-      channelId: input.channelId,
-      prompt: bootstrapPrompt,
-      cwd: input.workingDir,
-      model: input.model,
-      ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
-      permissionMode: config.claudePermissionMode,
-    });
-
-    return result.sessionId ?? null;
-  };
   const pendingProjectSwitches = new Map<
     string,
     { channelId: string; guildId: string; workingDir: string }
@@ -2134,6 +2088,7 @@ export async function startApp(
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
   const liveToolExpandStateByChannel = new Map<string, Map<string, boolean>>();
+  const sessionPermissionModeByChannel = new Map<string, ClaudePermissionMode>();
   const suspendedChannels = new Set<string>();
   const discordDispatchStats = {
     rateLimitHits: 0,
@@ -2157,6 +2112,27 @@ export async function startApp(
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
   let staleRunWatchdog: ReturnType<typeof setInterval> | null = null;
+
+  const resolvePermissionModeForSession = (channelId: string) =>
+    resolvePermissionModeForChannel({
+      sessionPermissionMode: sessionPermissionModeByChannel.get(channelId),
+      defaultPermissionMode: config.claudePermissionMode,
+    });
+
+  const setSessionPermissionMode = (
+    channelId: string,
+    mode: ClaudePermissionMode | "default",
+  ): void => {
+    if (mode === "default") {
+      sessionPermissionModeByChannel.delete(channelId);
+      return;
+    }
+    sessionPermissionModeByChannel.set(channelId, mode);
+  };
+
+  const clearSessionPermissionMode = (channelId: string): void => {
+    sessionPermissionModeByChannel.delete(channelId);
+  };
 
   const getToolExpanded = (channelId: string, toolId: string): boolean => {
     const channelState = liveToolExpandStateByChannel.get(channelId);
@@ -2190,6 +2166,7 @@ export async function startApp(
     }
     for (const activeChannelId of activeChannelIds) {
       sessions.setSessionId(activeChannelId, null);
+      clearSessionPermissionMode(activeChannelId);
     }
     const aborted = stopController.abortAll();
     console.warn(`Cleared ${aborted.length} active run(s) due to ${reason}.`);
@@ -2201,6 +2178,7 @@ export async function startApp(
       return false;
     }
     sessions.setSessionId(channelId, null);
+    clearSessionPermissionMode(channelId);
     console.warn(`Aborted active run for channel ${channelId} (${reason}).`);
     return true;
   };
@@ -2219,6 +2197,7 @@ export async function startApp(
       }
       for (const staleChannelId of staleChannelIds) {
         sessions.setSessionId(staleChannelId, null);
+        clearSessionPermissionMode(staleChannelId);
       }
       console.warn(`Reaped ${staleChannelIds.length} stale active run(s).`);
     }, activeRunWatchdogIntervalMs);
@@ -2405,6 +2384,9 @@ export async function startApp(
             },
           );
           const changedProject = previousChannelState.workingDir !== pending.workingDir;
+          if (projectSwitch.action === "fresh" || changedProject) {
+            clearSessionPermissionMode(pending.channelId);
+          }
           const suffix =
             projectSwitch.action === "fresh"
               ? " with fresh session."
@@ -2490,6 +2472,7 @@ export async function startApp(
 
           sessions.switchProject(channelId, guildId, provisioned.worktreePath);
           sessions.setSessionId(channelId, null);
+          clearSessionPermissionMode(channelId);
           saveThreadBranchMeta(repository, {
             ...meta,
             worktreePath: provisioned.worktreePath,
@@ -2772,6 +2755,7 @@ export async function startApp(
         switch (interaction.commandName) {
           case "new": {
             sessions.resetSession(channelId);
+            clearSessionPermissionMode(channelId);
             await interaction.reply("Session reset for this channel.");
             break;
           }
@@ -2831,7 +2815,6 @@ export async function startApp(
               autoThreadWorktree: config.autoThreadWorktree,
               worktreeBootstrap: config.worktreeBootstrap,
               worktreeBootstrapCommand: config.worktreeBootstrapCommand,
-              ...(isThreadBootstrapChannel(thread) ? { bootstrapThreadSession } : {}),
             }).catch((error) => {
               const detail = error instanceof Error ? error.message : String(error);
               console.warn(`Fork thread bootstrap failed for ${thread.id}: ${detail}`);
@@ -2842,6 +2825,7 @@ export async function startApp(
             const state = sessions.getState(channelId, guildId);
             const summary = compactHistory(state.history);
             sessions.resetSession(channelId);
+            clearSessionPermissionMode(channelId);
             sessions.appendTurn(channelId, {
               role: "assistant",
               content: `Context summary:\n${summary}`,
@@ -2859,6 +2843,7 @@ export async function startApp(
               channelId,
               defaultRequireMention: config.requireMentionInMultiUserChannels,
             });
+            const permissionPolicy = resolvePermissionModeForSession(channelId);
             const threadStatusLines = buildThreadBranchStatusLines({
               currentChannelId: channelId,
               entries: repository.listThreadBranchMetaEntries(),
@@ -2870,6 +2855,7 @@ export async function startApp(
             const lines = [
               `Project: \`${state.channel.workingDir}\``,
               `Model: \`${state.channel.model}\``,
+              `Permission mode (session): mode=\`${permissionPolicy.mode}\`, effective=\`${permissionPolicy.permissionMode}\``,
               `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
               `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
               `Mentions: mode=\`${mentionPolicy.mode}\`, effective=\`${mentionPolicy.requireMention ? "required" : "off"}\``,
@@ -3413,6 +3399,7 @@ export async function startApp(
 
               repository.setChannelSystemPrompt(channelId, text);
               sessions.setSessionId(channelId, null);
+              clearSessionPermissionMode(channelId);
               await interaction.reply(
                 `Channel system prompt set (\`${text.length}\` chars). Session restarted for this channel.`,
               );
@@ -3448,6 +3435,7 @@ export async function startApp(
 
             repository.clearChannelSystemPrompt(channelId);
             sessions.setSessionId(channelId, null);
+            clearSessionPermissionMode(channelId);
             await interaction.reply(
               "Channel system prompt cleared. Session restarted for this channel.",
             );
@@ -3503,6 +3491,56 @@ export async function startApp(
             });
             await interaction.reply(
               `Mentions mode override cleared (effective: \`${effective.requireMention ? "required" : "off"}\`).`,
+            );
+            break;
+          }
+          case "mode": {
+            const action = interaction.options.getSubcommand(true);
+            const allowedModes = new Set([
+              "default",
+              "plan",
+              "acceptEdits",
+              "bypassPermissions",
+              "delegate",
+              "dontAsk",
+            ]);
+
+            if (action === "set") {
+              const modeRaw = interaction.options.getString("mode", true).trim();
+              if (!allowedModes.has(modeRaw)) {
+                await interaction.reply({
+                  content:
+                    "Invalid mode. Use one of: `default`, `plan`, `acceptEdits`, `bypassPermissions`, `delegate`, `dontAsk`.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                break;
+              }
+
+              const mode = modeRaw as ClaudePermissionMode | "default";
+              setSessionPermissionMode(channelId, mode);
+              const effective = resolvePermissionModeForSession(channelId);
+              await interaction.reply(
+                `Permission mode for this session set to \`${mode}\` (effective: \`${effective.permissionMode}\`).`,
+              );
+              break;
+            }
+
+            if (action === "show") {
+              const effective = resolvePermissionModeForSession(channelId);
+              await interaction.reply({
+                content:
+                  `Permission mode: \`${effective.mode}\`\n` +
+                  `Effective mode: \`${effective.permissionMode}\`\n` +
+                  `Global default: \`${config.claudePermissionMode}\``,
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            clearSessionPermissionMode(channelId);
+            const effective = resolvePermissionModeForSession(channelId);
+            await interaction.reply(
+              `Session permission mode override cleared (effective: \`${effective.permissionMode}\`).`,
             );
             break;
           }
@@ -3578,6 +3616,7 @@ export async function startApp(
 
               sessions.switchProject(channelId, guildId, provisioned.worktreePath);
               sessions.setSessionId(channelId, null);
+              clearSessionPermissionMode(channelId);
               saveThreadBranchMeta(repository, {
                 ...meta,
                 worktreePath: provisioned.worktreePath,
@@ -3736,7 +3775,6 @@ export async function startApp(
               autoThreadWorktree: config.autoThreadWorktree,
               worktreeBootstrap: config.worktreeBootstrap,
               worktreeBootstrapCommand: config.worktreeBootstrapCommand,
-              bootstrapThreadSession,
             });
             const state = sessions.getState(channelId, guildId);
             const directBash = parseDirectBashCommand(message.content);
@@ -3764,10 +3802,18 @@ export async function startApp(
             }
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
             const stagedAttachments = await stageAttachments(message);
+            const threadBranchEntries = repository.listThreadBranchMetaEntries();
             const threadBranchContext = buildThreadBranchAwarenessPrompt({
               currentChannelId: channelId,
-              entries: repository.listThreadBranchMetaEntries(),
+              entries: threadBranchEntries,
             });
+            const threadMeta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
+            const forkSourceSessionId =
+              !state.channel.sessionId && threadMeta?.forkSourceSessionId
+                ? threadMeta.forkSourceSessionId
+                : undefined;
+            const resumeSessionId = state.channel.sessionId ?? forkSourceSessionId;
+            const shouldForkSession = Boolean(forkSourceSessionId && !state.channel.sessionId);
             const runToolTrace = createLiveToolTrace();
             liveToolTracesByChannel.set(channelId, runToolTrace);
             liveToolExpandStateByChannel.set(channelId, new Map());
@@ -3783,9 +3829,9 @@ export async function startApp(
             const seededPrompt = buildSeededPrompt(
               prompt,
               state.history,
-              Boolean(state.channel.sessionId),
+              Boolean(resumeSessionId),
             );
-            const resumeFallbackPrompt = state.channel.sessionId
+            const resumeFallbackPrompt = resumeSessionId
               ? buildSeededPrompt(prompt, state.history, false)
               : undefined;
             const abortController = new AbortController();
@@ -3952,16 +3998,18 @@ export async function startApp(
                 role: "user",
                 content: buildStoredUserTurnContent(message),
               });
+              const permissionPolicy = resolvePermissionModeForSession(channelId);
 
               const result = await runner.run({
                 channelId,
                 prompt: seededPrompt,
                 ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
                 cwd: state.channel.workingDir,
-                sessionId: state.channel.sessionId ?? undefined,
+                ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
+                ...(shouldForkSession ? { forkSession: true } : {}),
                 model: state.channel.model,
                 systemPrompt: channelSystemPrompt ?? undefined,
-                permissionMode: config.claudePermissionMode,
+                permissionMode: permissionPolicy.permissionMode,
                 abortController,
                 onQueryStart: (query) => {
                   stopController.register(channelId, { query, abortController });
@@ -3999,6 +4047,10 @@ export async function startApp(
 
               if (result.sessionId) {
                 sessions.setSessionId(channelId, result.sessionId);
+                if (threadMeta?.forkSourceSessionId) {
+                  const restMeta = { ...threadMeta, forkSourceSessionId: undefined };
+                  saveThreadBranchMeta(repository, restMeta);
+                }
               }
 
               const outputText = result.text.trim();

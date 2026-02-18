@@ -165,6 +165,7 @@ describe("ClaudeRunner", () => {
       prompt: "Ping",
       cwd: "/repo",
       sessionId: "session-3",
+      forkSession: true,
       model: "opus",
       systemPrompt: "Respond in terse style.",
       permissionMode: "plan",
@@ -173,6 +174,7 @@ describe("ClaudeRunner", () => {
     expect(capturedInput).toBeDefined();
     expect(capturedInput?.options.cwd).toBe("/repo");
     expect(capturedInput?.options.resume).toBe("session-3");
+    expect(capturedInput?.options.forkSession).toBe(true);
     expect(capturedInput?.options.model).toBe("opus");
     expect(capturedInput?.options.permissionMode).toBe("plan");
     expect(capturedInput?.options.includePartialMessages).toBe(true);
@@ -558,6 +560,48 @@ describe("ClaudeRunner", () => {
     expect(result.text).toBe("Recovered fresh");
     expect(calls).toBe(2);
     expect(prompts).toEqual(["Current message", "Conversation context ... Current message"]);
+  });
+
+  test("does not carry forkSession into no-resume recovery attempts", async () => {
+    const calls: QueryFactoryInput[] = [];
+    const runner = new ClaudeRunner((input) => {
+      calls.push(input);
+      if (calls.length === 1) {
+        return createFailingQuery(new Error("Claude Code process exited with code 1"));
+      }
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-forked",
+          duration_ms: 100,
+          total_cost_usd: 0.01,
+          num_turns: 1,
+          result: "Recovered",
+          is_error: false,
+          duration_api_ms: 30,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "retry-fork-1",
+        },
+      ]);
+    });
+
+    await runner.run({
+      channelId: "channel-1",
+      prompt: "Ping",
+      cwd: "/tmp",
+      sessionId: "parent-session",
+      forkSession: true,
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.options.resume).toBe("parent-session");
+    expect(calls[0]?.options.forkSession).toBe(true);
+    expect(calls[1]?.options.resume).toBeUndefined();
+    expect(calls[1]?.options.forkSession).toBeUndefined();
   });
 
   test("retries without MCP and session resume when both recovery steps are needed", async () => {
