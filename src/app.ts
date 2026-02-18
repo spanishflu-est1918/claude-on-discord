@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type Message, MessageFlags } from "discord.js";
@@ -278,7 +278,7 @@ function isThreadBootstrapChannel(channel: unknown): channel is ThreadBootstrapC
 }
 
 type SendableChannel = {
-  send: (options: string | { content: string; components?: unknown[] }) => Promise<unknown>;
+  send: (options: unknown) => Promise<unknown>;
 };
 
 function canSendMessage(channel: unknown): channel is SendableChannel {
@@ -571,6 +571,128 @@ async function cleanupFiles(paths: string[]): Promise<void> {
     } catch {
       // Ignore cleanup errors.
     }
+  }
+}
+
+async function findFileByBasename(input: {
+  rootDir: string;
+  basename: string;
+  maxDepth?: number;
+  maxEntries?: number;
+}): Promise<string | null> {
+  const maxDepth = input.maxDepth ?? 4;
+  const maxEntries = input.maxEntries ?? 2000;
+  let scanned = 0;
+
+  async function walk(currentDir: string, depth: number): Promise<string | null> {
+    if (depth > maxDepth || scanned >= maxEntries) {
+      return null;
+    }
+    let entries: Array<{
+      name: string | Buffer;
+      isFile: () => boolean;
+      isDirectory: () => boolean;
+    }>;
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+
+    for (const entry of entries) {
+      if (scanned >= maxEntries) {
+        return null;
+      }
+      scanned += 1;
+      const entryName = typeof entry.name === "string" ? entry.name : entry.name.toString();
+      const entryPath = path.join(currentDir, entryName);
+      if (entry.isFile() && entryName === input.basename) {
+        return entryPath;
+      }
+      if (entry.isDirectory()) {
+        const found = await walk(entryPath, depth + 1);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  return walk(input.rootDir, 0);
+}
+
+async function resolvePersistedFilename(
+  workingDir: string,
+  filename: string,
+): Promise<string | null> {
+  if (path.isAbsolute(filename)) {
+    return existsSync(filename) ? filename : null;
+  }
+
+  const direct = path.resolve(workingDir, filename);
+  if (existsSync(direct)) {
+    return direct;
+  }
+
+  // Fallback for tools that report only basename while writing nested paths.
+  const basename = path.basename(filename);
+  if (!basename) {
+    return null;
+  }
+  return findFileByBasename({ rootDir: workingDir, basename });
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return "unknown error";
+}
+
+async function sendGeneratedFilesToChannel(input: {
+  channel: unknown;
+  workingDir: string;
+  filenames: Iterable<string>;
+}): Promise<void> {
+  if (!canSendMessage(input.channel)) {
+    return;
+  }
+
+  const sentPaths = new Set<string>();
+  const failures: string[] = [];
+  for (const filename of input.filenames) {
+    const resolved = await resolvePersistedFilename(input.workingDir, filename);
+    if (!resolved) {
+      failures.push(`- \`${filename}\`: not found under \`${input.workingDir}\``);
+      continue;
+    }
+    if (sentPaths.has(resolved)) {
+      continue;
+    }
+    sentPaths.add(resolved);
+
+    try {
+      await input.channel.send({
+        content: `Generated file: \`${filename}\``,
+        files: [resolved],
+      });
+    } catch (error) {
+      failures.push(`- \`${filename}\`: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    const detail = failures.slice(0, 6).join("\n");
+    const overflow =
+      failures.length > 6 ? `\n- ... ${failures.length - 6} additional attachment issue(s)` : "";
+    await input.channel.send(
+      [
+        "Generated files could not all be attached:",
+        detail + overflow,
+        "Tip: ensure files exist in the project directory and are under Discord upload limits.",
+      ].join("\n"),
+    );
   }
 }
 
@@ -1590,24 +1712,11 @@ export async function startApp(config: AppConfig): Promise<void> {
             }
           }
 
-          if ("send" in message.channel && typeof message.channel.send === "function") {
-            for (const filename of persistedFilenames) {
-              const absolutePath = path.isAbsolute(filename)
-                ? filename
-                : path.resolve(state.channel.workingDir, filename);
-              if (!existsSync(absolutePath)) {
-                continue;
-              }
-              try {
-                await message.channel.send({
-                  content: `Generated file: \`${filename}\``,
-                  files: [absolutePath],
-                });
-              } catch {
-                // Ignore attachment send failures.
-              }
-            }
-          }
+          await sendGeneratedFilesToChannel({
+            channel: message.channel,
+            workingDir: state.channel.workingDir,
+            filenames: persistedFilenames,
+          });
 
           await removeReaction(message, "🧠");
           await addReaction(message, "✅");
