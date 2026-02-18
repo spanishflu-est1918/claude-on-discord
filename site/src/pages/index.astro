@@ -4,8 +4,8 @@ import Nav from '../components/Nav.astro';
 import FeatureCard from '../components/FeatureCard.astro';
 
 const GITHUB = 'https://github.com/spanishflu-est1918/claude-on-discord';
-const SETUP  = `${GITHUB}/blob/main/docs/SETUP.md`;
-const ARCH   = `${GITHUB}/blob/main/docs/ARCHITECTURE.md`;
+const SETUP  = `${GITHUB}/blob/master/docs/SETUP.md`;
+const ARCH   = `${GITHUB}/blob/master/docs/ARCHITECTURE.md`;
 
 const features = [
   { title: 'thread-branching',     icon: '#', description: 'Threads inherit parent context. <code class="text-[#5865F2]">/diff</code>, <code class="text-[#5865F2]">/pr</code>, git worktrees. Full branch workflow.' },
@@ -15,6 +15,7 @@ const features = [
   { title: 'system-prompts',       icon: '#', description: 'One channel is your Rails expert. Another is your TS reviewer. Prompts persist.' },
   { title: 'mcp-support',          icon: '#', description: 'Loads <code class="text-[#5865F2]">.claude/mcp.json</code> automatically. Your existing tools work out of the box.' },
   { title: 'direct-shell',         icon: '#', description: '<code class="text-[#5865F2]">/bash</code> for raw command execution. <code class="text-[#5865F2]">/worktree</code> for git branch management.' },
+  { title: 'native-diff',          icon: '#', description: '<code class="text-[#5865F2]">/diff</code> sends the current patch as a <code class="text-[#5865F2]">.diff</code> attachment. Review changes on your phone, no terminal required.' },
 ];
 
 const roadmapShipped = [
@@ -22,6 +23,7 @@ const roadmapShipped = [
   { slug: 'worktree-per-thread', icon: '🌿' },
 ];
 const roadmapPlanned = [
+  { slug: 'interview-mode',   icon: '🎤' },
   { slug: 'npx-distribution', icon: '📦' },
   { slug: 'tmux-attach',      icon: '🖥️'  },
   { slug: 'cost-tracking',    icon: '💰' },
@@ -191,8 +193,8 @@ const roadmapPlanned = [
         </div>
         <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] card-hover">
           <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none">&#x1F4F1; mobile</div>
-          <div class="text-white font-bold text-xl mb-2">= Included</div>
-          <p class="text-[#80848E] text-sm leading-relaxed">Search, slash commands, attachments, notifications. Discord solved the interface problem.</p>
+          <div class="text-white font-bold text-xl mb-2">= Your terminal</div>
+          <p class="text-[#80848E] text-sm leading-relaxed">Leave your laptop at home. Kick off a task from your phone, get notified when it's done. The agent runs. You don't have to be there.</p>
         </div>
       </div>
     </div>
@@ -237,6 +239,75 @@ const roadmapPlanned = [
               Claude Code runs to completion on your machine. You get notified when it's done. You can interrupt if it's going wrong. The flow is async &mdash; like code review, not like pair programming.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Work Anywhere ────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20 stripe-subtle">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Work Anywhere</div>
+      <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
+        Leave your laptop<br />at home.
+      </h2>
+      <p class="text-[#96989D] text-lg max-w-2xl mb-14 leading-relaxed">
+        SSH, Mosh, Tmux, Termius &mdash; you're still staring at a terminal. Still need a keyboard. Still babysitting a session that dies the moment your connection drops. Discord is already on your phone, already sends notifications, already handles reconnects. It's a better interface for async agent work than any terminal tool ever will be.
+      </p>
+
+      <div class="grid sm:grid-cols-2 gap-4 max-w-2xl">
+        <!-- Old way -->
+        <div class="bg-[#2B2D31] rounded-lg p-6 border border-[#383A40]">
+          <div class="text-[#80848E] font-bold text-sm mb-5 line-through decoration-[#F23F42]/60">SSH / Tmux / Mosh / Termius</div>
+          <ul class="space-y-3 text-sm">
+            <li class="flex items-start gap-2.5 text-[#80848E]">
+              <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
+              SSH in first, set up a session
+            </li>
+            <li class="flex items-start gap-2.5 text-[#80848E]">
+              <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
+              Keep Tmux alive or lose everything
+            </li>
+            <li class="flex items-start gap-2.5 text-[#80848E]">
+              <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
+              Mosh for flaky mobile connections
+            </li>
+            <li class="flex items-start gap-2.5 text-[#80848E]">
+              <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
+              Phone is useless for real input
+            </li>
+            <li class="flex items-start gap-2.5 text-[#80848E]">
+              <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
+              No notifications — you have to check
+            </li>
+          </ul>
+        </div>
+
+        <!-- Discord way -->
+        <div class="bg-[#2B2D31] rounded-lg p-6 border border-[#5865F2] blurple-glow-sm">
+          <div class="text-[#5865F2] font-bold text-sm mb-5">claude-on-discord</div>
+          <ul class="space-y-3 text-sm">
+            <li class="flex items-start gap-2.5 text-[#DBDEE1]">
+              <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
+              Type a task from your phone. Done.
+            </li>
+            <li class="flex items-start gap-2.5 text-[#DBDEE1]">
+              <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
+              Agent runs on your machine, unattended
+            </li>
+            <li class="flex items-start gap-2.5 text-[#DBDEE1]">
+              <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
+              Discord notifies you when it's done
+            </li>
+            <li class="flex items-start gap-2.5 text-[#DBDEE1]">
+              <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
+              Read the full output on the subway
+            </li>
+            <li class="flex items-start gap-2.5 text-[#DBDEE1]">
+              <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
+              Interrupt mid-run if something's wrong
+            </li>
+          </ul>
         </div>
       </div>
     </div>

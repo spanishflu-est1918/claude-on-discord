@@ -122,6 +122,7 @@ Full reference: [.env.example](.env.example)
 
 ## Roadmap
 
+- `→` Interview mode — Claude asks structured clarifying questions (with choices) before starting a task, mirroring Claude Code's native interview behavior
 - `→` Plan mode — proposal-first workflow with explicit approval before tool execution
 - `→` Thinking mode — extended thinking per channel for deep analysis and architectural work
 - `→` `npx` distribution — `npx claude-on-discord setup`, no clone required
@@ -131,6 +132,7 @@ Full reference: [.env.example](.env.example)
 - `→` PR review conductor — structured review buttons with targeted prompts
 - `→` Multi-guild support
 - `→` Orphan process reaper — detect/kill stale Claude subprocesses and clear stuck channel run state
+- `→` Codex support — run OpenAI Codex CLI as an alternative agent, per channel
 
 ---
 
