@@ -401,13 +401,17 @@ export async function startApp(config: AppConfig): Promise<void> {
         }
         case "project": {
           if (process.platform !== "darwin") {
-            await interaction.reply("Finder picker is only available on macOS.");
+            await interaction.reply({
+              content: "Finder picker is only available on macOS.",
+              flags: MessageFlags.Ephemeral,
+            });
             break;
           }
 
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const selectedPath = await pickFolderWithFinder();
           if (!selectedPath) {
-            await interaction.reply("Folder selection cancelled.");
+            await interaction.editReply("Folder selection cancelled.");
             break;
           }
 
@@ -417,7 +421,7 @@ export async function startApp(config: AppConfig): Promise<void> {
             guildId,
             workingDir: selectedPath,
           });
-          await interaction.reply({
+          await interaction.editReply({
             content: `Selected project \`${selectedPath}\`. Keep current context or clear it?`,
             components: buildProjectSwitchButtons(requestId),
           });
