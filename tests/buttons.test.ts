@@ -13,6 +13,7 @@ import {
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
+  parseToolInspectCustomId,
 } from "../src/discord/buttons";
 
 describe("discord buttons", () => {
@@ -21,19 +22,24 @@ describe("discord buttons", () => {
     expect(rows).toHaveLength(1);
 
     const components = rows[0]?.components ?? [];
-    expect(components).toHaveLength(2);
+    expect(components).toHaveLength(3);
 
     const interrupt = components[0]?.toJSON();
     const abort = components[1]?.toJSON();
+    const tools = components[2]?.toJSON();
     const interruptId = interrupt && "custom_id" in interrupt ? interrupt.custom_id : undefined;
     const abortId = abort && "custom_id" in abort ? abort.custom_id : undefined;
+    const toolsId = tools && "custom_id" in tools ? tools.custom_id : undefined;
     const interruptStyle = interrupt && "style" in interrupt ? interrupt.style : undefined;
     const abortStyle = abort && "style" in abort ? abort.style : undefined;
+    const toolsStyle = tools && "style" in tools ? tools.style : undefined;
 
     expect(interruptId).toBe("run:interrupt:123");
     expect(abortId).toBe("run:abort:123");
+    expect(toolsId).toBe("run:tools:123");
     expect(interruptStyle).toBe(ButtonStyle.Secondary);
     expect(abortStyle).toBe(ButtonStyle.Secondary);
+    expect(toolsStyle).toBe(ButtonStyle.Secondary);
   });
 
   test("parses interrupt and abort ids", () => {
@@ -45,6 +51,11 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("run:abort:xyz")).toEqual({
       action: "abort",
       channelId: "xyz",
+    });
+
+    expect(parseToolInspectCustomId("run:tools:chan-1")).toEqual({
+      action: "details",
+      channelId: "chan-1",
     });
   });
 
@@ -97,6 +108,7 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("noop")).toBeNull();
     expect(parseRunControlCustomId("run:interrupt:")).toBeNull();
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
+    expect(parseToolInspectCustomId("run:tools:")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss:chan-only")).toBeNull();
     expect(parseQueueDismissCustomId("queue:dismiss::user-only")).toBeNull();

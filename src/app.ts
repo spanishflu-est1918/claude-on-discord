@@ -22,6 +22,7 @@ import {
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
+  parseToolInspectCustomId,
 } from "./discord/buttons";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
@@ -48,6 +49,7 @@ import {
 } from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
 import { runWorktreeBootstrap, type WorktreeBootstrapResult } from "./discord/worktree-bootstrap";
+import type { ClaudeSDKMessage } from "./types";
 
 export type StartAppRuntimeOverrides = {
   openDatabase?: typeof openDatabase;
@@ -1273,14 +1275,310 @@ async function runBashCommand(
   };
 }
 
-function toStreamingPreview(text: string, thinking: string, maxChars = 1800): string {
+type LiveToolStatus = "queued" | "running" | "done" | "failed" | "interrupted";
+
+type LiveToolEntry = {
+  id: string;
+  name: string;
+  status: LiveToolStatus;
+  inputPreview?: string;
+  summary?: string;
+  elapsedSeconds?: number;
+  startedAtMs: number;
+  updatedAtMs: number;
+  completedAtMs?: number;
+};
+
+type LiveToolTrace = {
+  order: string[];
+  byId: Map<string, LiveToolEntry>;
+};
+
+function createLiveToolTrace(): LiveToolTrace {
+  return {
+    order: [],
+    byId: new Map<string, LiveToolEntry>(),
+  };
+}
+
+function clipText(value: string, maxChars: number): string {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function stringifyToolInput(input: unknown): string | undefined {
+  if (typeof input === "undefined") {
+    return undefined;
+  }
+  if (typeof input === "string") {
+    return clipText(input, 90);
+  }
+  try {
+    return clipText(JSON.stringify(input), 90);
+  } catch {
+    return undefined;
+  }
+}
+
+function ensureLiveToolEntry(
+  trace: LiveToolTrace,
+  input: { id: string; name?: string; inputPreview?: string },
+): LiveToolEntry {
+  const existing = trace.byId.get(input.id);
+  if (existing) {
+    if (input.name) {
+      existing.name = input.name;
+    }
+    if (input.inputPreview) {
+      existing.inputPreview = input.inputPreview;
+    }
+    existing.updatedAtMs = Date.now();
+    return existing;
+  }
+
+  const created: LiveToolEntry = {
+    id: input.id,
+    name: input.name ?? "tool",
+    status: "queued",
+    inputPreview: input.inputPreview,
+    startedAtMs: Date.now(),
+    updatedAtMs: Date.now(),
+  };
+  trace.byId.set(input.id, created);
+  trace.order.push(input.id);
+  return created;
+}
+
+function extractToolStartFromStreamEvent(
+  message: ClaudeSDKMessage,
+): { id: string; name?: string; inputPreview?: string } | null {
+  if (message.type !== "stream_event") {
+    return null;
+  }
+  const event = message.event as {
+    type?: string;
+    content_block?: {
+      type?: string;
+      id?: string;
+      tool_use_id?: string;
+      name?: string;
+      input?: unknown;
+    };
+  };
+  if (event.type !== "content_block_start") {
+    return null;
+  }
+  const block = event.content_block;
+  if (!block || block.type !== "tool_use") {
+    return null;
+  }
+  const id = block.id ?? block.tool_use_id;
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    name: block.name,
+    inputPreview: stringifyToolInput(block.input),
+  };
+}
+
+function applyToolMessageToTrace(trace: LiveToolTrace, message: ClaudeSDKMessage): boolean {
+  let changed = false;
+  const now = Date.now();
+
+  const streamStart = extractToolStartFromStreamEvent(message);
+  if (streamStart) {
+    const entry = ensureLiveToolEntry(trace, streamStart);
+    if (entry.status !== "running") {
+      entry.status = "running";
+      changed = true;
+    }
+    entry.updatedAtMs = now;
+  }
+
+  if (message.type === "tool_progress") {
+    const entry = ensureLiveToolEntry(trace, {
+      id: message.tool_use_id,
+      name: message.tool_name,
+    });
+    if (entry.status !== "running") {
+      entry.status = "running";
+      changed = true;
+    }
+    if (entry.elapsedSeconds !== message.elapsed_time_seconds) {
+      entry.elapsedSeconds = message.elapsed_time_seconds;
+      changed = true;
+    }
+    entry.updatedAtMs = now;
+  }
+
+  if (message.type === "tool_use_summary") {
+    for (const toolUseId of message.preceding_tool_use_ids) {
+      const entry = ensureLiveToolEntry(trace, {
+        id: toolUseId,
+      });
+      entry.summary = clipText(message.summary, 120);
+      entry.status = "done";
+      entry.completedAtMs = now;
+      entry.updatedAtMs = now;
+      changed = true;
+    }
+  }
+
+  if (message.type === "result" && message.is_error) {
+    for (const entry of trace.byId.values()) {
+      if (entry.status === "queued" || entry.status === "running") {
+        entry.status = "failed";
+        entry.completedAtMs = now;
+        entry.updatedAtMs = now;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+function finalizeLiveToolTrace(
+  trace: LiveToolTrace,
+  outcome: "success" | "failed" | "interrupted",
+): void {
+  const now = Date.now();
+  for (const entry of trace.byId.values()) {
+    if (entry.status !== "queued" && entry.status !== "running") {
+      continue;
+    }
+    entry.status =
+      outcome === "success" ? "done" : outcome === "interrupted" ? "interrupted" : "failed";
+    entry.completedAtMs = now;
+    entry.updatedAtMs = now;
+  }
+}
+
+function toolStatusIcon(status: LiveToolStatus): string {
+  switch (status) {
+    case "queued":
+      return "🕓";
+    case "running":
+      return "⏳";
+    case "done":
+      return "✅";
+    case "failed":
+      return "❌";
+    case "interrupted":
+      return "⏹️";
+  }
+}
+
+function formatElapsedSeconds(entry: LiveToolEntry): string | null {
+  if (typeof entry.elapsedSeconds === "number" && Number.isFinite(entry.elapsedSeconds)) {
+    return entry.elapsedSeconds >= 10
+      ? `${Math.round(entry.elapsedSeconds)}s`
+      : `${entry.elapsedSeconds.toFixed(1)}s`;
+  }
+  const endMs =
+    entry.status === "running" || entry.status === "queued" ? Date.now() : entry.completedAtMs;
+  if (!endMs) {
+    return null;
+  }
+  const seconds = Math.max(0, (endMs - entry.startedAtMs) / 1000);
+  if (seconds < 0.1) {
+    return null;
+  }
+  return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
+}
+
+function buildLiveToolPanel(trace: LiveToolTrace, maxLines = 5): string | null {
+  const allEntries = trace.order
+    .map((id) => trace.byId.get(id))
+    .filter((entry): entry is LiveToolEntry => Boolean(entry));
+  if (allEntries.length === 0) {
+    return null;
+  }
+
+  const running = allEntries.filter(
+    (entry) => entry.status === "running" || entry.status === "queued",
+  );
+  const finished = allEntries.filter(
+    (entry) => entry.status !== "running" && entry.status !== "queued",
+  );
+  const selected = [
+    ...running.slice(-maxLines),
+    ...finished.slice(-(maxLines - Math.min(maxLines, running.length))),
+  ].slice(-maxLines);
+
+  const lines = selected.map((entry) => {
+    const elapsed = formatElapsedSeconds(entry);
+    const descriptor = entry.summary ?? entry.inputPreview;
+    const tokens = [
+      `${toolStatusIcon(entry.status)} ${entry.name}`,
+      elapsed ? `(${elapsed})` : "",
+      descriptor ? `- ${clipText(descriptor, 70)}` : "",
+    ].filter(Boolean);
+    return tokens.join(" ");
+  });
+
+  const hidden = allEntries.length - selected.length;
+  if (hidden > 0) {
+    lines.push(`... +${hidden} more tool call(s)`);
+  }
+  return ["Tools:", ...lines].join("\n");
+}
+
+function buildLiveToolDetails(trace: LiveToolTrace, maxChars = 1800): string {
+  const entries = trace.order
+    .map((id) => trace.byId.get(id))
+    .filter((entry): entry is LiveToolEntry => Boolean(entry));
+  if (entries.length === 0) {
+    return "No tool calls captured yet for this channel.";
+  }
+
+  const lines: string[] = ["Tool Calls:"];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+    const elapsed = formatElapsedSeconds(entry);
+    const header = `${index + 1}. ${toolStatusIcon(entry.status)} ${entry.name} [${entry.id.slice(0, 10)}]${
+      elapsed ? ` (${elapsed})` : ""
+    }`;
+    lines.push(header);
+    if (entry.inputPreview) {
+      lines.push(`   input: ${entry.inputPreview}`);
+    }
+    if (entry.summary) {
+      lines.push(`   summary: ${entry.summary}`);
+    }
+  }
+
+  const joined = lines.join("\n");
+  if (joined.length <= maxChars) {
+    return joined;
+  }
+  return `${joined.slice(0, Math.max(0, maxChars - 27))}\n...[truncated tool details]...`;
+}
+
+function toStreamingPreview(
+  text: string,
+  thinking: string,
+  toolPanel?: string | null,
+  maxChars = 1800,
+): string {
   const trimmedText = text.trim();
   const trimmedThinking = thinking.trim();
-  if (!trimmedText && !trimmedThinking) {
+  if (!trimmedText && !trimmedThinking && !toolPanel) {
     return "Thinking...";
   }
 
   const parts: string[] = [];
+  if (toolPanel) {
+    parts.push(toolPanel);
+  }
   if (trimmedThinking) {
     parts.push(`Thinking:\n${trimmedThinking}`);
   }
@@ -1328,6 +1626,7 @@ export async function startApp(
   >();
   const pendingDiffViews = new Map<string, DiffContext>();
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
+  const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
@@ -1798,6 +2097,26 @@ export async function startApp(
               // Ignore queue notice dismiss fallback failures.
             }
           }
+          return;
+        }
+
+        const toolInspect = parseToolInspectCustomId(interaction.customId);
+        if (toolInspect) {
+          if (interaction.channelId !== toolInspect.channelId) {
+            await interaction.reply({
+              content: "This tools panel belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const trace = liveToolTracesByChannel.get(toolInspect.channelId);
+          await interaction.reply({
+            content: trace
+              ? buildLiveToolDetails(trace)
+              : "No tool calls captured yet for this channel.",
+            flags: MessageFlags.Ephemeral,
+          });
           return;
         }
 
@@ -2763,10 +3082,12 @@ export async function startApp(
               currentChannelId: channelId,
               entries: repository.listThreadBranchMetaEntries(),
             });
+            const runToolTrace = createLiveToolTrace();
+            liveToolTracesByChannel.set(channelId, runToolTrace);
 
             await addReaction(message, "🧠");
             const status = await message.reply({
-              content: "Thinking...",
+              content: toStreamingPreview("", "", buildLiveToolPanel(runToolTrace)),
               components: buildStopButtons(channelId),
             });
             const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
@@ -2800,7 +3121,14 @@ export async function startApp(
               if (streamClosed) {
                 return;
               }
-              void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
+              void queueStatusEdit(
+                toStreamingPreview(
+                  streamedText,
+                  streamedThinking,
+                  buildLiveToolPanel(runToolTrace),
+                ),
+                true,
+              );
             };
 
             const scheduleStreamPreview = () => {
@@ -2842,6 +3170,9 @@ export async function startApp(
                       persistedFilenames.add(file.filename);
                     }
                   }
+                  if (applyToolMessageToTrace(runToolTrace, sdkMessage)) {
+                    scheduleStreamPreview();
+                  }
                 },
               });
 
@@ -2859,12 +3190,14 @@ export async function startApp(
               const outputText = result.text.trim();
               const structuredAttachments = extractStructuredAttachmentDirectives(outputText);
               const cleanedOutputText = structuredAttachments.cleanedText.trim();
+              const interrupted = stopController.wasInterrupted(channelId);
+              finalizeLiveToolTrace(runToolTrace, interrupted ? "interrupted" : "success");
               const finalText =
                 cleanedOutputText.length > 0
                   ? cleanedOutputText
                   : structuredAttachments.filenames.length > 0
                     ? "Attached generated file(s)."
-                    : stopController.wasInterrupted(channelId)
+                    : interrupted
                       ? "Interrupted."
                       : "(No response text)";
               sessions.appendTurn(channelId, {
@@ -2915,6 +3248,10 @@ export async function startApp(
               }
               streamClosed = true;
               await statusEditQueue;
+              finalizeLiveToolTrace(
+                runToolTrace,
+                stopController.wasInterrupted(channelId) ? "interrupted" : "failed",
+              );
 
               const msg = error instanceof Error ? error.message : "Unknown failure";
               await status.edit({
