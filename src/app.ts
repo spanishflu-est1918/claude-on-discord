@@ -999,7 +999,7 @@ export async function startApp(config: AppConfig): Promise<void> {
           }
           case "worktree": {
             const state = sessions.getState(channelId, guildId);
-            const action = interaction.options.getString("action", true);
+            const action = interaction.options.getSubcommand(true);
             const inputPath = interaction.options.getString("path");
             const branch = interaction.options.getString("branch");
             await interaction.deferReply();

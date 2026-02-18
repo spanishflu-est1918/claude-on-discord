@@ -51,25 +51,30 @@ const slashCommands = [
   new SlashCommandBuilder()
     .setName("worktree")
     .setDescription("Manage git worktrees")
-    .addStringOption((option) =>
-      option
-        .setName("action")
-        .setDescription("Action to execute")
-        .setRequired(true)
-        .addChoices(
-          { name: "create", value: "create" },
-          { name: "list", value: "list" },
-          { name: "remove", value: "remove" },
-          { name: "thread", value: "thread" },
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("create")
+        .setDescription("Create a git worktree (auto path if omitted)")
+        .addStringOption((option) =>
+          option.setName("path").setDescription("Optional path override"),
+        )
+        .addStringOption((option) =>
+          option.setName("branch").setDescription("Optional branch name"),
         ),
     )
-    .addStringOption((option) =>
-      option
-        .setName("path")
-        .setDescription("Optional path override (auto for create, current dir for remove)"),
+    .addSubcommand((subcommand) => subcommand.setName("list").setDescription("List git worktrees"))
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("remove")
+        .setDescription("Remove a git worktree (defaults to current project dir)")
+        .addStringOption((option) =>
+          option.setName("path").setDescription("Optional path override"),
+        ),
     )
-    .addStringOption((option) =>
-      option.setName("branch").setDescription("Branch for create action"),
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("thread")
+        .setDescription("Provision/switch this thread to a dedicated worktree"),
     ),
 ];
 
