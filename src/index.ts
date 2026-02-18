@@ -1,10 +1,12 @@
+import { startApp } from "./app";
 import { loadConfig } from "./config";
 
-function main() {
+async function main() {
   const config = loadConfig();
-  console.log(
-    `claude-on-discord bootstrapped (model=${config.defaultModel}, cwd=${config.defaultWorkingDir})`,
-  );
+  await startApp(config);
 }
 
-main();
+main().catch((error) => {
+  console.error("fatal startup error", error);
+  process.exit(1);
+});
