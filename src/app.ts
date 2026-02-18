@@ -1316,6 +1316,8 @@ function italicizeMultiline(text: string): string {
     .join("\n");
 }
 
+const THINKING_SPINNER_FRAMES = ["-", "\\", "|", "/"] as const;
+
 function stringifyToolInput(input: unknown): string | undefined {
   if (typeof input === "undefined") {
     return undefined;
@@ -1574,19 +1576,21 @@ function toStreamingPreview(
   text: string,
   thinking: string,
   toolPanel?: string | null,
+  thinkingSpinnerFrame?: string,
   maxChars = 1800,
 ): string {
+  const spinnerSuffix = thinkingSpinnerFrame ? ` ${thinkingSpinnerFrame}` : "";
   const trimmedText = text.trim();
   const trimmedThinking = thinking.trim();
   if (!trimmedText && !trimmedThinking && !toolPanel) {
-    return "_Thinking..._";
+    return `_Thinking${spinnerSuffix}..._`;
   }
 
   const parts: string[] = [];
   if (trimmedThinking) {
-    parts.push(`_Thinking_\n${italicizeMultiline(trimmedThinking)}`);
+    parts.push(`_Thinking${spinnerSuffix}_\n${italicizeMultiline(trimmedThinking)}`);
   } else if (!trimmedText) {
-    parts.push("_Thinking..._");
+    parts.push(`_Thinking${spinnerSuffix}..._`);
   }
   if (toolPanel) {
     parts.push(toolPanel);
@@ -3099,7 +3103,12 @@ export async function startApp(
 
             await addReaction(message, "🧠");
             const status = await message.reply({
-              content: toStreamingPreview("", "", buildLiveToolPanel(runToolTrace)),
+              content: toStreamingPreview(
+                "",
+                "",
+                buildLiveToolPanel(runToolTrace),
+                THINKING_SPINNER_FRAMES[0],
+              ),
               components: buildStopButtons(channelId),
             });
             const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
@@ -3114,6 +3123,8 @@ export async function startApp(
             let streamedThinking = "";
             let streamClosed = false;
             let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+            let streamSpinnerTimer: ReturnType<typeof setInterval> | null = null;
+            let streamSpinnerFrameIndex = 0;
             let statusEditQueue: Promise<unknown> = Promise.resolve();
 
             const queueStatusEdit = (content: string, includeButtons: boolean) => {
@@ -3138,6 +3149,7 @@ export async function startApp(
                   streamedText,
                   streamedThinking,
                   buildLiveToolPanel(runToolTrace),
+                  THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
                 ),
                 true,
               );
@@ -3149,6 +3161,31 @@ export async function startApp(
               }
               streamFlushTimer = setTimeout(flushStreamPreview, 300);
             };
+
+            const stopSpinner = () => {
+              if (!streamSpinnerTimer) {
+                return;
+              }
+              clearInterval(streamSpinnerTimer);
+              streamSpinnerTimer = null;
+            };
+
+            streamSpinnerTimer = setInterval(() => {
+              if (streamClosed) {
+                return;
+              }
+              streamSpinnerFrameIndex =
+                (streamSpinnerFrameIndex + 1) % THINKING_SPINNER_FRAMES.length;
+              void queueStatusEdit(
+                toStreamingPreview(
+                  streamedText,
+                  streamedThinking,
+                  buildLiveToolPanel(runToolTrace),
+                  THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
+                ),
+                true,
+              );
+            }, 900);
 
             try {
               sessions.appendTurn(channelId, {
@@ -3192,6 +3229,7 @@ export async function startApp(
                 clearTimeout(streamFlushTimer);
                 streamFlushTimer = null;
               }
+              stopSpinner();
               streamClosed = true;
               await statusEditQueue;
 
@@ -3254,6 +3292,7 @@ export async function startApp(
                 clearTimeout(streamFlushTimer);
                 streamFlushTimer = null;
               }
+              stopSpinner();
               streamClosed = true;
               await statusEditQueue;
               finalizeLiveToolTrace(
@@ -3269,6 +3308,7 @@ export async function startApp(
               await removeReaction(message, "🧠");
               await addReaction(message, "❌");
             } finally {
+              stopSpinner();
               await cleanupFiles(stagedAttachments.stagedPaths);
               stopController.clear(channelId);
             }
