@@ -1577,15 +1577,18 @@ function toStreamingPreview(
 
   const parts: string[] = [];
   if (trimmedThinking) {
-    parts.push(`Thinking:\n${trimmedThinking}`);
+    parts.push(`*Thinking*\n${trimmedThinking}`);
   } else if (!trimmedText) {
-    parts.push("Thinking...");
+    parts.push("*Thinking...*");
   }
   if (toolPanel) {
     parts.push(toolPanel);
   }
   if (trimmedText) {
-    parts.push(`Answer so far:\n${trimmedText}`);
+    if (trimmedThinking || toolPanel) {
+      parts.push("---");
+    }
+    parts.push(`*Answer so far*\n${trimmedText}`);
   }
 
   const combined = parts.join("\n\n");
