@@ -52,6 +52,11 @@ async function main(): Promise<void> {
         current.DATABASE_PATH ?? "./data/claude-on-discord.sqlite",
       ),
       defaultModel: await ask(rl, "Default model", current.DEFAULT_MODEL ?? "sonnet"),
+      autoThreadWorktree: await ask(
+        rl,
+        "Auto thread worktree (true/false)",
+        current.AUTO_THREAD_WORKTREE ?? "false",
+      ),
       claudePermissionMode: await ask(
         rl,
         "Claude permission mode",

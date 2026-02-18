@@ -26,6 +26,7 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 - Automatic thread branching:
   - when a new Discord thread starts, it inherits parent context automatically
   - inherited context includes project, model, in-memory turns, and system prompt
+  - optional auto-worktree mode can provision per-thread git worktrees
   - prompt context includes lightweight thread-branch metadata for branch-aware Q&A
 - Direct shell execution via `/bash`
 - Git worktree utilities via `/worktree`
@@ -104,6 +105,7 @@ Common optional variables:
 - `DEFAULT_WORKING_DIR`: default project root (default: `~/www`)
 - `DATABASE_PATH`: sqlite path (default: `./data/claude-on-discord.sqlite`)
 - `DEFAULT_MODEL`: Claude model alias/name (default: `sonnet`)
+- `AUTO_THREAD_WORKTREE`: auto-provision per-thread git worktrees (default: `false`)
 - `CLAUDE_PERMISSION_MODE`: SDK permission mode (default: `bypassPermissions`)
 
 ## Commands

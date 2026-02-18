@@ -11,6 +11,7 @@ const envSchema = z.object({
   DEFAULT_WORKING_DIR: z.string().trim().default("~/www"),
   DATABASE_PATH: z.string().trim().default("./data/claude-on-discord.sqlite"),
   DEFAULT_MODEL: z.string().trim().default("sonnet"),
+  AUTO_THREAD_WORKTREE: z.string().trim().optional(),
   CLAUDE_PERMISSION_MODE: z
     .enum(["default", "plan", "acceptEdits", "bypassPermissions", "delegate", "dontAsk"])
     .default("bypassPermissions"),
@@ -24,8 +25,25 @@ export type AppConfig = {
   defaultWorkingDir: string;
   databasePath: string;
   defaultModel: string;
+  autoThreadWorktree: boolean;
   claudePermissionMode: ClaudePermissionMode;
 };
+
+function parseEnvBoolean(input: string | undefined, fallback: boolean): boolean {
+  if (!input || input.trim().length === 0) {
+    return fallback;
+  }
+  const normalized = input.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  throw new Error(
+    "Invalid environment configuration: AUTO_THREAD_WORKTREE must be one of 1/0/true/false/yes/no/on/off",
+  );
+}
 
 function expandHome(inputPath: string): string {
   if (!inputPath.startsWith("~/")) {
@@ -55,6 +73,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const resolvedWorkingDir = path.resolve(expandHome(value.DEFAULT_WORKING_DIR));
   const resolvedDbPath = path.resolve(expandHome(value.DATABASE_PATH));
+  const autoThreadWorktree = parseEnvBoolean(value.AUTO_THREAD_WORKTREE, false);
 
   return {
     discordToken: value.DISCORD_TOKEN,
@@ -64,6 +83,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     defaultWorkingDir: resolvedWorkingDir,
     databasePath: resolvedDbPath,
     defaultModel: value.DEFAULT_MODEL,
+    autoThreadWorktree,
     claudePermissionMode: value.CLAUDE_PERMISSION_MODE,
   };
 }

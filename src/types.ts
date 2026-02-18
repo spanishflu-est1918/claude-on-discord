@@ -64,6 +64,7 @@ export interface ThreadBranchMeta {
   parentChannelId: string | null;
   name: string;
   createdAt: number;
+  worktreePath?: string;
 }
 
 export interface RingBufferSnapshot<T> {

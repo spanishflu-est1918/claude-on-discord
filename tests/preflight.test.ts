@@ -13,6 +13,7 @@ function createConfig(overrides: Partial<AppConfig>): AppConfig {
     defaultWorkingDir: "/tmp",
     databasePath: "/tmp/bot.sqlite",
     defaultModel: "sonnet",
+    autoThreadWorktree: false,
     claudePermissionMode: "bypassPermissions",
     ...overrides,
   };

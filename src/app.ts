@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type Message, MessageFlags } from "discord.js";
@@ -280,12 +280,79 @@ function cloneThreadBranchName(name: string): string {
   return trimmed.slice(0, 90);
 }
 
+function firstOutputLine(output: string): string {
+  return output.split(/\r?\n/, 1)[0]?.trim() ?? "";
+}
+
+function sanitizeThreadToken(input: string): string {
+  const base = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base.length > 0 ? base : "thread";
+}
+
+async function maybeProvisionThreadWorktree(input: {
+  enabled: boolean;
+  parentWorkingDir: string;
+  threadChannelId: string;
+  threadName: string;
+}): Promise<string | null> {
+  if (!input.enabled) {
+    return null;
+  }
+
+  const topLevelResult = await runCommand(
+    ["git", "rev-parse", "--show-toplevel"],
+    input.parentWorkingDir,
+  );
+  if (topLevelResult.exitCode !== 0) {
+    return null;
+  }
+
+  const repoRoot = firstOutputLine(topLevelResult.output);
+  if (!repoRoot) {
+    return null;
+  }
+
+  const repoName = path.basename(repoRoot);
+  const token = sanitizeThreadToken(input.threadName);
+  const suffix = input.threadChannelId.slice(-8);
+  const worktreeRoot = path.resolve(repoRoot, "..", `${repoName}.discord-worktrees`);
+  const worktreePath = path.join(worktreeRoot, `${token}-${suffix}`);
+  const branchName = `discord/${token.slice(0, 40)}-${suffix}`;
+
+  if (existsSync(worktreePath)) {
+    return worktreePath;
+  }
+
+  await mkdir(worktreeRoot, { recursive: true });
+
+  let addResult = await runCommand(
+    ["git", "worktree", "add", worktreePath, "-b", branchName],
+    repoRoot,
+  );
+  if (addResult.exitCode !== 0 && /already exists/i.test(addResult.output)) {
+    addResult = await runCommand(["git", "worktree", "add", worktreePath, branchName], repoRoot);
+  }
+  if (addResult.exitCode !== 0) {
+    console.warn(
+      `Thread worktree provisioning failed for ${input.threadChannelId}: ${addResult.output}`,
+    );
+    return null;
+  }
+
+  return worktreePath;
+}
+
 async function maybeInheritThreadContext(input: {
   channel: unknown;
   channelId: string;
   guildId: string;
   sessions: SessionManager;
   repository: Repository;
+  autoThreadWorktree: boolean;
 }): Promise<void> {
   const existing = input.repository.getChannel(input.channelId);
   if (existing) {
@@ -310,6 +377,16 @@ async function maybeInheritThreadContext(input: {
   }
 
   input.sessions.cloneChannelContext(parentChannelId, input.channelId, input.guildId);
+  const threadName = cloneThreadBranchName((input.channel as { name?: string }).name ?? "");
+  const worktreePath = await maybeProvisionThreadWorktree({
+    enabled: input.autoThreadWorktree,
+    parentWorkingDir: parent.workingDir,
+    threadChannelId: input.channelId,
+    threadName,
+  });
+  if (worktreePath) {
+    input.sessions.setWorkingDir(input.channelId, worktreePath);
+  }
   const parentPrompt = input.repository.getChannelSystemPrompt(parentChannelId);
   if (parentPrompt) {
     input.repository.setChannelSystemPrompt(input.channelId, parentPrompt);
@@ -323,8 +400,9 @@ async function maybeInheritThreadContext(input: {
       guildId: input.guildId,
       rootChannelId,
       parentChannelId,
-      name: cloneThreadBranchName((input.channel as { name?: string }).name ?? ""),
+      name: threadName,
       createdAt: Date.now(),
+      ...(worktreePath ? { worktreePath } : {}),
     }),
   );
 }
@@ -573,6 +651,7 @@ export async function startApp(config: AppConfig): Promise<void> {
           guildId,
           sessions,
           repository,
+          autoThreadWorktree: config.autoThreadWorktree,
         });
 
         switch (interaction.commandName) {
@@ -849,6 +928,7 @@ export async function startApp(config: AppConfig): Promise<void> {
           guildId,
           sessions,
           repository,
+          autoThreadWorktree: config.autoThreadWorktree,
         });
         const state = sessions.getState(channelId, guildId);
         const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);

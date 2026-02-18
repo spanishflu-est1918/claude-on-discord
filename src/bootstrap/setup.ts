@@ -9,6 +9,7 @@ export type SetupValues = {
   defaultWorkingDir: string;
   databasePath: string;
   defaultModel: string;
+  autoThreadWorktree: string;
   claudePermissionMode: string;
 };
 
@@ -61,6 +62,7 @@ export function renderEnvFile(values: SetupValues): string {
     `DEFAULT_WORKING_DIR=${values.defaultWorkingDir}`,
     `DATABASE_PATH=${values.databasePath}`,
     `DEFAULT_MODEL=${values.defaultModel}`,
+    `AUTO_THREAD_WORKTREE=${values.autoThreadWorktree}`,
     `CLAUDE_PERMISSION_MODE=${values.claudePermissionMode}`,
     "",
   ];

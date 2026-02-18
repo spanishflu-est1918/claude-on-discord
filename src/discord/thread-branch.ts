@@ -12,7 +12,8 @@ function isThreadBranchMeta(value: unknown): value is ThreadBranchMeta {
     (typeof candidate.parentChannelId === "string" || candidate.parentChannelId === null) &&
     typeof candidate.name === "string" &&
     typeof candidate.createdAt === "number" &&
-    Number.isFinite(candidate.createdAt)
+    Number.isFinite(candidate.createdAt) &&
+    (typeof candidate.worktreePath === "string" || typeof candidate.worktreePath === "undefined")
   );
 }
 
@@ -63,7 +64,7 @@ export function buildThreadBranchAwarenessPrompt(input: {
 
     for (const meta of related.slice(0, maxBranches)) {
       lines.push(
-        `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? meta.rootChannelId}`,
+        `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? meta.rootChannelId}; worktree=${meta.worktreePath ?? "inherited-root"}`,
       );
     }
     if (related.length > maxBranches) {
@@ -81,7 +82,7 @@ export function buildThreadBranchAwarenessPrompt(input: {
   lines.push("Current channel is a root with child thread branches:");
   for (const meta of rootedHere.slice(0, maxBranches)) {
     lines.push(
-      `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? "none"}`,
+      `- name=${meta.name}; channel=${meta.channelId}; parent=${meta.parentChannelId ?? "none"}; worktree=${meta.worktreePath ?? "inherited-root"}`,
     );
   }
   if (rootedHere.length > maxBranches) {
@@ -110,11 +111,15 @@ export function buildThreadBranchStatusLines(input: {
 
   const current = byChannel.get(input.currentChannelId);
   if (current) {
-    return [
+    const lines = [
       `Thread branch: \`${current.name}\` (\`${current.channelId}\`)`,
       `Thread root: \`${current.rootChannelId}\``,
       `Thread parent: ${current.parentChannelId ? `\`${current.parentChannelId}\`` : "none"}`,
     ];
+    if (current.worktreePath) {
+      lines.push(`Thread worktree: \`${current.worktreePath}\``);
+    }
+    return lines;
   }
 
   const childCount = metas.filter((meta) => meta.rootChannelId === input.currentChannelId).length;
