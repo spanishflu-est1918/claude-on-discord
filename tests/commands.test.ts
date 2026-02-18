@@ -39,4 +39,44 @@ describe("slash commands", () => {
       .filter(Boolean);
     expect(subcommands).toEqual(["set", "show", "clear"]);
   });
+
+  test("required command options are ordered before optional options", () => {
+    const commands = getSlashCommandDefinitions();
+
+    const assertRequiredFirst = (options: unknown, path: string) => {
+      if (!Array.isArray(options)) {
+        return;
+      }
+
+      let sawOptional = false;
+      for (let index = 0; index < options.length; index++) {
+        const option = options[index];
+        if (!option || typeof option !== "object") {
+          continue;
+        }
+
+        const candidate = option as {
+          name?: unknown;
+          required?: unknown;
+          options?: unknown;
+        };
+        const optionName = typeof candidate.name === "string" ? candidate.name : String(index);
+        const optionPath = `${path}.${optionName}`;
+        const required = candidate.required === true;
+
+        if (required && sawOptional) {
+          throw new Error(`Required option appears after optional option at ${optionPath}`);
+        }
+        if (!required) {
+          sawOptional = true;
+        }
+
+        assertRequiredFirst(candidate.options, optionPath);
+      }
+    };
+
+    for (const command of commands) {
+      assertRequiredFirst(command.options, `/${command.name}`);
+    }
+  });
 });

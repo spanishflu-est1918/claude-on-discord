@@ -59,7 +59,7 @@ function createMockMessage(input: {
 }
 
 describe("startApp message queue behavior", () => {
-  test("delegates concurrent message handling to the runner", async () => {
+  test("serializes concurrent channel messages and queues follow-ups", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "app-queue-"));
     const dbPath = path.join(root, "state.sqlite");
     let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
@@ -134,14 +134,14 @@ describe("startApp message queue behavior", () => {
       await Promise.all([firstRun, secondRun]);
 
       expect(runnerCalls).toBe(2);
-      expect(maxConcurrentRuns).toBe(2);
+      expect(maxConcurrentRuns).toBe(1);
       expect(
         second.replyCalls.some(
           (call) =>
             typeof call === "string" &&
-            call.includes("Run in progress for this channel. Queued your message to run next."),
+            call.includes("Run in progress for this channel. Queued your message."),
         ),
-      ).toBeFalse();
+      ).toBeTrue();
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

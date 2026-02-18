@@ -132,6 +132,12 @@ const slashCommands = [
       subcommand
         .setName("merge")
         .setDescription("Merge current branch PR (requires confirm=true)")
+        .addBooleanOption((option) =>
+          option
+            .setName("confirm")
+            .setDescription("Required safety confirmation")
+            .setRequired(true),
+        )
         .addStringOption((option) =>
           option
             .setName("method")
@@ -149,12 +155,6 @@ const slashCommands = [
         )
         .addBooleanOption((option) =>
           option.setName("admin").setDescription("Use admin merge for protected branches"),
-        )
-        .addBooleanOption((option) =>
-          option
-            .setName("confirm")
-            .setDescription("Required safety confirmation")
-            .setRequired(true),
         ),
     ),
   new SlashCommandBuilder()

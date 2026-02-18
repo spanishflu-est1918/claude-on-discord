@@ -1301,6 +1301,7 @@ export async function startApp(
     { channelId: string; guildId: string; workingDir: string }
   >();
   const pendingDiffViews = new Map<string, DiffContext>();
+  const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
@@ -2633,219 +2634,246 @@ export async function startApp(
       },
       onUserMessage: async (message) => {
         const channelId = message.channel.id;
-        if (shuttingDown) {
+        const wasQueued = pendingMessageRunsByChannel.has(channelId);
+        if (wasQueued) {
           try {
-            await message.reply("⚠️ Bot is shutting down. Please retry in a moment.");
+            await message.reply("⏳ Run in progress for this channel. Queued your message.");
           } catch {
-            // Ignore reply failures while shutting down.
+            // Ignore queue notice failures.
           }
-          return;
         }
 
-        const guildId = message.guildId ?? "dm";
-        await maybeInheritThreadContext({
-          channel: message.channel,
-          channelId,
-          guildId,
-          sessions,
-          repository,
-          autoThreadWorktree: config.autoThreadWorktree,
-          worktreeBootstrap: config.worktreeBootstrap,
-          worktreeBootstrapCommand: config.worktreeBootstrapCommand,
-        });
-        const state = sessions.getState(channelId, guildId);
-        const directBash = parseDirectBashCommand(message.content);
-        if (directBash !== null) {
-          if (!directBash) {
-            await message.reply(
-              "Direct shell mode expects a command after `!` (example: `!git status`).",
-            );
-            return;
-          }
-
-          const result = await runBashCommand(directBash, state.channel.workingDir);
-          const outputText = result.output || "(no output)";
-          const payload = `\`\`\`bash\n$ ${directBash}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
-          const chunks = chunkDiscordText(payload);
-          const firstChunk = chunks[0] ?? "(no output)";
-          await message.reply(firstChunk);
-          for (let i = 1; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunk && "send" in message.channel && typeof message.channel.send === "function") {
-              await message.channel.send(chunk);
+        const previousRun = pendingMessageRunsByChannel.get(channelId) ?? Promise.resolve();
+        const run = previousRun
+          .catch(() => undefined)
+          .then(async () => {
+            if (shuttingDown) {
+              try {
+                await message.reply("⚠️ Bot is shutting down. Please retry in a moment.");
+              } catch {
+                // Ignore reply failures while shutting down.
+              }
+              return;
             }
-          }
-          return;
-        }
-        const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
-        const stagedAttachments = await stageAttachments(message);
-        const threadBranchContext = buildThreadBranchAwarenessPrompt({
-          currentChannelId: channelId,
-          entries: repository.listThreadBranchMetaEntries(),
-        });
 
-        await addReaction(message, "🧠");
-        const status = await message.reply({
-          content: "Thinking...",
-          components: buildStopButtons(channelId),
-        });
-        const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
-        const seededPrompt = buildSeededPrompt(
-          prompt,
-          state.history,
-          Boolean(state.channel.sessionId),
-        );
-        const abortController = new AbortController();
-        const persistedFilenames = new Set<string>();
-        let streamedText = "";
-        let streamedThinking = "";
-        let streamClosed = false;
-        let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-        let statusEditQueue: Promise<unknown> = Promise.resolve();
+            const guildId = message.guildId ?? "dm";
+            await maybeInheritThreadContext({
+              channel: message.channel,
+              channelId,
+              guildId,
+              sessions,
+              repository,
+              autoThreadWorktree: config.autoThreadWorktree,
+              worktreeBootstrap: config.worktreeBootstrap,
+              worktreeBootstrapCommand: config.worktreeBootstrapCommand,
+            });
+            const state = sessions.getState(channelId, guildId);
+            const directBash = parseDirectBashCommand(message.content);
+            if (directBash !== null) {
+              if (!directBash) {
+                await message.reply(
+                  "Direct shell mode expects a command after `!` (example: `!git status`).",
+                );
+                return;
+              }
 
-        const queueStatusEdit = (content: string, includeButtons: boolean) => {
-          statusEditQueue = statusEditQueue
-            .then(() =>
-              status.edit({
-                content,
-                components: includeButtons ? buildStopButtons(channelId) : [],
-              }),
-            )
-            .catch(() => undefined);
-          return statusEditQueue;
-        };
-
-        const flushStreamPreview = () => {
-          streamFlushTimer = null;
-          if (streamClosed) {
-            return;
-          }
-          void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
-        };
-
-        const scheduleStreamPreview = () => {
-          if (streamClosed || streamFlushTimer) {
-            return;
-          }
-          streamFlushTimer = setTimeout(flushStreamPreview, 300);
-        };
-
-        try {
-          sessions.appendTurn(channelId, {
-            role: "user",
-            content: prompt,
-          });
-
-          const result = await runner.run({
-            channelId,
-            prompt: seededPrompt,
-            cwd: state.channel.workingDir,
-            sessionId: state.channel.sessionId ?? undefined,
-            model: state.channel.model,
-            systemPrompt: channelSystemPrompt ?? undefined,
-            permissionMode: config.claudePermissionMode,
-            abortController,
-            onQueryStart: (query) => {
-              stopController.register(channelId, { query, abortController });
-            },
-            onTextDelta: (textDelta) => {
-              streamedText += textDelta;
-              scheduleStreamPreview();
-            },
-            onThinkingDelta: (thinkingDelta) => {
-              streamedThinking += thinkingDelta;
-              scheduleStreamPreview();
-            },
-            onMessage: (sdkMessage) => {
-              if (sdkMessage.type === "system" && sdkMessage.subtype === "files_persisted") {
-                for (const file of sdkMessage.files) {
-                  persistedFilenames.add(file.filename);
+              const result = await runBashCommand(directBash, state.channel.workingDir);
+              const outputText = result.output || "(no output)";
+              const payload = `\`\`\`bash\n$ ${directBash}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
+              const chunks = chunkDiscordText(payload);
+              const firstChunk = chunks[0] ?? "(no output)";
+              await message.reply(firstChunk);
+              for (let i = 1; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                if (
+                  chunk &&
+                  "send" in message.channel &&
+                  typeof message.channel.send === "function"
+                ) {
+                  await message.channel.send(chunk);
                 }
               }
-            },
-          });
-
-          if (streamFlushTimer) {
-            clearTimeout(streamFlushTimer);
-            streamFlushTimer = null;
-          }
-          streamClosed = true;
-          await statusEditQueue;
-
-          if (result.sessionId) {
-            sessions.setSessionId(channelId, result.sessionId);
-          }
-
-          const outputText = result.text.trim();
-          const structuredAttachments = extractStructuredAttachmentDirectives(outputText);
-          const cleanedOutputText = structuredAttachments.cleanedText.trim();
-          const finalText =
-            cleanedOutputText.length > 0
-              ? cleanedOutputText
-              : structuredAttachments.filenames.length > 0
-                ? "Attached generated file(s)."
-                : stopController.wasInterrupted(channelId)
-                  ? "Interrupted."
-                  : "(No response text)";
-          sessions.appendTurn(channelId, {
-            role: "assistant",
-            content: finalText,
-          });
-
-          const chunks = chunkDiscordText(finalText);
-          if (chunks.length === 0) {
-            await status.edit({
-              content: finalText,
-              components: [],
-            });
-          } else {
-            const firstChunk = chunks[0];
-            await status.edit({
-              content: firstChunk ?? finalText,
-              components: [],
-            });
-            for (let i = 1; i < chunks.length; i++) {
-              const chunk = chunks[i];
-              if (
-                chunk &&
-                "send" in message.channel &&
-                typeof message.channel.send === "function"
-              ) {
-                await message.channel.send(chunk);
-              }
+              return;
             }
-          }
+            const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+            const stagedAttachments = await stageAttachments(message);
+            const threadBranchContext = buildThreadBranchAwarenessPrompt({
+              currentChannelId: channelId,
+              entries: repository.listThreadBranchMetaEntries(),
+            });
 
-          await sendGeneratedFilesToChannel({
-            channel: message.channel,
-            workingDir: state.channel.workingDir,
-            filenames: new Set([
-              ...persistedFilenames,
-              ...structuredAttachments.filenames,
-              ...extractAttachmentPathCandidates(outputText),
-            ]),
+            await addReaction(message, "🧠");
+            const status = await message.reply({
+              content: "Thinking...",
+              components: buildStopButtons(channelId),
+            });
+            const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
+            const seededPrompt = buildSeededPrompt(
+              prompt,
+              state.history,
+              Boolean(state.channel.sessionId),
+            );
+            const abortController = new AbortController();
+            const persistedFilenames = new Set<string>();
+            let streamedText = "";
+            let streamedThinking = "";
+            let streamClosed = false;
+            let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+            let statusEditQueue: Promise<unknown> = Promise.resolve();
+
+            const queueStatusEdit = (content: string, includeButtons: boolean) => {
+              statusEditQueue = statusEditQueue
+                .then(() =>
+                  status.edit({
+                    content,
+                    components: includeButtons ? buildStopButtons(channelId) : [],
+                  }),
+                )
+                .catch(() => undefined);
+              return statusEditQueue;
+            };
+
+            const flushStreamPreview = () => {
+              streamFlushTimer = null;
+              if (streamClosed) {
+                return;
+              }
+              void queueStatusEdit(toStreamingPreview(streamedText, streamedThinking), true);
+            };
+
+            const scheduleStreamPreview = () => {
+              if (streamClosed || streamFlushTimer) {
+                return;
+              }
+              streamFlushTimer = setTimeout(flushStreamPreview, 300);
+            };
+
+            try {
+              sessions.appendTurn(channelId, {
+                role: "user",
+                content: prompt,
+              });
+
+              const result = await runner.run({
+                channelId,
+                prompt: seededPrompt,
+                cwd: state.channel.workingDir,
+                sessionId: state.channel.sessionId ?? undefined,
+                model: state.channel.model,
+                systemPrompt: channelSystemPrompt ?? undefined,
+                permissionMode: config.claudePermissionMode,
+                abortController,
+                onQueryStart: (query) => {
+                  stopController.register(channelId, { query, abortController });
+                },
+                onTextDelta: (textDelta) => {
+                  streamedText += textDelta;
+                  scheduleStreamPreview();
+                },
+                onThinkingDelta: (thinkingDelta) => {
+                  streamedThinking += thinkingDelta;
+                  scheduleStreamPreview();
+                },
+                onMessage: (sdkMessage) => {
+                  if (sdkMessage.type === "system" && sdkMessage.subtype === "files_persisted") {
+                    for (const file of sdkMessage.files) {
+                      persistedFilenames.add(file.filename);
+                    }
+                  }
+                },
+              });
+
+              if (streamFlushTimer) {
+                clearTimeout(streamFlushTimer);
+                streamFlushTimer = null;
+              }
+              streamClosed = true;
+              await statusEditQueue;
+
+              if (result.sessionId) {
+                sessions.setSessionId(channelId, result.sessionId);
+              }
+
+              const outputText = result.text.trim();
+              const structuredAttachments = extractStructuredAttachmentDirectives(outputText);
+              const cleanedOutputText = structuredAttachments.cleanedText.trim();
+              const finalText =
+                cleanedOutputText.length > 0
+                  ? cleanedOutputText
+                  : structuredAttachments.filenames.length > 0
+                    ? "Attached generated file(s)."
+                    : stopController.wasInterrupted(channelId)
+                      ? "Interrupted."
+                      : "(No response text)";
+              sessions.appendTurn(channelId, {
+                role: "assistant",
+                content: finalText,
+              });
+
+              const chunks = chunkDiscordText(finalText);
+              if (chunks.length === 0) {
+                await status.edit({
+                  content: finalText,
+                  components: [],
+                });
+              } else {
+                const firstChunk = chunks[0];
+                await status.edit({
+                  content: firstChunk ?? finalText,
+                  components: [],
+                });
+                for (let i = 1; i < chunks.length; i++) {
+                  const chunk = chunks[i];
+                  if (
+                    chunk &&
+                    "send" in message.channel &&
+                    typeof message.channel.send === "function"
+                  ) {
+                    await message.channel.send(chunk);
+                  }
+                }
+              }
+
+              await sendGeneratedFilesToChannel({
+                channel: message.channel,
+                workingDir: state.channel.workingDir,
+                filenames: new Set([
+                  ...persistedFilenames,
+                  ...structuredAttachments.filenames,
+                  ...extractAttachmentPathCandidates(outputText),
+                ]),
+              });
+
+              await removeReaction(message, "🧠");
+              await addReaction(message, "✅");
+            } catch (error) {
+              if (streamFlushTimer) {
+                clearTimeout(streamFlushTimer);
+                streamFlushTimer = null;
+              }
+              streamClosed = true;
+              await statusEditQueue;
+
+              const msg = error instanceof Error ? error.message : "Unknown failure";
+              await status.edit({
+                content: `❌ ${msg}`,
+                components: [],
+              });
+              await removeReaction(message, "🧠");
+              await addReaction(message, "❌");
+            } finally {
+              await cleanupFiles(stagedAttachments.stagedPaths);
+              stopController.clear(channelId);
+            }
           });
 
-          await removeReaction(message, "🧠");
-          await addReaction(message, "✅");
-        } catch (error) {
-          if (streamFlushTimer) {
-            clearTimeout(streamFlushTimer);
-            streamFlushTimer = null;
-          }
-          streamClosed = true;
-          await statusEditQueue;
-
-          const msg = error instanceof Error ? error.message : "Unknown failure";
-          await status.edit({
-            content: `❌ ${msg}`,
-            components: [],
-          });
-          await removeReaction(message, "🧠");
-          await addReaction(message, "❌");
+        pendingMessageRunsByChannel.set(channelId, run);
+        try {
+          await run;
         } finally {
-          await cleanupFiles(stagedAttachments.stagedPaths);
-          stopController.clear(channelId);
+          if (pendingMessageRunsByChannel.get(channelId) === run) {
+            pendingMessageRunsByChannel.delete(channelId);
+          }
         }
       },
     });
