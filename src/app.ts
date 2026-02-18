@@ -71,6 +71,16 @@ async function runBashCommand(
   };
 }
 
+function toStreamingPreview(text: string, maxChars = 1800): string {
+  if (!text.trim()) {
+    return "Thinking...";
+  }
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `...${text.slice(-(maxChars - 3))}`;
+}
+
 export async function startApp(config: AppConfig): Promise<void> {
   const database = openDatabase(config.databasePath);
   const repository = new Repository(database);
@@ -206,6 +216,37 @@ export async function startApp(config: AppConfig): Promise<void> {
       });
       const prompt = getMessagePrompt(message);
       const abortController = new AbortController();
+      let streamedText = "";
+      let streamClosed = false;
+      let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      let statusEditQueue: Promise<unknown> = Promise.resolve();
+
+      const queueStatusEdit = (content: string, includeButtons: boolean) => {
+        statusEditQueue = statusEditQueue
+          .then(() =>
+            status.edit({
+              content,
+              components: includeButtons ? buildStopButtons(channelId) : [],
+            }),
+          )
+          .catch(() => undefined);
+        return statusEditQueue;
+      };
+
+      const flushStreamPreview = () => {
+        streamFlushTimer = null;
+        if (streamClosed) {
+          return;
+        }
+        void queueStatusEdit(toStreamingPreview(streamedText), true);
+      };
+
+      const scheduleStreamPreview = () => {
+        if (streamClosed || streamFlushTimer) {
+          return;
+        }
+        streamFlushTimer = setTimeout(flushStreamPreview, 300);
+      };
 
       try {
         sessions.appendTurn(channelId, {
@@ -223,7 +264,18 @@ export async function startApp(config: AppConfig): Promise<void> {
           onQueryStart: (query) => {
             stopController.register(channelId, { query, abortController });
           },
+          onTextDelta: (textDelta) => {
+            streamedText += textDelta;
+            scheduleStreamPreview();
+          },
         });
+
+        if (streamFlushTimer) {
+          clearTimeout(streamFlushTimer);
+          streamFlushTimer = null;
+        }
+        streamClosed = true;
+        await statusEditQueue;
 
         if (result.sessionId) {
           sessions.setSessionId(channelId, result.sessionId);
@@ -260,6 +312,13 @@ export async function startApp(config: AppConfig): Promise<void> {
         await removeReaction(message, "🧠");
         await addReaction(message, "✅");
       } catch (error) {
+        if (streamFlushTimer) {
+          clearTimeout(streamFlushTimer);
+          streamFlushTimer = null;
+        }
+        streamClosed = true;
+        await statusEditQueue;
+
         const msg = error instanceof Error ? error.message : "Unknown failure";
         await status.edit({
           content: `❌ ${msg}`,
