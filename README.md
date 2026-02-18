@@ -59,6 +59,8 @@ or:
 bun run start
 ```
 
+`bun run start` now performs startup preflight checks (working dir, database path, Discord auth/guild reachability) and prints actionable diagnostics before the bot boots.
+
 ## Required Configuration
 
 Required environment variables:
