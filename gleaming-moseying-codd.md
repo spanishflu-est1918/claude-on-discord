@@ -295,3 +295,11 @@ User types in channel
 8. **Attachments**: Upload an image → Claude sees it. Ask Claude to create a file → it appears in Discord
 9. **Session resume**: Send message → wait → send another → Claude remembers the conversation
 10. **Cost tracking**: `/cost` shows accurate spending for the session
+
+---
+
+## Tech Debt Backlog
+
+- **Outgoing image attachments from Claude outputs are not fully reliable yet**:
+  - Current bridge reliably handles attachment input and file output in many cases, but image-return behavior is still inconsistent in real Discord flows.
+  - Defer for now; track for a focused pass on artifact detection + Discord attachment send path hardening.
