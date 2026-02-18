@@ -18,8 +18,8 @@ import {
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
+import { buildThreadBranchAwarenessPrompt, parseThreadBranchMeta } from "./discord/thread-branch";
 import { buildChannelTopic, parseGitBranch } from "./discord/topic";
-import type { ThreadBranchMeta } from "./types";
 
 function getMessagePrompt(message: Message): string {
   if (message.content.trim().length > 0) {
@@ -274,29 +274,6 @@ function cloneThreadBranchName(name: string): string {
     return "thread-branch";
   }
   return trimmed.slice(0, 90);
-}
-
-function parseThreadBranchMeta(raw: string | null): ThreadBranchMeta | null {
-  if (!raw) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as Partial<ThreadBranchMeta>;
-    if (
-      !parsed ||
-      typeof parsed.channelId !== "string" ||
-      typeof parsed.guildId !== "string" ||
-      typeof parsed.rootChannelId !== "string" ||
-      (typeof parsed.parentChannelId !== "string" && parsed.parentChannelId !== null) ||
-      typeof parsed.name !== "string" ||
-      typeof parsed.createdAt !== "number"
-    ) {
-      return null;
-    }
-    return parsed as ThreadBranchMeta;
-  } catch {
-    return null;
-  }
 }
 
 async function maybeInheritThreadContext(input: {
@@ -867,13 +844,17 @@ export async function startApp(config: AppConfig): Promise<void> {
         const state = sessions.getState(channelId, guildId);
         const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
         const stagedAttachments = await stageAttachments(message);
+        const threadBranchContext = buildThreadBranchAwarenessPrompt({
+          currentChannelId: channelId,
+          entries: repository.listThreadBranchMetaEntries(),
+        });
 
         await addReaction(message, "🧠");
         const status = await message.reply({
           content: "Thinking...",
           components: buildStopButtons(channelId),
         });
-        const prompt = `${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
+        const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
         const seededPrompt = buildSeededPrompt(
           prompt,
           state.history,
