@@ -21,7 +21,9 @@ const slashCommands = [
       option.setName("base").setDescription("Base branch/ref for thread branch comparison"),
     )
     .addBooleanOption((option) =>
-      option.setName("patch").setDescription("Include patch content (truncated if very large)"),
+      option
+        .setName("patch")
+        .setDescription("Also include diff summary metadata after the patch output"),
     ),
   new SlashCommandBuilder()
     .setName("compact")

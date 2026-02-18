@@ -343,21 +343,136 @@ type DiffContext = {
   rangeRef?: string;
 };
 
-function diffArgsForAction(context: DiffContext, action: DiffDetailAction): string[] {
-  if (action === "files") {
-    return ["git", "diff", "--name-only", ...(context.rangeRef ? [context.rangeRef] : [])];
-  }
-  if (action === "stat") {
-    return ["git", "diff", "--stat", ...(context.rangeRef ? [context.rangeRef] : [])];
-  }
-  return ["git", "diff", ...(context.rangeRef ? [context.rangeRef] : [])];
-}
+type WorkingTreeDiffSnapshot = {
+  stagedFiles: string[];
+  unstagedFiles: string[];
+  untrackedFiles: string[];
+  untrackedPatch: string;
+  stagedStat: string;
+  unstagedStat: string;
+  stagedPatch: string;
+  unstagedPatch: string;
+};
 
 function linesFromOutput(output: string): string[] {
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+async function buildUntrackedPatchText(
+  workingDir: string,
+  untrackedFiles: string[],
+  maxFiles = 4,
+): Promise<string> {
+  const selected = untrackedFiles.slice(0, maxFiles);
+  if (selected.length === 0) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  for (const file of selected) {
+    const result = await runCommand(
+      ["git", "diff", "--no-index", "--", "/dev/null", file],
+      workingDir,
+    );
+    if ((result.exitCode === 0 || result.exitCode === 1) && result.output.trim().length > 0) {
+      parts.push(result.output.trim());
+    }
+  }
+
+  if (untrackedFiles.length > selected.length) {
+    parts.push(`# additional untracked files: ${untrackedFiles.length - selected.length}`);
+  }
+
+  return parts.join("\n\n").trim();
+}
+
+async function buildWorkingTreeDiffSnapshot(workingDir: string): Promise<WorkingTreeDiffSnapshot> {
+  const [
+    stagedFilesResult,
+    unstagedFilesResult,
+    untrackedFilesResult,
+    stagedStatResult,
+    unstagedStatResult,
+    stagedPatchResult,
+    unstagedPatchResult,
+  ] = await Promise.all([
+    runCommand(["git", "diff", "--cached", "--name-only"], workingDir),
+    runCommand(["git", "diff", "--name-only"], workingDir),
+    runCommand(["git", "ls-files", "--others", "--exclude-standard"], workingDir),
+    runCommand(["git", "diff", "--cached", "--stat"], workingDir),
+    runCommand(["git", "diff", "--stat"], workingDir),
+    runCommand(["git", "diff", "--cached"], workingDir),
+    runCommand(["git", "diff"], workingDir),
+  ]);
+
+  const stagedFiles =
+    stagedFilesResult.exitCode === 0 ? linesFromOutput(stagedFilesResult.output) : [];
+  const unstagedFiles =
+    unstagedFilesResult.exitCode === 0 ? linesFromOutput(unstagedFilesResult.output) : [];
+  const untrackedFiles =
+    untrackedFilesResult.exitCode === 0 ? linesFromOutput(untrackedFilesResult.output) : [];
+  const untrackedPatch = await buildUntrackedPatchText(workingDir, untrackedFiles);
+
+  return {
+    stagedFiles,
+    unstagedFiles,
+    untrackedFiles,
+    untrackedPatch,
+    stagedStat: stagedStatResult.exitCode === 0 ? stagedStatResult.output : "",
+    unstagedStat: unstagedStatResult.exitCode === 0 ? unstagedStatResult.output : "",
+    stagedPatch: stagedPatchResult.exitCode === 0 ? stagedPatchResult.output : "",
+    unstagedPatch: unstagedPatchResult.exitCode === 0 ? unstagedPatchResult.output : "",
+  };
+}
+
+function buildTaggedFileLines(snapshot: WorkingTreeDiffSnapshot): string[] {
+  const tagged = new Map<string, Set<string>>();
+
+  const pushTag = (file: string, tag: string) => {
+    const existing = tagged.get(file) ?? new Set<string>();
+    existing.add(tag);
+    tagged.set(file, existing);
+  };
+
+  for (const file of snapshot.stagedFiles) {
+    pushTag(file, "staged");
+  }
+  for (const file of snapshot.unstagedFiles) {
+    pushTag(file, "unstaged");
+  }
+  for (const file of snapshot.untrackedFiles) {
+    pushTag(file, "untracked");
+  }
+
+  return [...tagged.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([file, tags]) => `${file} [${[...tags].join(", ")}]`);
+}
+
+function buildLivePatchText(snapshot: WorkingTreeDiffSnapshot): string {
+  const parts: string[] = [];
+
+  if (snapshot.stagedPatch.trim().length > 0) {
+    parts.push("# staged");
+    parts.push(snapshot.stagedPatch.trim());
+  }
+  if (snapshot.unstagedPatch.trim().length > 0) {
+    parts.push("# unstaged");
+    parts.push(snapshot.unstagedPatch.trim());
+  }
+  if (snapshot.untrackedFiles.length > 0) {
+    parts.push("# untracked");
+    parts.push(
+      snapshot.untrackedPatch.trim().length > 0
+        ? snapshot.untrackedPatch.trim()
+        : snapshot.untrackedFiles.map((file) => `+ ${file}`).join("\n"),
+    );
+  }
+
+  return parts.join("\n\n").trim();
 }
 
 async function buildDiffContext(input: {
@@ -397,6 +512,8 @@ async function buildDiffContext(input: {
 
 async function buildDiffSummary(context: DiffContext): Promise<string> {
   const lines: string[] = [`Project: \`${context.workingDir}\``, `Mode: \`${context.mode}\``];
+  const snapshot = await buildWorkingTreeDiffSnapshot(context.workingDir);
+  const taggedFiles = buildTaggedFileLines(snapshot);
 
   const currentBranch = await detectBranchName(context.workingDir);
   if (currentBranch) {
@@ -425,23 +542,39 @@ async function buildDiffSummary(context: DiffContext): Promise<string> {
     }
   }
 
-  const filesResult = await runCommand(diffArgsForAction(context, "files"), context.workingDir);
-  const fileLines = filesResult.exitCode === 0 ? linesFromOutput(filesResult.output) : [];
-  lines.push(`Changed files: \`${fileLines.length}\``);
-  if (fileLines.length > 0) {
+  lines.push(
+    `Live changes: staged=\`${snapshot.stagedFiles.length}\`, unstaged=\`${snapshot.unstagedFiles.length}\`, untracked=\`${snapshot.untrackedFiles.length}\``,
+  );
+  lines.push(`Changed files: \`${taggedFiles.length}\``);
+
+  if (taggedFiles.length > 0) {
     lines.push("Files (first 12):");
-    for (const file of fileLines.slice(0, 12)) {
+    for (const file of taggedFiles.slice(0, 12)) {
       lines.push(`- \`${file}\``);
     }
-    if (fileLines.length > 12) {
-      lines.push(`- ... ${fileLines.length - 12} more`);
+    if (taggedFiles.length > 12) {
+      lines.push(`- ... ${taggedFiles.length - 12} more`);
     }
   }
 
-  const statResult = await runCommand(diffArgsForAction(context, "stat"), context.workingDir);
-  lines.push("Stat:");
+  lines.push("Live stat:");
   lines.push("```bash");
-  lines.push(statResult.output || "(no differences)");
+  lines.push("Staged:");
+  lines.push(snapshot.stagedStat || "(none)");
+  lines.push("");
+  lines.push("Unstaged:");
+  lines.push(snapshot.unstagedStat || "(none)");
+  if (snapshot.untrackedFiles.length > 0) {
+    lines.push("");
+    lines.push("Untracked:");
+    lines.push(snapshot.untrackedFiles.join("\n"));
+  }
+  lines.push("```");
+
+  const patchPreview = buildLivePatchText(snapshot);
+  lines.push("Live patch preview:");
+  lines.push("```diff");
+  lines.push(clipOutput(patchPreview || "(no differences)", 3500));
   lines.push("```");
   lines.push("Use buttons: `Files` `Stat` `Patch` `Refresh`.");
 
@@ -449,22 +582,54 @@ async function buildDiffSummary(context: DiffContext): Promise<string> {
 }
 
 async function buildDiffDetail(context: DiffContext, action: DiffDetailAction): Promise<string> {
-  const result = await runCommand(diffArgsForAction(context, action), context.workingDir);
-  const output = result.output || "(no differences)";
+  const snapshot = await buildWorkingTreeDiffSnapshot(context.workingDir);
+  const taggedFiles = buildTaggedFileLines(snapshot);
 
   if (action === "files") {
-    return [`Diff files (\`${context.mode}\`)`, "```bash", clipOutput(output, 12000), "```"].join(
-      "\n",
-    );
+    const lines = [
+      "Staged:",
+      ...(snapshot.stagedFiles.length > 0 ? snapshot.stagedFiles : ["(none)"]),
+      "",
+      "Unstaged:",
+      ...(snapshot.unstagedFiles.length > 0 ? snapshot.unstagedFiles : ["(none)"]),
+      "",
+      "Untracked:",
+      ...(snapshot.untrackedFiles.length > 0 ? snapshot.untrackedFiles : ["(none)"]),
+      "",
+      `Total changed files: ${taggedFiles.length}`,
+    ];
+    return [
+      `Diff files (\`${context.mode}\`)`,
+      "```bash",
+      clipOutput(lines.join("\n"), 12000),
+      "```",
+    ].join("\n");
   }
   if (action === "stat") {
-    return [`Diff stat (\`${context.mode}\`)`, "```bash", clipOutput(output, 12000), "```"].join(
-      "\n",
-    );
+    const lines = [
+      "Staged:",
+      snapshot.stagedStat || "(none)",
+      "",
+      "Unstaged:",
+      snapshot.unstagedStat || "(none)",
+      "",
+      "Untracked:",
+      snapshot.untrackedFiles.length > 0 ? snapshot.untrackedFiles.join("\n") : "(none)",
+    ];
+    return [
+      `Diff stat (\`${context.mode}\`)`,
+      "```bash",
+      clipOutput(lines.join("\n"), 12000),
+      "```",
+    ].join("\n");
   }
-  return [`Diff patch (\`${context.mode}\`)`, "```diff", clipOutput(output, 12000), "```"].join(
-    "\n",
-  );
+  const livePatch = buildLivePatchText(snapshot);
+  return [
+    `Diff patch (\`${context.mode}\`)`,
+    "```diff",
+    clipOutput(livePatch || "(no differences)", 12000),
+    "```",
+  ].join("\n");
 }
 
 function sanitizeThreadToken(input: string): string {
@@ -1303,8 +1468,8 @@ export async function startApp(config: AppConfig): Promise<void> {
               repository,
             });
             rememberDiffView(diffView.requestId, refreshedContext);
-            const summary = await buildDiffSummary(refreshedContext);
-            const chunks = chunkDiscordText(summary);
+            const patchDetail = await buildDiffDetail(refreshedContext, "patch");
+            const chunks = chunkDiscordText(patchDetail);
             await interaction.update({
               content: chunks[0] ?? "(no diff output)",
               components: buildDiffViewButtons(diffView.requestId),
@@ -1503,7 +1668,7 @@ export async function startApp(config: AppConfig): Promise<void> {
           case "diff": {
             const state = sessions.getState(channelId, guildId);
             const baseInput = interaction.options.getString("base");
-            const includePatch = interaction.options.getBoolean("patch") ?? false;
+            const includeSummary = interaction.options.getBoolean("patch") ?? false;
             await interaction.deferReply();
 
             const context = await buildDiffContext({
@@ -1516,11 +1681,11 @@ export async function startApp(config: AppConfig): Promise<void> {
             const requestId = crypto.randomUUID();
             rememberDiffView(requestId, context);
 
-            const summary = await buildDiffSummary(context);
-            let payload = summary;
-            if (includePatch) {
-              const patchDetail = await buildDiffDetail(context, "patch");
-              payload = `${summary}\n\n${patchDetail}`;
+            const patchDetail = await buildDiffDetail(context, "patch");
+            let payload = patchDetail;
+            if (includeSummary) {
+              const summary = await buildDiffSummary(context);
+              payload = `${patchDetail}\n\n${summary}`;
             }
 
             const chunks = chunkDiscordText(payload);
