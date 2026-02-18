@@ -1,8 +1,15 @@
-import { Client, GatewayIntentBits, type Message, Partials } from "discord.js";
+import {
+  type ChatInputCommandInteraction,
+  Client,
+  GatewayIntentBits,
+  type Message,
+  Partials,
+} from "discord.js";
 
 export interface DiscordClientOptions {
   token: string;
   onUserMessage: (message: Message) => Promise<void>;
+  onSlashCommand: (interaction: ChatInputCommandInteraction) => Promise<void>;
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -36,6 +43,24 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
       console.error("message handler failed", error);
       const msg = error instanceof Error ? error.message : "Unknown error";
       await message.reply(`❌ Failed to process message: ${msg}`);
+    }
+  });
+
+  client.on("interactionCreate", async (interaction) => {
+    if (!interaction.isChatInputCommand()) {
+      return;
+    }
+
+    try {
+      await options.onSlashCommand(interaction);
+    } catch (error) {
+      console.error("slash command failed", error);
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: `❌ ${msg}`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: `❌ ${msg}`, ephemeral: true });
+      }
     }
   });
 

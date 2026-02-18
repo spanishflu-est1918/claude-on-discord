@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Message } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
@@ -7,6 +8,7 @@ import { Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
+import { registerSlashCommands } from "./discord/commands";
 
 function getMessagePrompt(message: Message): string {
   if (message.content.trim().length > 0) {
@@ -34,6 +36,16 @@ async function removeReaction(message: Message, emoji: string): Promise<void> {
   }
 }
 
+function resolvePath(inputPath: string): string {
+  if (inputPath.startsWith("~/")) {
+    const home = process.env.HOME;
+    if (home) {
+      return path.resolve(home, inputPath.slice(2));
+    }
+  }
+  return path.resolve(inputPath);
+}
+
 export async function startApp(config: AppConfig): Promise<void> {
   const database = openDatabase(config.databasePath);
   const repository = new Repository(database);
@@ -44,8 +56,69 @@ export async function startApp(config: AppConfig): Promise<void> {
   const stopController = new StopController();
   const runner = new ClaudeRunner();
 
+  await registerSlashCommands({
+    token: config.discordToken,
+    clientId: config.discordClientId,
+    ...(config.discordGuildId ? { guildId: config.discordGuildId } : {}),
+  });
+
   await startDiscordClient({
     token: config.discordToken,
+    onSlashCommand: async (interaction) => {
+      const channelId = interaction.channelId;
+      const guildId = interaction.guildId ?? "dm";
+
+      switch (interaction.commandName) {
+        case "new": {
+          sessions.resetSession(channelId);
+          await interaction.reply("Session reset for this channel.");
+          break;
+        }
+        case "status": {
+          const state = sessions.getState(channelId, guildId);
+          const totalCost = repository.getChannelCostTotal(channelId);
+          const turns = state.history.length;
+          const lines = [
+            `Project: \`${state.channel.workingDir}\``,
+            `Model: \`${state.channel.model}\``,
+            `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
+            `In-memory turns: \`${turns}\``,
+            `Total channel cost: \`$${totalCost.toFixed(4)}\``,
+          ];
+          await interaction.reply(lines.join("\n"));
+          break;
+        }
+        case "project": {
+          const inputPath = interaction.options.getString("path", true);
+          const fresh = interaction.options.getBoolean("fresh") ?? false;
+          const resolvedPath = resolvePath(inputPath);
+          const state = sessions.switchProject(channelId, guildId, resolvedPath, { fresh });
+          await interaction.reply(
+            `Project set to \`${state.channel.workingDir}\`${fresh ? " with fresh session." : "."}`,
+          );
+          break;
+        }
+        case "model": {
+          const model = interaction.options.getString("name", true);
+          sessions.setModel(channelId, model);
+          await stopController.setModel(channelId, model);
+          await interaction.reply(`Model set to \`${model}\`.`);
+          break;
+        }
+        case "cost": {
+          const totalCost = repository.getChannelCostTotal(channelId);
+          const totalTurns = repository.getChannelTurnCount(channelId);
+          await interaction.reply(
+            `Channel spend: \`$${totalCost.toFixed(4)}\` across \`${totalTurns}\` turns.`,
+          );
+          break;
+        }
+        default: {
+          await interaction.reply({ content: "Command not implemented.", ephemeral: true });
+          break;
+        }
+      }
+    },
     onUserMessage: async (message) => {
       const channelId = message.channel.id;
       const guildId = message.guildId ?? "dm";
