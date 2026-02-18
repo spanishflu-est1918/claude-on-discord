@@ -3,11 +3,13 @@ import { ButtonStyle } from "discord.js";
 import {
   buildDiffViewButtons,
   buildProjectSwitchButtons,
+  buildQueueDismissButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
+  parseQueueDismissCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -46,6 +48,26 @@ describe("discord buttons", () => {
     });
   });
 
+  test("builds and parses queue dismiss buttons", () => {
+    const rows = buildQueueDismissButtons("chan-9", "user-5");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(1);
+
+    const dismiss = components[0]?.toJSON();
+    const dismissId = dismiss && "custom_id" in dismiss ? dismiss.custom_id : undefined;
+    const dismissStyle = dismiss && "style" in dismiss ? dismiss.style : undefined;
+    expect(dismissId).toBe("queue:dismiss:chan-9:user-5");
+    expect(dismissStyle).toBe(ButtonStyle.Secondary);
+
+    expect(parseQueueDismissCustomId("queue:dismiss:chan-9:user-5")).toEqual({
+      action: "dismiss",
+      channelId: "chan-9",
+      userId: "user-5",
+    });
+  });
+
   test("builds and parses project switch buttons", () => {
     const rows = buildProjectSwitchButtons("req-1");
     expect(rows).toHaveLength(1);
@@ -75,6 +97,9 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("noop")).toBeNull();
     expect(parseRunControlCustomId("run:interrupt:")).toBeNull();
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
+    expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();
+    expect(parseQueueDismissCustomId("queue:dismiss:chan-only")).toBeNull();
+    expect(parseQueueDismissCustomId("queue:dismiss::user-only")).toBeNull();
     expect(parseProjectSwitchCustomId("project:keep:")).toBeNull();
     expect(parseProjectSwitchCustomId("project:fresh:")).toBeNull();
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:keep:")).toBeNull();

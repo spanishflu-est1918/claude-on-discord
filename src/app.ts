@@ -12,11 +12,13 @@ import { openDatabase } from "./db/schema";
 import {
   buildDiffViewButtons,
   buildProjectSwitchButtons,
+  buildQueueDismissButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
+  parseQueueDismissCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -1766,6 +1768,39 @@ export async function startApp(
           return;
         }
 
+        const queueDismiss = parseQueueDismissCustomId(interaction.customId);
+        if (queueDismiss) {
+          if (interaction.channelId !== queueDismiss.channelId) {
+            await interaction.reply({
+              content: "This queue notice belongs to a different channel.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+          if (interaction.user.id !== queueDismiss.userId) {
+            await interaction.reply({
+              content: "Only the queued user can dismiss this notice.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          await interaction.deferUpdate();
+          try {
+            await interaction.message.delete();
+          } catch {
+            try {
+              await interaction.message.edit({
+                content: "Queue notice dismissed.",
+                components: [],
+              });
+            } catch {
+              // Ignore queue notice dismiss fallback failures.
+            }
+          }
+          return;
+        }
+
         const control = parseRunControlCustomId(interaction.customId);
         if (!control) {
           await interaction.reply({
@@ -2661,7 +2696,10 @@ export async function startApp(
         const wasQueued = pendingMessageRunsByChannel.has(channelId);
         if (wasQueued) {
           try {
-            await message.reply("⏳ Run in progress for this channel. Queued your message.");
+            await message.reply({
+              content: "⏳ Run in progress for this channel. Queued your message.",
+              components: buildQueueDismissButtons(channelId, message.author.id),
+            });
           } catch {
             // Ignore queue notice failures.
           }

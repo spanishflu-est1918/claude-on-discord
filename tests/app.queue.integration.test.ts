@@ -10,6 +10,7 @@ import { openDatabase } from "../src/db/schema";
 type MockMessage = {
   content: string;
   guildId: string;
+  author: { id: string };
   attachments: { size: number };
   reactions: { cache: Map<string, unknown> };
   client: { user: { id: string } };
@@ -29,12 +30,14 @@ function createMockMessage(input: {
   content: string;
   channelId: string;
   guildId: string;
+  authorId?: string;
 }): MockMessage {
   const replyCalls: unknown[] = [];
   const statusEdits: unknown[] = [];
   return {
     content: input.content,
     guildId: input.guildId,
+    author: { id: input.authorId ?? "user-1" },
     attachments: { size: 0 },
     reactions: { cache: new Map() },
     client: { user: { id: "bot-1" } },
@@ -138,8 +141,13 @@ describe("startApp message queue behavior", () => {
       expect(
         second.replyCalls.some(
           (call) =>
-            typeof call === "string" &&
-            call.includes("Run in progress for this channel. Queued your message."),
+            typeof call === "object" &&
+            call !== null &&
+            "content" in call &&
+            typeof call.content === "string" &&
+            call.content.includes("Run in progress for this channel. Queued your message.") &&
+            "components" in call &&
+            Array.isArray(call.components),
         ),
       ).toBeTrue();
     } finally {
