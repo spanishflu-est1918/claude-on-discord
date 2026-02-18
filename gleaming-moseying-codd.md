@@ -14,6 +14,16 @@ This is a **personal tool** that runs on your machine next to your repos. Not a 
 
 VERIFY THIS PLAN AGAINST ALL REPOS
 
+### Onboarding Target (CLI/TUI)
+
+Add an interactive initializer so first-time users can run one command and be ready:
+
+- Collect `DISCORD_TOKEN`, `APPLICATION_ID`, `DISCORD_GUILD_ID`, model, working dir
+- Generate/write `.env`
+- Print the OAuth invite URL with `bot + applications.commands` scopes
+- Validate access early and show clear remediation if guild access is missing
+- Prepare packaging path for `npx` onboarding in a later distribution phase
+
 ---
 
 ## Architecture
@@ -262,6 +272,12 @@ User types in channel
 28. Channel topic updates (show project + branch)
 29. MCP server loading from `.claude/mcp.json`
 30. Integration tests
+
+### Phase 6: Distribution & Setup UX
+
+31. `init` interactive setup CLI (questionnaire + `.env` writer + invite link)
+32. Startup preflight checks with clear access diagnostics
+33. Package CLI for external install (`npx` path) once repo is publish-ready
 
 ---
 

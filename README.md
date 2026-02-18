@@ -10,11 +10,13 @@ Install dependencies:
 bun install
 ```
 
-Copy env file:
+Run interactive setup:
 
 ```bash
-cp .env.example .env
+bun run init
 ```
+
+This writes `.env` and prints your invite URL.
 
 Required env vars:
 
