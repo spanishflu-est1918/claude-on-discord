@@ -1,10 +1,26 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { query as claudeQuery, type Options } from "@anthropic-ai/claude-agent-sdk";
-import type { ClaudePermissionMode, ClaudeQuery, ClaudeSDKMessage } from "../types";
+import type {
+  ClaudeMcpServerConfig,
+  ClaudePermissionMode,
+  ClaudeQuery,
+  ClaudeSDKMessage,
+} from "../types";
 
 export type QueryFactoryInput = {
   prompt: string;
   abortController?: AbortController;
-  options: Pick<Options, "cwd" | "permissionMode" | "model" | "resume">;
+  options: Pick<
+    Options,
+    | "cwd"
+    | "permissionMode"
+    | "model"
+    | "resume"
+    | "mcpServers"
+    | "settingSources"
+    | "allowDangerouslySkipPermissions"
+  >;
 };
 
 export type QueryFactory = (input: QueryFactoryInput) => ClaudeQuery;
@@ -37,14 +53,22 @@ export class ClaudeRunner {
 
   async run(request: RunRequest): Promise<RunResult> {
     const abortController = request.abortController ?? new AbortController();
+    const permissionMode = request.permissionMode ?? "bypassPermissions";
+    const mcpServers = await loadMcpServers(request.cwd);
+
     const query = this.queryFactory({
       prompt: request.prompt,
       abortController,
       options: {
         cwd: request.cwd,
-        permissionMode: request.permissionMode ?? "bypassPermissions",
+        permissionMode,
+        settingSources: ["project", "local"],
+        ...(permissionMode === "bypassPermissions"
+          ? { allowDangerouslySkipPermissions: true }
+          : {}),
         ...(request.model ? { model: request.model } : {}),
         ...(request.sessionId ? { resume: request.sessionId } : {}),
+        ...(mcpServers ? { mcpServers } : {}),
       },
     });
 
@@ -94,6 +118,47 @@ export class ClaudeRunner {
       turnCount,
       messages,
     };
+  }
+}
+
+async function loadMcpServers(
+  workDir: string,
+): Promise<Record<string, ClaudeMcpServerConfig> | undefined> {
+  const mcpPath = path.join(workDir, ".claude", "mcp.json");
+  try {
+    const raw = await readFile(mcpPath, "utf-8");
+    const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+    if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") {
+      return undefined;
+    }
+
+    const servers: Record<string, ClaudeMcpServerConfig> = {};
+    for (const [name, config] of Object.entries(parsed.mcpServers)) {
+      if (!config || typeof config !== "object") {
+        continue;
+      }
+      const value = config as {
+        command?: string;
+        args?: string[];
+        env?: Record<string, string>;
+      };
+      if (!value.command) {
+        continue;
+      }
+      const args = Array.isArray(value.args)
+        ? value.args.map((arg) => arg.replace(/\$\{workspaceFolder:-\.?\}/g, workDir))
+        : undefined;
+      servers[name] = {
+        type: "stdio",
+        command: value.command,
+        ...(args ? { args } : {}),
+        ...(value.env ? { env: value.env } : {}),
+      };
+    }
+
+    return Object.keys(servers).length > 0 ? servers : undefined;
+  } catch {
+    return undefined;
   }
 }
 
