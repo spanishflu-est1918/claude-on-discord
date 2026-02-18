@@ -295,6 +295,7 @@ User types in channel
 41. PR automation (`/pr` draft/open) targeting root/main branch
 42. Branch policy guardrails (allowed base branches, required checks, PR template)
 43. Conductor-style PR review buttons that send structured review prompts to the agent
+44. Rethink message-prefix command mode (`!`) as direct bash execution with explicit safety/UX rules
 
 ---
 

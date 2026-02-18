@@ -204,3 +204,4 @@ bun test
   - Branch diffs summarized in Discord (`/diff` with compact review output)
   - PR policy/guardrails and templates on top of `/pr`
   - Conductor-style PR review buttons that send structured review prompts to the agent
+  - Revisit `!` message-prefix semantics so it can act as intentional direct bash mode
