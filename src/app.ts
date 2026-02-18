@@ -18,6 +18,7 @@ import {
 import { chunkDiscordText } from "./discord/chunker";
 import { startDiscordClient } from "./discord/client";
 import { registerSlashCommands } from "./discord/commands";
+import { buildChannelTopic, parseGitBranch } from "./discord/topic";
 
 function getMessagePrompt(message: Message): string {
   if (message.content.trim().length > 0) {
@@ -214,6 +215,40 @@ async function runCommand(
   };
 }
 
+type TopicChannel = {
+  setTopic: (topic: string) => Promise<unknown>;
+};
+
+function canSetTopic(channel: unknown): channel is TopicChannel {
+  return (
+    typeof channel === "object" &&
+    channel !== null &&
+    "setTopic" in channel &&
+    typeof (channel as TopicChannel).setTopic === "function"
+  );
+}
+
+async function detectBranchName(workingDir: string): Promise<string | null> {
+  const result = await runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], workingDir);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return parseGitBranch(result.output);
+}
+
+async function syncChannelTopic(channel: unknown, workingDir: string): Promise<void> {
+  if (!canSetTopic(channel)) {
+    return;
+  }
+  const branch = await detectBranchName(workingDir);
+  const topic = buildChannelTopic({ workingDir, branch });
+  try {
+    await channel.setTopic(topic);
+  } catch {
+    // Ignore topic update failures when permissions/channel type do not allow it.
+  }
+}
+
 async function cleanupFiles(paths: string[]): Promise<void> {
   for (const filePath of paths) {
     try {
@@ -406,6 +441,7 @@ export async function startApp(config: AppConfig): Promise<void> {
             content: `Project set to \`${state.channel.workingDir}\`${suffix}`,
             components: [],
           });
+          void syncChannelTopic(interaction.channel, state.channel.workingDir);
           return;
         }
 

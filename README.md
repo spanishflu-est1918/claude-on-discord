@@ -14,6 +14,7 @@ It gives you a channel-based coding workflow in Discord while keeping real files
 - Per-channel working directory, model, and session state
 - `/project` switching with keep/clear context controls
 - Session safety on project switch (`keep` restarts session if directory changes)
+- Channel topic sync on project switch (project + git branch when available)
 - Streaming text + thinking preview in status updates
 - Stop controls on active runs:
   - `Interrupt` (soft stop)
