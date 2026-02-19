@@ -268,6 +268,8 @@ then just talk to it like Claude Code.
 **Headline:** `Where it's going.`
 
 - `→` Worktree per thread, fully automatic
+- `→` Webhooks into channels for automation workflows
+- `→` Agent-guided `/fork` (ask, then create thread lane)
 - `→` Plan mode with explicit approval before execution
 - `→` Branch diff summaries in Discord
 - `→` PR review buttons (conductor-style structured prompts)

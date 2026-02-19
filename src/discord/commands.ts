@@ -112,12 +112,12 @@ const slashCommands = [
         .setDescription("Clear per-channel mention policy override (use global default)"),
     ),
   new SlashCommandBuilder()
-    .setName("permission")
-    .setDescription("Manage Claude permission mode for this channel")
+    .setName("mode")
+    .setDescription("Manage Claude permission mode for the current session")
     .addSubcommand((subcommand) =>
       subcommand
         .setName("set")
-        .setDescription("Set per-channel permission mode override")
+        .setDescription("Set current session permission mode override")
         .addStringOption((option) =>
           option
             .setName("mode")
@@ -136,12 +136,12 @@ const slashCommands = [
     .addSubcommand((subcommand) =>
       subcommand
         .setName("show")
-        .setDescription("Show effective permission mode for this channel"),
+        .setDescription("Show effective permission mode for the current session"),
     )
     .addSubcommand((subcommand) =>
       subcommand
         .setName("clear")
-        .setDescription("Clear per-channel permission mode override (use global default)"),
+        .setDescription("Clear current session permission mode override (use global default)"),
     ),
   new SlashCommandBuilder().setName("cost").setDescription("Show spend for this channel"),
   new SlashCommandBuilder()

@@ -40,6 +40,7 @@ export interface RunRequest {
   forkSession?: boolean;
   model?: string;
   systemPrompt?: string;
+  mcpServers?: Record<string, ClaudeMcpServerConfig>;
   thinking?: Options["thinking"];
   effort?: Options["effort"];
   permissionMode?: ClaudePermissionMode;
@@ -426,7 +427,8 @@ export class ClaudeRunner {
 
   async run(request: RunRequest): Promise<RunResult> {
     const permissionMode = request.permissionMode ?? "bypassPermissions";
-    const mcpServers = await loadMcpServers(request.cwd);
+    const loadedMcpServers = await loadMcpServers(request.cwd);
+    const mcpServers = mergeMcpServers(loadedMcpServers, request.mcpServers);
     const attempts = buildRunAttempts({
       hasMcpServers: Boolean(mcpServers),
       hasSessionId: Boolean(request.sessionId),
@@ -523,11 +525,37 @@ function buildWorkerSignature(input: {
 
 function toStableMcpSignature(
   mcpServers?: Record<string, ClaudeMcpServerConfig>,
-): Array<[string, ClaudeMcpServerConfig]> {
+): Array<[string, Record<string, unknown>]> {
   if (!mcpServers) {
     return [];
   }
-  return Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b));
+  return Object.entries(mcpServers)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, config]) => [name, toSerializableMcpConfig(config)]);
+}
+
+function toSerializableMcpConfig(config: ClaudeMcpServerConfig): Record<string, unknown> {
+  if (config.type === "sdk") {
+    return {
+      type: "sdk",
+      name: config.name,
+    };
+  }
+  return config;
+}
+
+function mergeMcpServers(
+  loaded?: Record<string, ClaudeMcpServerConfig>,
+  runtime?: Record<string, ClaudeMcpServerConfig>,
+): Record<string, ClaudeMcpServerConfig> | undefined {
+  if (!loaded && !runtime) {
+    return undefined;
+  }
+
+  return {
+    ...(loaded ?? {}),
+    ...(runtime ?? {}),
+  };
 }
 
 function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean }): RunAttempt[] {

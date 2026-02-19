@@ -77,6 +77,7 @@ bun start
 | `/bash <command>` | Run shell command directly in current project |
 | `!<command>` | Direct shell shortcut from any channel message |
 | `/systemprompt set/show/clear` | Per-channel system prompt |
+| `/mode set/show/clear` | Per-session Claude permission mode (including `plan`) |
 | `/worktree create/list/remove/thread` | Git worktree management |
 | `/pr open/draft/status/merge` | GitHub PR workflow (requires `gh` CLI) |
 | `/diff` | Current lane patch as a `.diff` attachment |
@@ -135,6 +136,8 @@ Full reference: [.env.example](.env.example)
 - `→` tmux attach — attach to running tmux sessions from Discord, monitor builds and dev servers from your phone
 - `→` Fix double threads — deduplicate thread creation events at the gateway level
 - `→` Worktree per thread, fully automatic
+- `→` Webhooks into channels — map signed webhook endpoints to Discord channels for work automation
+- `→` Agent-guided `/fork` tool — Claude proposes and creates a new thread lane after explicit user confirmation
 - `→` PR review conductor — structured review buttons with targeted prompts
 - `→` Multi-guild support
 - `→` Orphan process reaper — detect/kill stale Claude subprocesses and clear stuck channel run state

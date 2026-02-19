@@ -52,6 +52,16 @@ describe("slash commands", () => {
     expect(subcommands).toEqual(["set", "show", "clear"]);
   });
 
+  test("/mode exposes set/show/clear subcommands", () => {
+    const commands = getSlashCommandDefinitions();
+    const mode = commands.find((command) => command.name === "mode");
+    expect(mode).toBeDefined();
+    const subcommands = (mode?.options ?? [])
+      .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
+      .filter(Boolean);
+    expect(subcommands).toEqual(["set", "show", "clear"]);
+  });
+
   test("required command options are ordered before optional options", () => {
     const commands = getSlashCommandDefinitions();
 
