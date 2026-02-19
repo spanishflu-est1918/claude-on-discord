@@ -30,6 +30,8 @@ export async function handleForkCommand(input: {
     worktreeBootstrap: input.worktreeBootstrap,
     worktreeBootstrapCommand: input.worktreeBootstrapCommand,
     runCommand: input.runCommand,
+    fetchParentChannel: (channelId: string) =>
+      input.interaction.client.channels.fetch(channelId),
   });
 
   if (!result.ok) {

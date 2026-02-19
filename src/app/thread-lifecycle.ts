@@ -70,6 +70,12 @@ export async function maybeInheritThreadContext(input: {
   worktreeBootstrap: boolean;
   worktreeBootstrapCommand?: string;
   runCommand: RunCommand;
+  /**
+   * When set, clone context from this channel ID instead of from `channel.parentId`.
+   * Used for sibling forks where the new thread's Discord parent differs from the
+   * channel whose conversation/working-dir should be inherited.
+   */
+  overrideContextSourceChannelId?: string;
 }): Promise<void> {
   const existing = input.repository.getChannel(input.channelId);
   if (existing) {
@@ -87,20 +93,25 @@ export async function maybeInheritThreadContext(input: {
     return;
   }
 
-  const parent = input.repository.getChannel(parentChannelId);
+  // contextSourceId is the channel we clone context/working-dir from.
+  // For a normal fork it equals parentChannelId; for a sibling fork it is the
+  // source thread (which shares the same Discord parent but is a separate branch).
+  const contextSourceId = input.overrideContextSourceChannelId ?? parentChannelId;
+
+  const parent = input.repository.getChannel(contextSourceId);
   if (!parent) {
     input.sessions.ensureChannel(input.channelId, input.guildId);
     return;
   }
 
-  input.sessions.cloneChannelContext(parentChannelId, input.channelId, input.guildId);
+  input.sessions.cloneChannelContext(contextSourceId, input.channelId, input.guildId);
   const threadName = cloneThreadBranchName(input.channel.name ?? "");
-  const parentPrompt = input.repository.getChannelSystemPrompt(parentChannelId);
+  const parentPrompt = input.repository.getChannelSystemPrompt(contextSourceId);
   if (parentPrompt) {
     input.repository.setChannelSystemPrompt(input.channelId, parentPrompt);
   }
-  const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(parentChannelId));
-  const rootChannelId = parentMeta?.rootChannelId ?? parentChannelId;
+  const parentMeta = parseThreadBranchMeta(input.repository.getThreadBranchMeta(contextSourceId));
+  const rootChannelId = parentMeta?.rootChannelId ?? contextSourceId;
   const forkSourceSessionId = parent.sessionId ?? undefined;
 
   if (input.autoThreadWorktree) {

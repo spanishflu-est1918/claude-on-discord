@@ -28,7 +28,7 @@ const slashCommands = [
   new SlashCommandBuilder().setName("new").setDescription("Reset Claude session for this channel"),
   new SlashCommandBuilder()
     .setName("fork")
-    .setDescription("Fork this channel conversation into a new thread")
+    .setDescription("Fork conversation into a new thread; from inside a thread, creates a sibling")
     .addStringOption((option) =>
       option.setName("title").setDescription("Optional thread title").setMaxLength(100),
     ),
