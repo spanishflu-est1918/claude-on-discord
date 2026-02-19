@@ -1421,10 +1421,62 @@ function extractStructuredAttachmentDirectives(
 }
 
 function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
+  if (!(error instanceof Error)) {
+    return "unknown error";
   }
-  return "unknown error";
+
+  const lines = collectErrorLines(error);
+  if (lines.length === 0) {
+    return "unknown error";
+  }
+
+  const exitLine = lines.find((line) => /\bexited with code 1\b/i.test(line));
+  const detailLine = lines.find((line) => !/\bexited with code 1\b/i.test(line));
+  if (exitLine && detailLine) {
+    return clipInlineError(`${exitLine} Detail: ${detailLine}`, 420);
+  }
+  return clipInlineError(lines[0] ?? "unknown error", 420);
+}
+
+function shouldForceToollessModeForPrompt(prompt: string): boolean {
+  return (
+    /\baskUserQuestion\b/i.test(prompt) ||
+    /\bask\s*user\s*question\b/i.test(prompt) ||
+    /do not load that skill/i.test(prompt)
+  );
+}
+
+function collectErrorLines(error: Error): string[] {
+  const lines: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const value = current as { message?: unknown; cause?: unknown };
+    if (typeof value.message === "string") {
+      lines.push(...splitErrorLines(value.message));
+    }
+    current = value.cause;
+  }
+
+  return Array.from(new Set(lines));
+}
+
+function splitErrorLines(input: string): string[] {
+  return input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\d+\s+\|/.test(line))
+    .filter((line) => !/^at\s/.test(line));
+}
+
+function clipInlineError(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
 function getSentAttachmentCount(message: unknown): number | null {
@@ -2277,7 +2329,6 @@ function buildSingleLiveToolMessage(
       expandedParts.push(`**Input**\n\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
     }
 
-
     if (expandedParts.length > 0) {
       container.addSeparatorComponents(
         new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
@@ -2449,9 +2500,9 @@ export async function startApp(
   const getToolExpanded = (channelId: string, toolId: string): boolean => {
     const channelState = liveToolExpandStateByChannel.get(channelId);
     if (!channelState) {
-      return true;
+      return false;
     }
-    return channelState.get(toolId) ?? true;
+    return channelState.get(toolId) ?? false;
   };
 
   const setToolExpanded = (channelId: string, toolId: string, expanded: boolean): void => {
@@ -4387,6 +4438,7 @@ export async function startApp(
               ? `${buildMergeContextInjection(pendingMergeContext)}\n\n`
               : "";
             const prompt = `${mergeContextPrefix}${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
+            const forcedTools = shouldForceToollessModeForPrompt(prompt) ? [] : undefined;
             const seededPrompt = buildSeededPrompt(prompt, state.history, Boolean(resumeSessionId));
             const resumeFallbackPrompt = resumeSessionId
               ? buildSeededPrompt(prompt, state.history, false)
@@ -4567,6 +4619,7 @@ export async function startApp(
                 model: state.channel.model,
                 systemPrompt: channelSystemPrompt ?? undefined,
                 permissionMode: permissionPolicy.permissionMode,
+                ...(forcedTools ? { tools: forcedTools } : {}),
                 abortController,
                 onQueryStart: (query) => {
                   stopController.register(channelId, { query, abortController });
@@ -4694,13 +4747,17 @@ export async function startApp(
                 queueToolMessageRender(toolId);
               }
 
-              const msg = error instanceof Error ? error.message : "Unknown failure";
-              await discordDispatch.enqueue(`status:${channelId}`, async () => {
-                await status.edit({
-                  content: `❌ ${msg}`,
-                  components: [],
+              const msg = formatErrorMessage(error);
+              try {
+                await discordDispatch.enqueue(`status:${channelId}`, async () => {
+                  await status.edit({
+                    content: `❌ ${msg}`,
+                    components: [],
+                  });
                 });
-              });
+              } catch {
+                // Keep run failures contained even if the status message can no longer be edited.
+              }
               await removeReaction(message, "🧠");
               await addReaction(message, "❌");
               await setThreadState(message.channel, "❌"); // agent errored — needs attention
