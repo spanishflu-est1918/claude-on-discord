@@ -1625,10 +1625,14 @@ function extractToolStartFromStreamEvent(message: ClaudeSDKMessage): {
         : undefined;
   let inputBufferSeed: string | undefined;
   if (typeof block.input === "string") {
-    inputBufferSeed = block.input;
+    inputBufferSeed = block.input || undefined;
   } else if (typeof block.input !== "undefined") {
     try {
-      inputBufferSeed = JSON.stringify(block.input);
+      const serialized = JSON.stringify(block.input);
+      // Don't seed with trivially empty JSON — deltas will build the real input
+      if (serialized && serialized !== "{}" && serialized !== "[]" && serialized !== "null") {
+        inputBufferSeed = serialized;
+      }
     } catch {
       inputBufferSeed = undefined;
     }
