@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -2276,13 +2276,7 @@ function buildSingleLiveToolMessage(
       // Only show raw preview when no human-readable display line is available
       expandedParts.push(`**Input**\n\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
     }
-    if (entry.timeline.length > 0) {
-      const timelineLines = entry.timeline
-        .slice(-6)
-        .map((item) => `- ${item}`)
-        .join("\n");
-      expandedParts.push(`**Timeline**\n${timelineLines}`);
-    }
+
 
     if (expandedParts.length > 0) {
       container.addSeparatorComponents(
@@ -2399,6 +2393,37 @@ export async function startApp(
   let shutdownPromise: Promise<void> | null = null;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
   let staleRunWatchdog: ReturnType<typeof setInterval> | null = null;
+  const workerHeartbeatFile = process.env.WORKER_HEARTBEAT_FILE?.trim();
+  const workerHeartbeatIntervalSecondsRaw = process.env.WORKER_HEARTBEAT_INTERVAL_SECONDS?.trim();
+  const workerHeartbeatIntervalSeconds = workerHeartbeatIntervalSecondsRaw
+    ? Number.parseInt(workerHeartbeatIntervalSecondsRaw, 10)
+    : 10;
+  const workerHeartbeatIntervalMs =
+    Number.isFinite(workerHeartbeatIntervalSeconds) && workerHeartbeatIntervalSeconds > 0
+      ? workerHeartbeatIntervalSeconds * 1000
+      : 10_000;
+  let workerHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let heartbeatWriteFailed = false;
+
+  const writeWorkerHeartbeat = async (): Promise<void> => {
+    if (!workerHeartbeatFile) {
+      return;
+    }
+    try {
+      await writeFile(
+        workerHeartbeatFile,
+        JSON.stringify({ pid: process.pid, timestampMs: Date.now() }),
+        "utf8",
+      );
+      heartbeatWriteFailed = false;
+    } catch (error) {
+      if (!heartbeatWriteFailed) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(`Failed to write worker heartbeat: ${detail}`);
+        heartbeatWriteFailed = true;
+      }
+    }
+  };
 
   const resolvePermissionModeForSession = (channelId: string) =>
     resolvePermissionModeForChannel({
@@ -2510,6 +2535,10 @@ export async function startApp(
         clearInterval(staleRunWatchdog);
         staleRunWatchdog = null;
       }
+      if (workerHeartbeatTimer) {
+        clearInterval(workerHeartbeatTimer);
+        workerHeartbeatTimer = null;
+      }
 
       if (discordClient) {
         try {
@@ -2531,6 +2560,19 @@ export async function startApp(
   };
 
   try {
+    if (workerHeartbeatFile) {
+      try {
+        await mkdir(path.dirname(workerHeartbeatFile), { recursive: true });
+      } catch {
+        // Ignore heartbeat directory errors; heartbeat writes log failures if they persist.
+      }
+      await writeWorkerHeartbeat();
+      workerHeartbeatTimer = setInterval(() => {
+        void writeWorkerHeartbeat();
+      }, workerHeartbeatIntervalMs);
+      workerHeartbeatTimer.unref?.();
+    }
+
     await registerSlashCommandsImpl({
       token: config.discordToken,
       clientId: config.discordClientId,
