@@ -20,6 +20,7 @@ import type { SessionSlashCommandInput } from "./slash-commands/context";
 import { handleDiffCommand } from "./slash-commands/diff-command";
 import { handleForkCommand } from "./slash-commands/fork-command";
 import { handleKillCommand } from "./slash-commands/kill-command";
+import { handleStopCommand } from "./slash-commands/stop-command";
 import { handleMentionsCommand } from "./slash-commands/mentions-command";
 import { handleMergeCommand } from "./slash-commands/merge-command";
 import { handleModeCommand } from "./slash-commands/mode-command";
@@ -343,6 +344,14 @@ export async function handleSlashCommands(input: HandleSlashCommandsInput): Prom
     }
     case "kill": {
       await handleKillCommand({
+        interaction: input.interaction,
+        channelId,
+        stopController: input.stopController,
+      });
+      break;
+    }
+    case "stop": {
+      await handleStopCommand({
         interaction: input.interaction,
         channelId,
         stopController: input.stopController,

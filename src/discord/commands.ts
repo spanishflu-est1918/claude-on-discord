@@ -263,6 +263,9 @@ const slashCommands = [
   new SlashCommandBuilder()
     .setName("kill")
     .setDescription("Kill the active Claude process, archive this thread, and mark it red"),
+  new SlashCommandBuilder()
+    .setName("stop")
+    .setDescription("Abort the active Claude run in this channel (same as the 🛑 Abort button)"),
 ];
 
 export function getSlashCommandDefinitions(): ReturnType<SlashCommandBuilder["toJSON"]>[] {
