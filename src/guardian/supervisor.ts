@@ -7,6 +7,7 @@ import {
   listLanIpv4Addresses,
 } from "./config";
 import { renderGuardianMobilePage } from "./mobile-page";
+import { consumeStreamLines } from "./stream-lines";
 import type { GuardianConfig, LogEntry, WorkerExitInfo } from "./types";
 
 export class GuardianSupervisor {
@@ -132,40 +133,6 @@ export class GuardianSupervisor {
     console.log(`${prefix} ${line}`);
   }
 
-  private async consumeStreamLines(
-    stream: ReadableStream<Uint8Array> | null | undefined,
-    streamName: "stdout" | "stderr",
-  ): Promise<void> {
-    if (!stream) {
-      return;
-    }
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let pending = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      pending += decoder.decode(value, { stream: true });
-      while (true) {
-        const newlineIndex = pending.indexOf("\n");
-        if (newlineIndex < 0) {
-          break;
-        }
-        const line = pending.slice(0, newlineIndex).replace(/\r$/, "");
-        pending = pending.slice(newlineIndex + 1);
-        if (line.trim().length > 0) {
-          this.appendLog(streamName, line);
-        }
-      }
-    }
-    const rest = pending.trim();
-    if (rest.length > 0) {
-      this.appendLog(streamName, rest);
-    }
-  }
-
   private async startWorker(
     reason: string,
     options: {
@@ -211,8 +178,8 @@ export class GuardianSupervisor {
     this.childStartedAtMs = nowMs;
     this.cooldownUntilMs = 0;
     this.appendLog("guardian", `Starting worker (${reason}) pid=${child.pid}.`);
-    void this.consumeStreamLines(child.stdout, "stdout");
-    void this.consumeStreamLines(child.stderr, "stderr");
+    void consumeStreamLines(child.stdout, (line) => this.appendLog("stdout", line));
+    void consumeStreamLines(child.stderr, (line) => this.appendLog("stderr", line));
 
     void (async () => {
       const code = await child.exited;
