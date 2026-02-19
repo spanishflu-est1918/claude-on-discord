@@ -173,6 +173,107 @@ const roadmapPlanned = [
     </div>
   </div>
 
+  <!-- ─── Origin ──────────────────────────────────────────────────────────── -->
+  <section class="border-b border-[#2B2D31] px-6 py-20">
+    <div class="max-w-5xl mx-auto">
+      <div class="section-label">Origin</div>
+      <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
+        Built in a day.<br />Because Discord was<br />already the hub.
+      </h2>
+
+      <div class="grid lg:grid-cols-2 gap-14 items-start mt-10">
+
+        <!-- Story -->
+        <div class="space-y-6">
+          <p class="text-[#96989D] text-lg leading-relaxed">
+            It started with a post about running Claude Code over Telegram. Loved the concept &mdash; but leaned Discord immediately. If you're running agents, Telegram's topic model breaks the moment you have more than one project: everything lands in <span class="text-[#DBDEE1]">#general</span>, navigation falls apart. Discord channels <em>are</em> first-class. That's the whole argument.
+          </p>
+          <p class="text-[#96989D] text-lg leading-relaxed">
+            The thread-branching thing wasn't planned. It emerged from architecture. Create a thread &rarr; inherit the parent context &rarr; optionally get your own worktree. Several features in parallel, no context switching, no re-explaining the codebase. The structure led there.
+          </p>
+          <p class="text-[#96989D] text-lg leading-relaxed">
+            Discord is <span class="text-[#DBDEE1] font-semibold">the best surface for agentic work right now.</span> Not because of any single feature. Because of the whole stack: native channels, threads, mobile, notifications, persistent search, slash commands. If you're already running agents in Discord &mdash; Claude Code belongs there too. Same surface. Deeper capability.
+          </p>
+          <a href="https://x.com/gripe1918/status/2024191324241510728" target="_blank" rel="noopener" class="inline-flex items-center gap-2 text-[#5865F2] hover:text-[#7289DA] text-sm font-medium transition-colors">
+            <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.259 5.63 5.905-5.63Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+            Read the original thread
+          </a>
+        </div>
+
+        <!-- Agent hub visual -->
+        <div class="space-y-4">
+
+          <!-- Discord server mock: the agent hub -->
+          <div class="bg-[#313338] rounded-xl overflow-hidden border border-[#1E1F22]">
+            <!-- Chrome -->
+            <div class="bg-[#1E1F22] px-4 py-2.5 flex items-center gap-1.5 border-b border-[#2B2D31]">
+              <div class="w-2.5 h-2.5 rounded-full bg-[#F23F42]"></div>
+              <div class="w-2.5 h-2.5 rounded-full bg-[#F0B232]"></div>
+              <div class="w-2.5 h-2.5 rounded-full bg-[#23A55A]"></div>
+              <span class="text-[#4f5257] text-[11px] ml-2 font-medium mono">my-workspace</span>
+            </div>
+            <div class="flex">
+              <!-- Server icon column -->
+              <div class="w-12 bg-[#1E1F22] flex flex-col items-center py-3 gap-2 border-r border-[#2B2D31]">
+                <div class="w-7 h-7 rounded-[8px] bg-[#5865F2] flex items-center justify-center text-white font-black text-[9px]">C</div>
+                <div class="w-0.5 h-0.5 rounded-full bg-[#383A40] my-0.5"></div>
+                <div class="w-7 h-7 rounded-full bg-[#2B2D31] border border-[#383A40] flex items-center justify-center text-[10px]">🦞</div>
+              </div>
+              <!-- Channel list -->
+              <div class="flex-1 bg-[#2B2D31] px-2 py-3">
+                <div class="text-[#4f5257] text-[9px] font-bold uppercase tracking-widest px-1 mb-1.5">Agents</div>
+                <div class="space-y-px text-[12px]">
+                  <div class="flex items-center gap-2 px-2 py-1.5 rounded-[3px] bg-[#404249] text-[#DBDEE1]">
+                    <span class="text-[#5865F2] font-bold text-[11px]">#</span>
+                    <span class="flex-1 truncate font-medium">api-rewrite</span>
+                    <span class="text-[9px] text-[#5865F2] font-semibold bg-[#5865F2]/10 px-1.5 rounded">Claude</span>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[#4f5257] text-[11px]">#</span>
+                    <span class="flex-1 truncate">research</span>
+                    <span class="text-[9px] text-[#80848E] font-semibold bg-[#383A40] px-1.5 rounded">OpenClaw</span>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 rounded-[3px] text-[#80848E]">
+                    <span class="text-[#4f5257] text-[11px]">#</span>
+                    <span class="flex-1 truncate">deploys</span>
+                    <span class="text-[9px] text-[#80848E] font-semibold bg-[#383A40] px-1.5 rounded">CI bot</span>
+                  </div>
+                  <div class="mt-2 pt-2 border-t border-[#383A40]">
+                    <div class="text-[#4f5257] text-[9px] font-bold uppercase tracking-widest px-1 mb-1.5">Threads</div>
+                    <div class="flex items-center gap-2 px-2 py-1.5 text-[#80848E]">
+                      <span class="text-[9px]">💬</span>
+                      <span class="truncate">add-auth</span>
+                    </div>
+                    <div class="flex items-center gap-2 px-2 py-1.5 text-[#80848E]">
+                      <span class="text-[9px]">💬</span>
+                      <span class="truncate">fix-pagination</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OpenClaw callout -->
+          <div class="bg-[#2B2D31] rounded-lg p-5 border border-[#383A40]">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-9 h-9 rounded-lg bg-[#1E1F22] border border-[#383A40] flex items-center justify-center text-lg shrink-0">🦞</div>
+              <div>
+                <div class="text-[#DBDEE1] font-semibold text-sm">OpenClaw</div>
+                <div class="text-[#80848E] text-[11px]">The agent platform for Discord</div>
+              </div>
+              <a href="https://openclaw.dev" target="_blank" rel="noopener" class="ml-auto text-[#5865F2] hover:text-[#7289DA] text-[11px] font-semibold transition-colors shrink-0">openclaw.dev &rarr;</a>
+            </div>
+            <p class="text-[#80848E] text-sm leading-relaxed">
+              Already running bots in your server? OpenClaw handles the agents. claude-on-discord handles Claude Code. Same server, one surface. Invite your OpenClaw and steer Claude Code together &mdash; or let them run in parallel across different channels.
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ─── Why Discord ────────────────────────────────────────────────────── -->
   <section class="border-b border-[#2B2D31] px-6 py-20 stripe-subtle">
     <div class="max-w-5xl mx-auto">
