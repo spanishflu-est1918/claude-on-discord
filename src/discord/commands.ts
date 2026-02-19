@@ -223,6 +223,9 @@ const slashCommands = [
         .setName("thread")
         .setDescription("Provision/switch this thread to a dedicated worktree"),
     ),
+  new SlashCommandBuilder()
+    .setName("kill")
+    .setDescription("Kill the active Claude process, archive this thread, and mark it red"),
 ];
 
 export function getSlashCommandDefinitions(): ReturnType<SlashCommandBuilder["toJSON"]>[] {

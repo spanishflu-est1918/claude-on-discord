@@ -3708,6 +3708,41 @@ export async function startApp(
             await interaction.editReply(`Unsupported worktree action: ${action}`);
             break;
           }
+          case "kill": {
+            if (
+              !interaction.channel ||
+              !(
+                typeof interaction.channel.isThread === "function" && interaction.channel.isThread()
+              )
+            ) {
+              await interaction.reply({
+                content: "The `/kill` command only works inside a thread.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+            const thread = interaction.channel;
+
+            // Hard-abort any active Claude query before archiving.
+            stopController.abort(channelId);
+
+            // Prefix the thread name with 🔴 (idempotent: skip if already present).
+            const currentName = thread.name;
+            const newName = currentName.startsWith("🔴") ? currentName : `🔴 ${currentName}`;
+
+            const wasAlreadyArchived = thread.archived ?? false;
+
+            // Rename + archive in one call → fires threadUpdate → onThreadLifecycle
+            // handles suspendedChannels + session reset + metadata update automatically.
+            await thread.edit({ name: newName, archived: true });
+
+            const statusNote = wasAlreadyArchived ? " (was already archived)" : "";
+            await interaction.editReply(`Killed and archived \`${newName}\`.${statusNote}`);
+            break;
+          }
           default: {
             await interaction.reply({
               content: "Command not implemented.",
@@ -3830,11 +3865,7 @@ export async function startApp(
               });
             });
             const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
-            const seededPrompt = buildSeededPrompt(
-              prompt,
-              state.history,
-              Boolean(resumeSessionId),
-            );
+            const seededPrompt = buildSeededPrompt(prompt, state.history, Boolean(resumeSessionId));
             const resumeFallbackPrompt = resumeSessionId
               ? buildSeededPrompt(prompt, state.history, false)
               : undefined;
