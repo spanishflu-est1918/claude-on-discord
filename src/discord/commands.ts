@@ -36,6 +36,17 @@ const slashCommands = [
     .setName("merge")
     .setDescription(
       "In a fork thread: summarize and merge back to parent. In parent: list thread worktrees.",
+    )
+    .addStringOption((option) =>
+      option
+        .setName("focus")
+        .setDescription("Fork thread: focus hint for summary (e.g. 'decisions made')")
+        .setMaxLength(200),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("branch")
+        .setDescription("Parent channel: git branch name to merge into current branch"),
     ),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()

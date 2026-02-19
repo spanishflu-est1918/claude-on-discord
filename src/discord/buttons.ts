@@ -11,12 +11,12 @@ const THREAD_WORKTREE_KEEP_PREFIX = "thread:worktree:keep:";
 const THREAD_WORKTREE_CREATE_PREFIX = "thread:worktree:create:";
 const THREAD_CLEANUP_KEEP_PREFIX = "thread:cleanup:keep:";
 const THREAD_CLEANUP_REMOVE_PREFIX = "thread:cleanup:remove:";
+const MERGE_CLEANUP_REMOVE_PREFIX = "merge:cleanup:remove:";
+const MERGE_CLEANUP_KEEP_PREFIX = "merge:cleanup:keep:";
 const DIFF_SUMMARY_PREFIX = "diff:summary:";
 const DIFF_FILES_PREFIX = "diff:files:";
 const DIFF_STAT_PREFIX = "diff:stat:";
 const DIFF_PATCH_PREFIX = "diff:patch:";
-const MERGE_ARCHIVE_PREFIX = "merge:archive:";
-const MERGE_KEEP_PREFIX = "merge:keep:";
 
 export type RunControlAction = "interrupt" | "abort";
 export type ToolViewAction = "expand" | "collapse";
@@ -25,7 +25,7 @@ export type ProjectSwitchAction = "keep" | "fresh";
 export type ThreadWorktreeAction = "keep" | "create";
 export type ThreadCleanupAction = "keep" | "remove";
 export type DiffViewAction = "summary" | "files" | "stat" | "patch";
-export type MergeArchiveAction = "archive" | "keep";
+export type MergeCleanupAction = "remove" | "keep";
 
 export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
   const interruptButton = new ButtonBuilder()
@@ -266,6 +266,36 @@ export function parseThreadCleanupCustomId(
   return null;
 }
 
+export function buildMergeCleanupButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
+  const keepButton = new ButtonBuilder()
+    .setCustomId(`${MERGE_CLEANUP_KEEP_PREFIX}${channelId}`)
+    .setLabel("Keep going")
+    .setStyle(ButtonStyle.Secondary)
+    .setEmoji("⚙️");
+
+  const removeButton = new ButtonBuilder()
+    .setCustomId(`${MERGE_CLEANUP_REMOVE_PREFIX}${channelId}`)
+    .setLabel("Remove")
+    .setStyle(ButtonStyle.Danger)
+    .setEmoji("🗑️");
+
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(keepButton, removeButton)];
+}
+
+export function parseMergeCleanupCustomId(
+  customId: string,
+): { action: MergeCleanupAction; channelId: string } | null {
+  if (customId.startsWith(MERGE_CLEANUP_REMOVE_PREFIX)) {
+    const channelId = customId.slice(MERGE_CLEANUP_REMOVE_PREFIX.length);
+    if (channelId) return { action: "remove", channelId };
+  }
+  if (customId.startsWith(MERGE_CLEANUP_KEEP_PREFIX)) {
+    const channelId = customId.slice(MERGE_CLEANUP_KEEP_PREFIX.length);
+    if (channelId) return { action: "keep", channelId };
+  }
+  return null;
+}
+
 export function buildDiffViewButtons(requestId: string): ActionRowBuilder<ButtonBuilder>[] {
   const summaryButton = new ButtonBuilder()
     .setCustomId(`${DIFF_SUMMARY_PREFIX}${requestId}`)
@@ -292,42 +322,6 @@ export function buildDiffViewButtons(requestId: string): ActionRowBuilder<Button
       patchButton,
     ),
   ];
-}
-
-export function buildMergeArchiveButtons(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
-  const archiveButton = new ButtonBuilder()
-    .setCustomId(`${MERGE_ARCHIVE_PREFIX}${channelId}`)
-    .setLabel("Archive Thread")
-    .setStyle(ButtonStyle.Danger)
-    .setEmoji("📦");
-
-  const keepButton = new ButtonBuilder()
-    .setCustomId(`${MERGE_KEEP_PREFIX}${channelId}`)
-    .setLabel("Keep Working")
-    .setStyle(ButtonStyle.Secondary)
-    .setEmoji("🔓");
-
-  return [new ActionRowBuilder<ButtonBuilder>().addComponents(archiveButton, keepButton)];
-}
-
-export function parseMergeArchiveCustomId(
-  customId: string,
-): { action: MergeArchiveAction; channelId: string } | null {
-  if (customId.startsWith(MERGE_ARCHIVE_PREFIX)) {
-    const channelId = customId.slice(MERGE_ARCHIVE_PREFIX.length);
-    if (channelId) {
-      return { action: "archive", channelId };
-    }
-  }
-
-  if (customId.startsWith(MERGE_KEEP_PREFIX)) {
-    const channelId = customId.slice(MERGE_KEEP_PREFIX.length);
-    if (channelId) {
-      return { action: "keep", channelId };
-    }
-  }
-
-  return null;
 }
 
 export function parseDiffViewCustomId(
