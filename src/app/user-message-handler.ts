@@ -52,6 +52,7 @@ import {
   sendGeneratedFilesToChannel,
 } from "./file-artifacts";
 import { createRunawayToolGuard } from "./runaway-tool-guard";
+import { handleDirectBashMessage } from "./direct-bash-handler";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -157,25 +158,13 @@ export function createUserMessageHandler(input: {
         const state = input.sessions.getState(channelId, guildId);
         const directBash = parseDirectBashCommand(message.content);
         if (directBash !== null) {
-          if (!directBash) {
-            await queueChannelMessage(
-              "Direct shell mode expects a command after `!` (example: `!git status`).",
-            );
-            return;
-          }
-
-          const result = await input.runBashCommand(directBash, state.channel.workingDir);
-          const outputText = result.output || "(no output)";
-          const payload = `\`\`\`bash\n$ ${directBash}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
-          const chunks = chunkDiscordText(payload);
-          const firstChunk = chunks[0] ?? "(no output)";
-          await queueChannelMessage(firstChunk);
-          for (let i = 1; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunk) {
-              await queueChannelSend(chunk);
-            }
-          }
+          await handleDirectBashMessage({
+            directBash,
+            workingDir: state.channel.workingDir,
+            runBashCommand: input.runBashCommand,
+            queueChannelMessage: async (payload) => await queueChannelMessage(payload),
+            queueChannelSend: async (payload) => await queueChannelSend(payload),
+          });
           return;
         }
 
