@@ -7,6 +7,9 @@ import {
   ContainerBuilder,
   type Message,
   MessageFlags,
+  SectionBuilder,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
   TextDisplayBuilder,
 } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
@@ -22,7 +25,7 @@ import {
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
-  buildToolViewButtons,
+  buildToolViewSectionButton,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
   parseQueueNoticeCustomId,
@@ -2144,37 +2147,57 @@ function buildSingleLiveToolMessage(
   entry: LiveToolEntry,
   input: { channelId: string; expanded: boolean },
 ): LiveToolRenderPayload {
+  const { channelId, expanded } = input;
   const elapsed = formatElapsedSeconds(entry) ?? "n/a";
   const displayLine = buildToolEntryDisplayLine(entry);
 
-  // Compact header: status icon + bold tool name + elapsed time
-  const lines = [`${toolStatusIcon(entry.status)} **${entry.name}** · ${elapsed}`];
-
-  // Human-readable display line (no raw JSON)
+  // Section: compact header with inline expand/collapse button (right-aligned).
+  // Up to 3 TextDisplays per Section; the button accessory sits flush to the right.
+  const headerTexts: TextDisplayBuilder[] = [
+    new TextDisplayBuilder().setContent(
+      `${toolStatusIcon(entry.status)} **${entry.name}** · ${elapsed}`,
+    ),
+  ];
   if (displayLine) {
-    lines.push(displayLine);
+    // -# renders as small muted subtext — keeps the display line visible but secondary
+    headerTexts.push(new TextDisplayBuilder().setContent(`-# ${displayLine}`));
   }
+  const section = new SectionBuilder()
+    .addTextDisplayComponents(...headerTexts)
+    .setButtonAccessory(buildToolViewSectionButton(channelId, entry.id, expanded));
 
-  // Expanded: summary, full input details, timeline
-  if (input.expanded && entry.summary) {
-    lines.push("", "**Summary**", clipText(entry.summary, 900));
-  }
-  if (input.expanded && entry.inputDetails) {
-    lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
-  } else if (input.expanded && !displayLine && entry.inputPreview) {
-    // Only show raw preview if we couldn't derive a human-readable display line
-    lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
-  }
-  if (input.expanded && entry.timeline.length > 0) {
-    lines.push("", "**Timeline**", ...entry.timeline.slice(-6).map((item) => `- ${item}`));
-  }
+  const container = new ContainerBuilder()
+    .setAccentColor(STATUS_ACCENT_COLORS[entry.status])
+    .addSectionComponents(section);
 
-  const container = new ContainerBuilder().setAccentColor(STATUS_ACCENT_COLORS[entry.status]);
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(clipRawText(lines.join("\n"), 3600)),
-  );
-  for (const row of buildToolViewButtons(input.channelId, entry.id, input.expanded)) {
-    container.addActionRowComponents(row);
+  // Expanded: details below a horizontal separator
+  if (expanded) {
+    const expandedParts: string[] = [];
+    if (entry.summary) {
+      expandedParts.push(`**Summary**\n${clipText(entry.summary, 900)}`);
+    }
+    if (entry.inputDetails) {
+      expandedParts.push(`**Input**\n\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
+    } else if (!displayLine && entry.inputPreview) {
+      // Only show raw preview when no human-readable display line is available
+      expandedParts.push(`**Input**\n\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
+    }
+    if (entry.timeline.length > 0) {
+      const timelineLines = entry.timeline
+        .slice(-6)
+        .map((item) => `- ${item}`)
+        .join("\n");
+      expandedParts.push(`**Timeline**\n${timelineLines}`);
+    }
+
+    if (expandedParts.length > 0) {
+      container.addSeparatorComponents(
+        new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+      );
+      container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(clipRawText(expandedParts.join("\n\n"), 3000)),
+      );
+    }
   }
 
   return {
@@ -3013,89 +3036,165 @@ export async function startApp(
             break;
           }
           case "merge": {
-            // Must be run from a fork thread that has a parent
             const mergeMeta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
-            if (!mergeMeta?.parentChannelId) {
-              await interaction.reply({
-                content:
-                  "This command can only be run from a fork thread. Run `/fork` first to create a branch.",
-                flags: MessageFlags.Ephemeral,
-              });
-              break;
-            }
 
-            const mergeState = sessions.getState(channelId, guildId);
-            const forkSessionId = mergeState.channel.sessionId;
+            if (mergeMeta?.parentChannelId) {
+              // ── Fork thread: summarize and merge context back into parent ──
+              const mergeState = sessions.getState(channelId, guildId);
+              const forkSessionId = mergeState.channel.sessionId;
 
-            if (!forkSessionId) {
-              await interaction.reply({
-                content:
-                  "No active session in this fork yet — send at least one message first before merging.",
-                flags: MessageFlags.Ephemeral,
-              });
-              break;
-            }
+              if (!forkSessionId) {
+                await interaction.reply({
+                  content:
+                    "No active session in this fork yet — send at least one message first before merging.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                break;
+              }
 
-            await interaction.deferReply();
+              await interaction.deferReply();
 
-            try {
-              // 1. Run a summarization query against the fork's live session
-              const summaryResult = await runner.run({
-                channelId,
-                prompt: buildMergeSummaryPrompt(interaction.options.getString("focus")),
-                cwd: mergeState.channel.workingDir,
-                sessionId: forkSessionId,
-                model: mergeState.channel.model,
-              });
+              try {
+                // 1. Run a summarization query against the fork's live session
+                const summaryResult = await runner.run({
+                  channelId,
+                  prompt: buildMergeSummaryPrompt(interaction.options.getString("focus")),
+                  cwd: mergeState.channel.workingDir,
+                  sessionId: forkSessionId,
+                  model: mergeState.channel.model,
+                });
 
-              const summary = summaryResult.text.trim() || "(No summary generated.)";
+                const summary = summaryResult.text.trim() || "(No summary generated.)";
 
-              // 2. Store pending merge context on the parent channel
-              const mergeContext: MergeContextRecord = {
-                fromChannelId: channelId,
-                fromChannelName: mergeMeta.name,
-                summary,
-                mergedAt: Date.now(),
-              };
-              repository.setMergeContext(mergeMeta.parentChannelId, mergeContext);
+                // 2. Store pending merge context on the parent channel
+                const mergeContext: MergeContextRecord = {
+                  fromChannelId: channelId,
+                  fromChannelName: mergeMeta.name,
+                  summary,
+                  mergedAt: Date.now(),
+                };
+                repository.setMergeContext(mergeMeta.parentChannelId, mergeContext);
 
-              // 3. Post merge report to parent channel
-              const mergeReport = buildMergeReportLines({
-                fromChannelId: channelId,
-                fromChannelName: mergeMeta.name,
-                summary,
-              });
-              const parentChannel = await interaction.client.channels
-                .fetch(mergeMeta.parentChannelId)
-                .catch(() => null);
-              if (parentChannel && canSendMessage(parentChannel)) {
-                const reportChunks = chunkDiscordText(mergeReport);
-                for (const chunk of reportChunks) {
-                  if (chunk) {
-                    await parentChannel.send(chunk);
+                // 3. Post merge report to parent channel
+                const mergeReport = buildMergeReportLines({
+                  fromChannelId: channelId,
+                  fromChannelName: mergeMeta.name,
+                  summary,
+                });
+                const parentChannel = await interaction.client.channels
+                  .fetch(mergeMeta.parentChannelId)
+                  .catch(() => null);
+                if (parentChannel && canSendMessage(parentChannel)) {
+                  const reportChunks = chunkDiscordText(mergeReport);
+                  for (const chunk of reportChunks) {
+                    if (chunk) {
+                      await parentChannel.send(chunk);
+                    }
                   }
                 }
+
+                // 4. Archive the fork thread
+                const forkChannel = interaction.channel;
+                if (
+                  forkChannel &&
+                  typeof (forkChannel as { setArchived?: unknown }).setArchived === "function"
+                ) {
+                  await (
+                    forkChannel as { setArchived: (v: boolean) => Promise<unknown> }
+                  ).setArchived(true);
+                }
+
+                // 5. Update lifecycle state in metadata
+                saveThreadBranchMeta(repository, {
+                  ...mergeMeta,
+                  lifecycleState: "archived",
+                  archivedAt: Date.now(),
+                });
+
+                await interaction.editReply(
+                  `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+                );
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                await interaction.editReply(`❌ Merge failed: ${detail}`);
+              }
+            } else {
+              // ── Parent channel: list thread worktrees (+ optionally git merge one) ──
+              const mergeState = sessions.getState(channelId, guildId);
+              const targetBranch = interaction.options.getString("branch");
+              await interaction.deferReply();
+
+              const allMetas = repository
+                .listThreadBranchMetaEntries()
+                .map((entry) => parseThreadBranchMeta(entry.value))
+                .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+              const rootWorkingDir = mergeState.channel.workingDir;
+              const baseBranch = (await detectBranchName(rootWorkingDir)) ?? "main";
+
+              if (targetBranch) {
+                const result = await runCommand(
+                  ["git", "merge", targetBranch, "--no-edit"],
+                  rootWorkingDir,
+                );
+                if (result.exitCode === 0) {
+                  await interaction.editReply(
+                    `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                  );
+                } else {
+                  await interaction.editReply(
+                    `❌ Merge failed.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                  );
+                }
+                break;
               }
 
-              // 4. Archive the fork thread
-              const forkChannel = interaction.channel;
-              if (forkChannel && typeof (forkChannel as { setArchived?: unknown }).setArchived === "function") {
-                await (forkChannel as { setArchived: (v: boolean) => Promise<unknown> }).setArchived(true);
+              const activeForMerge = allMetas
+                .filter(
+                  (meta) =>
+                    meta.rootChannelId === channelId &&
+                    meta.worktreePath &&
+                    existsSync(meta.worktreePath) &&
+                    (meta.lifecycleState === "active" ||
+                      typeof meta.lifecycleState === "undefined"),
+                )
+                .sort((a, b) => a.createdAt - b.createdAt);
+
+              if (activeForMerge.length === 0) {
+                await interaction.editReply(
+                  `No thread worktrees found. Use \`/fork\` + \`/worktree thread\` to create one.`,
+                );
+                break;
               }
 
-              // 5. Update lifecycle state in metadata
-              saveThreadBranchMeta(repository, {
-                ...mergeMeta,
-                lifecycleState: "archived",
-                archivedAt: Date.now(),
-              });
+              const mergeLines = [`**Worktrees** (base: \`${baseBranch}\`):`];
+              for (const meta of activeForMerge) {
+                const branchName = meta.worktreePath
+                  ? ((await detectBranchName(meta.worktreePath)) ?? "unknown")
+                  : "inherited";
+                let divergencePart = "";
+                if (meta.worktreePath) {
+                  const revList = await runCommand(
+                    ["git", "rev-list", "--left-right", "--count", `${baseBranch}...HEAD`],
+                    meta.worktreePath,
+                  );
+                  if (revList.exitCode === 0) {
+                    const counts = parseAheadBehind(revList.output);
+                    if (counts) {
+                      divergencePart = ` ↑${counts.ahead} ↓${counts.behind}`;
+                    }
+                  }
+                }
+                mergeLines.push(`- **${meta.name}** \`${branchName}\`${divergencePart}`);
+              }
+              mergeLines.push(`\nTo git merge: \`/merge branch:<branch-name>\``);
 
-              await interaction.editReply(
-                `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
-              );
-            } catch (error) {
-              const detail = error instanceof Error ? error.message : String(error);
-              await interaction.editReply(`❌ Merge failed: ${detail}`);
+              const mergeChunks = chunkDiscordText(mergeLines.join("\n"));
+              await interaction.editReply(mergeChunks[0] ?? "No worktrees.");
+              for (let i = 1; i < mergeChunks.length; i++) {
+                const chunk = mergeChunks[i];
+                if (chunk) await interaction.followUp(chunk);
+              }
             }
             break;
           }
@@ -3205,89 +3304,6 @@ export async function startApp(
               if (chunk) {
                 await interaction.followUp(chunk);
               }
-            }
-            break;
-          }
-          case "merge": {
-            const state = sessions.getState(channelId, guildId);
-            const targetBranch = interaction.options.getString("branch");
-            await interaction.deferReply();
-
-            const mergeMetas = repository
-              .listThreadBranchMetaEntries()
-              .map((entry) => parseThreadBranchMeta(entry.value))
-              .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-
-            const currentMeta = mergeMetas.find((meta) => meta.channelId === channelId);
-            const rootChannelId = currentMeta?.rootChannelId ?? channelId;
-            const rootChannel = repository.getChannel(rootChannelId);
-            const rootWorkingDir = rootChannel?.workingDir ?? state.channel.workingDir;
-            const baseBranch = (await detectBranchName(rootWorkingDir)) ?? "main";
-
-            const activeForMerge = mergeMetas
-              .filter(
-                (meta) =>
-                  meta.rootChannelId === rootChannelId &&
-                  meta.worktreePath &&
-                  existsSync(meta.worktreePath) &&
-                  (meta.lifecycleState === "active" || typeof meta.lifecycleState === "undefined"),
-              )
-              .sort((a, b) => a.createdAt - b.createdAt);
-
-            if (targetBranch) {
-              // Perform the merge
-              const result = await runCommand(
-                ["git", "merge", targetBranch, "--no-edit"],
-                rootWorkingDir,
-              );
-              if (result.exitCode === 0) {
-                await interaction.editReply(
-                  `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
-                );
-              } else {
-                await interaction.editReply(
-                  `❌ Merge failed.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
-                );
-              }
-              break;
-            }
-
-            if (activeForMerge.length === 0) {
-              await interaction.editReply(
-                `No thread worktrees found for root \`${rootChannelId}\`.`,
-              );
-              break;
-            }
-
-            const mergeLines = [`**Worktrees** (into \`${baseBranch}\`):`];
-            for (const meta of activeForMerge) {
-              const branchName = meta.worktreePath
-                ? ((await detectBranchName(meta.worktreePath)) ?? "unknown")
-                : "inherited";
-              let divergencePart = "";
-              if (meta.worktreePath) {
-                const revList = await runCommand(
-                  ["git", "rev-list", "--left-right", "--count", `${baseBranch}...HEAD`],
-                  meta.worktreePath,
-                );
-                if (revList.exitCode === 0) {
-                  const counts = parseAheadBehind(revList.output);
-                  if (counts) {
-                    divergencePart = ` ↑${counts.ahead} ↓${counts.behind}`;
-                  }
-                }
-              }
-              mergeLines.push(
-                `- **${meta.name}** \`${branchName}\`${divergencePart}`,
-              );
-            }
-            mergeLines.push(`\nTo merge: \`/merge branch:<branch-name>\``);
-
-            const mergeChunks = chunkDiscordText(mergeLines.join("\n"));
-            await interaction.editReply(mergeChunks[0] ?? "No worktrees.");
-            for (let i = 1; i < mergeChunks.length; i++) {
-              const chunk = mergeChunks[i];
-              if (chunk) await interaction.followUp(chunk);
             }
             break;
           }
