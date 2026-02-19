@@ -16,11 +16,9 @@ import {
 } from "./conversation-helpers";
 import {
   applyToolMessageToTrace,
-  buildSingleLiveToolMessage,
   collectToolIdsFromMessage,
   createLiveToolTrace,
   finalizeLiveToolTrace,
-  type LiveToolRenderPayload,
   type LiveToolTrace,
   THINKING_SPINNER_FRAMES,
   toStreamingPreview,
@@ -37,9 +35,7 @@ import {
   withNoInteractiveToolDirective,
 } from "./prompt-directives";
 import {
-  canEditSentMessage,
   canSendMessage,
-  type EditableSentMessage,
   maybeInheritThreadContext,
   saveThreadBranchMeta,
   setThreadState,
@@ -54,6 +50,7 @@ import {
 import { createRunawayToolGuard } from "./runaway-tool-guard";
 import { handleDirectBashMessage } from "./direct-bash-handler";
 import { createStreamingStatusController } from "./streaming-status-controller";
+import { createLiveToolMessageController } from "./live-tool-message-controller";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -213,12 +210,7 @@ export function createUserMessageHandler(input: {
           : undefined;
         const abortController = new AbortController();
         const persistedFilenames = new Set<string>();
-        let streamClosed = false;
-        let streamToolRenderTimer: ReturnType<typeof setInterval> | null = null;
         const toolSendTarget = canSendMessage(message.channel) ? message.channel : null;
-        const toolMessagesById = new Map<string, EditableSentMessage>();
-        const pendingToolMessageContent = new Map<string, LiveToolRenderPayload>();
-        const toolMessageEditInFlight = new Set<string>();
         const runawayToolGuard = createRunawayToolGuard();
         let runawayStopReason: string | null = null;
         const streamingStatus = createStreamingStatusController({
@@ -226,75 +218,14 @@ export function createUserMessageHandler(input: {
           status,
           discordDispatch: input.discordDispatch,
         });
-
-        const stopToolRenderTimer = () => {
-          if (!streamToolRenderTimer) {
-            return;
-          }
-          clearInterval(streamToolRenderTimer);
-          streamToolRenderTimer = null;
-        };
-
-        const queueToolMessageRender = (toolId: string) => {
-          const entry = runToolTrace.byId.get(toolId);
-          if (!entry || !toolSendTarget) {
-            return;
-          }
-          pendingToolMessageContent.set(
-            toolId,
-            buildSingleLiveToolMessage(entry, {
-              channelId,
-              expanded: input.getToolExpanded(channelId, toolId),
-            }),
-          );
-          if (toolMessageEditInFlight.has(toolId)) {
-            return;
-          }
-          toolMessageEditInFlight.add(toolId);
-          void (async () => {
-            while (pendingToolMessageContent.has(toolId)) {
-              const nextContent = pendingToolMessageContent.get(toolId);
-              pendingToolMessageContent.delete(toolId);
-              if (!nextContent) {
-                continue;
-              }
-              try {
-                const existing = toolMessagesById.get(toolId);
-                if (existing) {
-                  await input.discordDispatch.enqueue(`tool:${channelId}:${toolId}`, async () => {
-                    await existing.edit(nextContent);
-                  });
-                } else {
-                  const sent = await input.discordDispatch.enqueue(
-                    `tool:${channelId}:${toolId}`,
-                    async () => await toolSendTarget.send(nextContent),
-                  );
-                  if (canEditSentMessage(sent)) {
-                    toolMessagesById.set(toolId, sent);
-                  }
-                }
-              } catch {
-                // Ignore tool message send/edit failures to keep primary run stable.
-              }
-            }
-            toolMessageEditInFlight.delete(toolId);
-          })();
-        };
-
-        streamToolRenderTimer = setInterval(() => {
-          if (streamClosed) {
-            return;
-          }
-          for (const toolId of runToolTrace.order) {
-            const entry = runToolTrace.byId.get(toolId);
-            if (!entry) {
-              continue;
-            }
-            if (entry.status === "running" || entry.status === "queued") {
-              queueToolMessageRender(toolId);
-            }
-          }
-        }, 1000);
+        const liveToolMessages = createLiveToolMessageController({
+          channelId,
+          runToolTrace,
+          discordDispatch: input.discordDispatch,
+          toolSendTarget,
+          getToolExpanded: (toolId) => input.getToolExpanded(channelId, toolId),
+        });
+        liveToolMessages.startPolling();
 
         try {
           input.sessions.appendTurn(channelId, {
@@ -358,14 +289,13 @@ export function createUserMessageHandler(input: {
               }
               if (applyToolMessageToTrace(runToolTrace, sdkMessage)) {
                 for (const toolId of collectToolIdsFromMessage(runToolTrace, sdkMessage)) {
-                  queueToolMessageRender(toolId);
+                  liveToolMessages.queueToolMessageRender(toolId);
                 }
               }
             },
           });
 
-          stopToolRenderTimer();
-          streamClosed = true;
+          liveToolMessages.stopPolling();
           await streamingStatus.close();
 
           if (result.sessionId) {
@@ -389,7 +319,7 @@ export function createUserMessageHandler(input: {
           const interrupted = input.stopController.wasInterrupted(channelId);
           finalizeLiveToolTrace(runToolTrace, interrupted ? "interrupted" : "success");
           for (const toolId of runToolTrace.order) {
-            queueToolMessageRender(toolId);
+            liveToolMessages.queueToolMessageRender(toolId);
           }
           const baseFinalText =
             cleanedOutputText.length > 0
@@ -449,15 +379,14 @@ export function createUserMessageHandler(input: {
           await addReaction(message, "✅");
           await setThreadState(message.channel, "⚠️");
         } catch (error) {
-          stopToolRenderTimer();
-          streamClosed = true;
+          liveToolMessages.stopPolling();
           await streamingStatus.close();
           finalizeLiveToolTrace(
             runToolTrace,
             input.stopController.wasInterrupted(channelId) ? "interrupted" : "failed",
           );
           for (const toolId of runToolTrace.order) {
-            queueToolMessageRender(toolId);
+            liveToolMessages.queueToolMessageRender(toolId);
           }
 
           const msg = runawayStopReason ?? formatErrorMessage(error);
@@ -490,7 +419,7 @@ export function createUserMessageHandler(input: {
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
           await setThreadState(message.channel, runawayStopReason ? "⚠️" : "❌");
         } finally {
-          stopToolRenderTimer();
+          liveToolMessages.stopPolling();
           await cleanupFiles(stagedAttachments.stagedPaths);
           input.stopController.clear(channelId);
         }
