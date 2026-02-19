@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
-import { runHook } from "../../discord/hook-runner";
 import type { ClaudeRunner } from "../../claude/runner";
 import type { SessionManager } from "../../claude/session";
 import type { Repository } from "../../db/repository";
+import { buildMergeArchiveButtons } from "../../discord/buttons";
 import { parseThreadBranchMeta } from "../../discord/thread-branch";
 import type { saveThreadBranchMeta } from "../thread-lifecycle";
 
@@ -28,7 +28,6 @@ export async function handleMergeCommand(input: {
   runCommand: RunCommand;
   detectBranchName: (workingDir: string) => Promise<string | null>;
   parseAheadBehind: (output: string) => AheadBehind | null;
-  summarizeGitMergeOutput: (output: string) => string;
   buildMergeSummaryPrompt: (focus?: string | null) => string;
   normalizeMergeSummary: (summary: string, maxChars: number) => string;
   buildMergeReportLines: (value: {
@@ -58,7 +57,7 @@ export async function handleMergeCommand(input: {
     try {
       const summaryResult = await input.runner.run({
         channelId: input.channelId,
-        prompt: input.buildMergeSummaryPrompt(input.interaction.options.getString("focus")),
+        prompt: input.buildMergeSummaryPrompt(null),
         cwd: mergeState.channel.workingDir,
         sessionId: forkSessionId,
         model: mergeState.channel.model,
@@ -91,23 +90,10 @@ export async function handleMergeCommand(input: {
         }
       }
 
-      const forkChannel = input.interaction.channel;
-      if (
-        forkChannel &&
-        typeof (forkChannel as { setArchived?: unknown }).setArchived === "function"
-      ) {
-        await (forkChannel as { setArchived: (v: boolean) => Promise<unknown> }).setArchived(true);
-      }
-
-      input.saveThreadBranchMeta(input.repository, {
-        ...mergeMeta,
-        lifecycleState: "archived",
-        archivedAt: Date.now(),
+      await input.interaction.editReply({
+        content: `✅ Merged into <#${mergeMeta.parentChannelId}>. Archive this thread?`,
+        components: buildMergeArchiveButtons(input.channelId),
       });
-
-      await input.interaction.editReply(
-        `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
-      );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await input.interaction.editReply(`❌ Merge failed: ${detail}`);
@@ -115,8 +101,8 @@ export async function handleMergeCommand(input: {
     return;
   }
 
+  // Parent channel path: list active thread worktrees
   const mergeState = input.sessions.getState(input.channelId, input.guildId);
-  const targetBranch = input.interaction.options.getString("branch");
   await input.interaction.deferReply();
 
   const allMetas = input.repository
@@ -126,45 +112,6 @@ export async function handleMergeCommand(input: {
 
   const rootWorkingDir = mergeState.channel.workingDir;
   const baseBranch = (await input.detectBranchName(rootWorkingDir)) ?? "main";
-
-  if (targetBranch) {
-    const preMerge = await runHook({
-      hookName: "pre_merge",
-      workingDir: rootWorkingDir,
-      env: {
-        COD_THREAD_ID: input.channelId,
-        COD_BRANCH_NAME: targetBranch,
-      },
-    });
-    if (preMerge.ran && preMerge.exitCode !== 0) {
-      const detail = preMerge.output ? `\n\`\`\`\n${preMerge.output}\n\`\`\`` : "";
-      await input.interaction.editReply(
-        `❌ Merge aborted: \`pre_merge\` hook exited ${preMerge.exitCode}.${detail}`,
-      );
-      return;
-    }
-
-    const result = await input.runCommand(["git", "merge", targetBranch, "--no-edit"], rootWorkingDir);
-    const mergeSummary = input.summarizeGitMergeOutput(result.output);
-    if (result.exitCode === 0) {
-      await runHook({
-        hookName: "post_merge",
-        workingDir: rootWorkingDir,
-        env: {
-          COD_THREAD_ID: input.channelId,
-          COD_BRANCH_NAME: targetBranch,
-        },
-      });
-      await input.interaction.editReply(
-        `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
-      );
-      return;
-    }
-    await input.interaction.editReply(
-      `❌ Merge failed for \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
-    );
-    return;
-  }
 
   const activeForMerge = allMetas
     .filter(
@@ -203,7 +150,6 @@ export async function handleMergeCommand(input: {
     }
     mergeLines.push(`- **${meta.name}** \`${branchName}\`${divergencePart}`);
   }
-  mergeLines.push("\nTo git merge: `/merge branch:<branch-name>`");
 
   const mergeChunks = input.chunkDiscordText(mergeLines.join("\n"));
   await input.interaction.editReply(mergeChunks[0] ?? "No worktrees.");

@@ -9,7 +9,6 @@ import {
   buildMergeSummaryPrompt,
   compactHistory,
   normalizeMergeSummary,
-  summarizeGitMergeOutput,
 } from "./conversation-helpers";
 import { parseAheadBehind, type DiffContext } from "./diff-worktree";
 import { canSendMessage, maybeInheritThreadContext, saveThreadBranchMeta } from "./thread-lifecycle";
@@ -209,7 +208,6 @@ export async function handleSlashCommands(input: HandleSlashCommandsInput): Prom
         runCommand: input.runCommand,
         detectBranchName: input.detectBranchName,
         parseAheadBehind,
-        summarizeGitMergeOutput,
         buildMergeSummaryPrompt,
         normalizeMergeSummary,
         buildMergeReportLines,

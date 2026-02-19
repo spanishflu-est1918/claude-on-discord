@@ -5,6 +5,7 @@ import type { StopController } from "../claude/stop";
 import type { Repository } from "../db/repository";
 import {
   parseDiffViewCustomId,
+  parseMergeArchiveCustomId,
   parseProjectSwitchCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -13,6 +14,7 @@ import { handleBasicButtonInteractions, type QueueNoticeInfo } from "./button-in
 import type { DiffContext } from "./diff-worktree";
 import type { LiveToolTrace } from "./live-tools";
 import { handleDiffViewButton } from "./custom-buttons/diff-view-button";
+import { handleMergeArchiveButton } from "./custom-buttons/merge-archive-button";
 import { handleProjectSwitchButton } from "./custom-buttons/project-switch-button";
 import { handleThreadCleanupButton } from "./custom-buttons/thread-cleanup-button";
 import { handleThreadWorktreeChoiceButton } from "./custom-buttons/thread-worktree-choice-button";
@@ -38,6 +40,15 @@ export async function handleCustomButtonInteraction(input: {
   runner: ClaudeRunner;
   stopController: StopController;
 }): Promise<boolean> {
+  const mergeArchive = parseMergeArchiveCustomId(input.interaction.customId);
+  if (mergeArchive) {
+    return await handleMergeArchiveButton({
+      interaction: input.interaction,
+      parsed: mergeArchive,
+      repository: input.repository,
+    });
+  }
+
   const projectSwitch = parseProjectSwitchCustomId(input.interaction.customId);
   if (projectSwitch) {
     return await handleProjectSwitchButton({
