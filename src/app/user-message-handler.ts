@@ -52,6 +52,7 @@ import { createStreamingStatusController } from "./streaming-status-controller";
 import { createLiveToolMessageController } from "./live-tool-message-controller";
 import { notifyRunFailure } from "./run-failure-notifier";
 import { createQueuedChannelDispatch } from "./queued-channel-dispatch";
+import { runHook } from "../discord/hook-runner";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -218,6 +219,18 @@ export function createUserMessageHandler(input: {
         });
         liveToolMessages.startPolling();
 
+        const runStartAt = Date.now();
+        let runOutcome: "success" | "error" | "interrupted" | "turn_limit" = "error";
+        void runHook({
+          hookName: "run_start",
+          workingDir: state.channel.workingDir,
+          env: {
+            COD_THREAD_ID: channelId,
+            COD_WORKING_DIR: state.channel.workingDir,
+            COD_PROMPT_PREVIEW: prompt.slice(0, 300),
+          },
+        });
+
         try {
           input.sessions.appendTurn(channelId, {
             role: "user",
@@ -368,6 +381,7 @@ export function createUserMessageHandler(input: {
 
           await removeReaction(message, "🧠");
           await addReaction(message, "✅");
+          runOutcome = interrupted ? "interrupted" : hitTurnLimit ? "turn_limit" : "success";
           await setThreadStatus(message.channel, "needsAttention");
         } catch (error) {
           liveToolMessages.stopPolling();
@@ -396,6 +410,10 @@ export function createUserMessageHandler(input: {
           });
           await removeReaction(message, "🧠");
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
+          runOutcome =
+            input.stopController.wasInterrupted(channelId) || runawayStopReason
+              ? "interrupted"
+              : "error";
           await setThreadStatus(message.channel, runawayStopReason ? "needsAttention" : "error");
         } finally {
           // Release queue slot immediately so the next user message isn't
@@ -405,6 +423,16 @@ export function createUserMessageHandler(input: {
             input.pendingMessageRunsByChannel.delete(channelId);
           }
           liveToolMessages.stopPolling();
+          void runHook({
+            hookName: "run_end",
+            workingDir: state.channel.workingDir,
+            env: {
+              COD_THREAD_ID: channelId,
+              COD_WORKING_DIR: state.channel.workingDir,
+              COD_RESULT: runOutcome,
+              COD_DURATION_MS: String(Date.now() - runStartAt),
+            },
+          });
           await cleanupFiles(stagedAttachments.stagedPaths);
           input.stopController.clear(channelId);
         }

@@ -42,6 +42,17 @@ async function findMainWorktreePath(workingDir: string): Promise<string | null> 
  * Non-zero exit is returned to the caller to decide whether to abort.
  *
  * Hook scripts receive COD_* environment variables describing the event context.
+ *
+ * Available hooks:
+ *   run_start         — fired when Claude begins processing a user message
+ *                       env: COD_THREAD_ID, COD_WORKING_DIR, COD_PROMPT_PREVIEW
+ *   run_end           — fired after Claude finishes (success, error, or interrupted)
+ *                       env: COD_THREAD_ID, COD_WORKING_DIR, COD_RESULT, COD_DURATION_MS
+ *   worktree_created  — after a thread worktree is provisioned
+ *   thread_created    — after a fork thread is fully set up
+ *   pre_merge         — before git merge (non-zero exit aborts it)
+ *   post_merge        — after a successful git merge
+ *   worktree_removed  — after a thread worktree is cleaned up
  */
 export async function runHook(input: {
   hookName: string;
