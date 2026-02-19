@@ -3229,7 +3229,9 @@ export async function startApp(
               `**${state.channel.workingDir}**`,
               `model: \`${state.channel.model}\` · turns: \`${turns}\` · cost: \`$${totalCost.toFixed(4)}\``,
               `mode: \`${permissionPolicy.permissionMode}\` · mentions: \`${mentionPolicy.requireMention ? "required" : "off"}\``,
-              channelSystemPrompt ? `system prompt: set (\`${channelSystemPrompt.length}\` chars)` : null,
+              channelSystemPrompt
+                ? `system prompt: set (\`${channelSystemPrompt.length}\` chars)`
+                : null,
               state.channel.sessionId ? `session: \`${state.channel.sessionId}\`` : null,
               ...threadStatusLines,
             ].filter((l): l is string => l !== null);
@@ -3264,9 +3266,7 @@ export async function startApp(
               break;
             }
 
-            const lines = [
-              `**Branches** (base: \`${baseBranch}\`):`,
-            ];
+            const lines = [`**Branches** (base: \`${baseBranch}\`):`];
 
             for (const meta of activeBranches) {
               let branchPart = "inherited";
@@ -3292,9 +3292,7 @@ export async function startApp(
                 worktreePart = "pending";
               }
 
-              lines.push(
-                `- **${meta.name}** ${branchPart}${divergencePart} @ \`${worktreePart}\``,
-              );
+              lines.push(`- **${meta.name}** ${branchPart}${divergencePart} @ \`${worktreePart}\``);
             }
 
             const chunks = chunkDiscordText(lines.join("\n"));
@@ -4067,6 +4065,41 @@ export async function startApp(
             await interaction.editReply(`Unsupported worktree action: ${action}`);
             break;
           }
+          case "kill": {
+            if (
+              !interaction.channel ||
+              !(
+                typeof interaction.channel.isThread === "function" && interaction.channel.isThread()
+              )
+            ) {
+              await interaction.reply({
+                content: "The `/kill` command only works inside a thread.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+            const thread = interaction.channel;
+
+            // Hard-abort any active Claude query before archiving.
+            stopController.abort(channelId);
+
+            // Prefix the thread name with 🔴 (idempotent: skip if already present).
+            const currentName = thread.name;
+            const newName = currentName.startsWith("🔴") ? currentName : `🔴 ${currentName}`;
+
+            const wasAlreadyArchived = thread.archived ?? false;
+
+            // Rename + archive in one call → fires threadUpdate → onThreadLifecycle
+            // handles suspendedChannels + session reset + metadata update automatically.
+            await thread.edit({ name: newName, archived: true });
+
+            const statusNote = wasAlreadyArchived ? " (was already archived)" : "";
+            await interaction.editReply(`Killed and archived \`${newName}\`.${statusNote}`);
+            break;
+          }
           default: {
             await interaction.reply({
               content: "Command not implemented.",
@@ -4208,11 +4241,7 @@ export async function startApp(
               ? `${buildMergeContextInjection(pendingMergeContext)}\n\n`
               : "";
             const prompt = `${mergeContextPrefix}${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
-            const seededPrompt = buildSeededPrompt(
-              prompt,
-              state.history,
-              Boolean(resumeSessionId),
-            );
+            const seededPrompt = buildSeededPrompt(prompt, state.history, Boolean(resumeSessionId));
             const resumeFallbackPrompt = resumeSessionId
               ? buildSeededPrompt(prompt, state.history, false)
               : undefined;

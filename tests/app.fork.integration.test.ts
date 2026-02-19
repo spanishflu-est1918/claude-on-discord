@@ -221,16 +221,16 @@ describe("startApp fork slash command", () => {
             .get({ channel_id: "thread-1" }) ?? null;
         threadMetaRaw =
           openedDb
-            ?.query<{ value: string | null }>(
-              "SELECT value FROM settings WHERE key = $key;",
-            )
+            ?.query<{ value: string | null }>("SELECT value FROM settings WHERE key = $key;")
             .get({ key: "channel_thread_branch:thread-1" })?.value ?? null;
         if (row && threadMetaRaw) {
           break;
         }
         await Bun.sleep(10);
       }
-      const threadMeta = threadMetaRaw ? (JSON.parse(threadMetaRaw) as Record<string, unknown>) : null;
+      const threadMeta = threadMetaRaw
+        ? (JSON.parse(threadMetaRaw) as Record<string, unknown>)
+        : null;
       expect(runCalls).toBe(0);
       expect(row?.session_id).toBeNull();
       expect(threadMeta?.forkSourceSessionId).toBe("parent-session-1");
