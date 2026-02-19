@@ -53,6 +53,7 @@ import {
 } from "./file-artifacts";
 import { createRunawayToolGuard } from "./runaway-tool-guard";
 import { handleDirectBashMessage } from "./direct-bash-handler";
+import { createStreamingStatusController } from "./streaming-status-controller";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -212,79 +213,19 @@ export function createUserMessageHandler(input: {
           : undefined;
         const abortController = new AbortController();
         const persistedFilenames = new Set<string>();
-        let streamedText = "";
-        let streamedThinking = "";
         let streamClosed = false;
-        let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-        let streamSpinnerTimer: ReturnType<typeof setInterval> | null = null;
         let streamToolRenderTimer: ReturnType<typeof setInterval> | null = null;
-        let streamSpinnerFrameIndex = 0;
-        let statusEditQueue: Promise<void> = Promise.resolve();
-        let statusEditInFlight = false;
-        let pendingStatusEdit: { content: string; includeButtons: boolean } | null = null;
         const toolSendTarget = canSendMessage(message.channel) ? message.channel : null;
         const toolMessagesById = new Map<string, EditableSentMessage>();
         const pendingToolMessageContent = new Map<string, LiveToolRenderPayload>();
         const toolMessageEditInFlight = new Set<string>();
         const runawayToolGuard = createRunawayToolGuard();
         let runawayStopReason: string | null = null;
-
-        const queueStatusEdit = (content: string, includeButtons: boolean): Promise<void> => {
-          pendingStatusEdit = { content, includeButtons };
-          if (statusEditInFlight) {
-            return statusEditQueue;
-          }
-
-          statusEditInFlight = true;
-          statusEditQueue = (async () => {
-            while (pendingStatusEdit) {
-              const edit = pendingStatusEdit;
-              pendingStatusEdit = null;
-              try {
-                await input.discordDispatch.enqueue(`status:${channelId}`, async () => {
-                  await status.edit({
-                    content: edit.content,
-                    components: edit.includeButtons ? buildStopButtons(channelId) : [],
-                  });
-                });
-              } catch {
-                // Ignore transient edit failures to keep stream moving.
-              }
-            }
-            statusEditInFlight = false;
-          })();
-          return statusEditQueue;
-        };
-
-        const flushStreamPreview = () => {
-          streamFlushTimer = null;
-          if (streamClosed) {
-            return;
-          }
-          void queueStatusEdit(
-            toStreamingPreview(
-              streamedText,
-              streamedThinking,
-              THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
-            ),
-            true,
-          );
-        };
-
-        const scheduleStreamPreview = () => {
-          if (streamClosed || streamFlushTimer) {
-            return;
-          }
-          streamFlushTimer = setTimeout(flushStreamPreview, 300);
-        };
-
-        const stopSpinner = () => {
-          if (!streamSpinnerTimer) {
-            return;
-          }
-          clearInterval(streamSpinnerTimer);
-          streamSpinnerTimer = null;
-        };
+        const streamingStatus = createStreamingStatusController({
+          channelId,
+          status,
+          discordDispatch: input.discordDispatch,
+        });
 
         const stopToolRenderTimer = () => {
           if (!streamToolRenderTimer) {
@@ -293,22 +234,6 @@ export function createUserMessageHandler(input: {
           clearInterval(streamToolRenderTimer);
           streamToolRenderTimer = null;
         };
-
-        streamSpinnerTimer = setInterval(() => {
-          if (streamClosed) {
-            return;
-          }
-          streamSpinnerFrameIndex =
-            (streamSpinnerFrameIndex + 1) % THINKING_SPINNER_FRAMES.length;
-          void queueStatusEdit(
-            toStreamingPreview(
-              streamedText,
-              streamedThinking,
-              THINKING_SPINNER_FRAMES[streamSpinnerFrameIndex % THINKING_SPINNER_FRAMES.length],
-            ),
-            true,
-          );
-        }, 900);
 
         const queueToolMessageRender = (toolId: string) => {
           const entry = runToolTrace.byId.get(toolId);
@@ -415,12 +340,10 @@ export function createUserMessageHandler(input: {
               }
             },
             onTextDelta: (textDelta) => {
-              streamedText += textDelta;
-              scheduleStreamPreview();
+              streamingStatus.appendText(textDelta);
             },
             onThinkingDelta: (thinkingDelta) => {
-              streamedThinking += thinkingDelta;
-              scheduleStreamPreview();
+              streamingStatus.appendThinking(thinkingDelta);
             },
             onMessage: (sdkMessage) => {
               runawayStopReason = runawayStopReason ?? runawayToolGuard.observeMessage(sdkMessage);
@@ -441,14 +364,9 @@ export function createUserMessageHandler(input: {
             },
           });
 
-          if (streamFlushTimer) {
-            clearTimeout(streamFlushTimer);
-            streamFlushTimer = null;
-          }
-          stopSpinner();
           stopToolRenderTimer();
           streamClosed = true;
-          await statusEditQueue;
+          await streamingStatus.close();
 
           if (result.sessionId) {
             input.sessions.setSessionId(channelId, result.sessionId);
@@ -489,7 +407,7 @@ export function createUserMessageHandler(input: {
             content: finalText,
           });
 
-          const finalPreview = toStreamingPreview(finalText, streamedThinking);
+          const finalPreview = streamingStatus.buildFinalPreview(finalText);
           await input.discordDispatch.enqueue(`status:${channelId}`, async () => {
             await status.edit({
               content: finalPreview,
@@ -531,14 +449,9 @@ export function createUserMessageHandler(input: {
           await addReaction(message, "✅");
           await setThreadState(message.channel, "⚠️");
         } catch (error) {
-          if (streamFlushTimer) {
-            clearTimeout(streamFlushTimer);
-            streamFlushTimer = null;
-          }
-          stopSpinner();
           stopToolRenderTimer();
           streamClosed = true;
-          await statusEditQueue;
+          await streamingStatus.close();
           finalizeLiveToolTrace(
             runToolTrace,
             input.stopController.wasInterrupted(channelId) ? "interrupted" : "failed",
@@ -577,7 +490,6 @@ export function createUserMessageHandler(input: {
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
           await setThreadState(message.channel, runawayStopReason ? "⚠️" : "❌");
         } finally {
-          stopSpinner();
           stopToolRenderTimer();
           await cleanupFiles(stagedAttachments.stagedPaths);
           input.stopController.clear(channelId);
