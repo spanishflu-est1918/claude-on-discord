@@ -32,6 +32,24 @@ describe("slash commands", () => {
     expect(title.max_length).toBe(100);
   });
 
+  test("/merge exposes optional focus and branch options", () => {
+    const commands = getSlashCommandDefinitions();
+    const merge = commands.find((command) => command.name === "merge");
+    expect(merge).toBeDefined();
+    const options = merge?.options ?? [];
+    const names = options
+      .map((option) => ("name" in option && typeof option.name === "string" ? option.name : ""))
+      .filter(Boolean);
+    expect(names).toEqual(["focus", "branch"]);
+  });
+
+  test("/kill has no options", () => {
+    const commands = getSlashCommandDefinitions();
+    const kill = commands.find((command) => command.name === "kill");
+    expect(kill).toBeDefined();
+    expect(kill?.options ?? []).toHaveLength(0);
+  });
+
   test("/pr exposes create and inspect subcommands", () => {
     const commands = getSlashCommandDefinitions();
     const pr = commands.find((command) => command.name === "pr");

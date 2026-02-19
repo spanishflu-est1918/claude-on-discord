@@ -275,17 +275,20 @@ function resolvePermissionModeForChannel(input: {
 
 function buildMergeSummaryPrompt(focus?: string | null): string {
   const lines = [
-    "Please provide a concise summary of what was accomplished in this conversation branch.",
+    "Please provide a short handoff summary of what was accomplished in this conversation branch.",
     "This summary will be merged back into the parent thread as context.",
     "",
-    "Include:",
-    "- Key decisions made and why",
-    "- Files created, modified, or deleted (with paths)",
-    "- Problems solved or approaches tried",
-    "- Any unresolved issues or next steps",
-    "- Important context or conclusions the parent thread should know",
+    "Output requirements:",
+    "- Maximum 8 bullets",
+    "- Maximum 900 characters total",
+    "- Keep each bullet to one sentence",
     "",
-    "Be specific and actionable. Format it clearly so it reads as a handoff note.",
+    "Include only:",
+    "- Key decisions and rationale",
+    "- Files changed (paths only)",
+    "- Unresolved issues / next steps",
+    "",
+    "Be specific and actionable.",
   ];
 
   if (focus?.trim()) {
@@ -293,6 +296,50 @@ function buildMergeSummaryPrompt(focus?: string | null): string {
   }
 
   return lines.join("\n");
+}
+
+function normalizeMergeSummary(summary: string, maxChars: number): string {
+  const cleaned = summary.trim().replace(/\n{3,}/g, "\n\n");
+  if (!cleaned) {
+    return "(No summary generated.)";
+  }
+  return clipText(cleaned, maxChars);
+}
+
+function summarizeGitMergeOutput(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return "No git output.";
+  }
+
+  if (lines.some((line) => /already up to date/i.test(line))) {
+    return "Already up to date.";
+  }
+
+  const conflictLines = lines.filter(
+    (line) => line.startsWith("CONFLICT") || /automatic merge failed/i.test(line),
+  );
+  if (conflictLines.length > 0) {
+    const samples = conflictLines.slice(0, 2).map((line) => clipText(line, 120));
+    const extra = conflictLines.length > 2 ? ` (+${conflictLines.length - 2} more)` : "";
+    return [`Conflicts detected: ${conflictLines.length}${extra}.`, ...samples].join("\n");
+  }
+
+  const changedLine = lines.find((line) => /\d+\s+files?\s+changed/i.test(line));
+  if (lines.some((line) => /fast-forward/i.test(line))) {
+    return changedLine
+      ? `Fast-forward merge. ${clipText(changedLine, 140)}`
+      : "Fast-forward merge.";
+  }
+
+  const firstLine = clipText(lines[0] ?? "", 140);
+  if (!changedLine || changedLine === lines[0]) {
+    return firstLine;
+  }
+  return `${firstLine}\n${clipText(changedLine, 140)}`;
 }
 
 function buildMergeContextInjection(context: {
@@ -2897,35 +2944,40 @@ export async function startApp(
           await interaction.deferUpdate();
 
           const noticeInfo = queuedNoticesByMessageId.get(interaction.message.id);
-          if (noticeInfo) {
-            noticeInfo.cancelled = true;
-            queuedNoticesByMessageId.delete(interaction.message.id);
-            if (queueNotice.action === "steer") {
-              runner.steer(queueNotice.channelId, noticeInfo.text);
-            }
-          }
-
           if (queueNotice.action === "steer") {
+            const steerText = noticeInfo?.text;
+            const steered = steerText ? runner.steer(queueNotice.channelId, steerText) : false;
+            if (steered && noticeInfo) {
+              noticeInfo.cancelled = true;
+              queuedNoticesByMessageId.delete(interaction.message.id);
+            }
             try {
               await interaction.message.edit({
-                content: "💬 Sent to Claude.",
+                content: steered
+                  ? "💬 Sent to Claude."
+                  : "⏳ Could not send immediately. Keeping this message queued.",
                 components: [],
               });
             } catch {
               // Ignore edit failures.
             }
-          } else {
+            return;
+          }
+
+          if (noticeInfo) {
+            noticeInfo.cancelled = true;
+            queuedNoticesByMessageId.delete(interaction.message.id);
+          }
+          try {
+            await interaction.message.delete();
+          } catch {
             try {
-              await interaction.message.delete();
+              await interaction.message.edit({
+                content: "Queue notice dismissed.",
+                components: [],
+              });
             } catch {
-              try {
-                await interaction.message.edit({
-                  content: "Queue notice dismissed.",
-                  components: [],
-                });
-              } catch {
-                // Ignore queue notice dismiss fallback failures.
-              }
+              // Ignore queue notice dismiss fallback failures.
             }
           }
           return;
@@ -3111,13 +3163,14 @@ export async function startApp(
                   model: mergeState.channel.model,
                 });
 
-                const summary = summaryResult.text.trim() || "(No summary generated.)";
+                const summaryForContext = normalizeMergeSummary(summaryResult.text, 1000);
+                const summaryForReport = normalizeMergeSummary(summaryForContext, 700);
 
                 // 2. Store pending merge context on the parent channel
                 const mergeContext: MergeContextRecord = {
                   fromChannelId: channelId,
                   fromChannelName: mergeMeta.name,
-                  summary,
+                  summary: summaryForContext,
                   mergedAt: Date.now(),
                 };
                 repository.setMergeContext(mergeMeta.parentChannelId, mergeContext);
@@ -3126,7 +3179,7 @@ export async function startApp(
                 const mergeReport = buildMergeReportLines({
                   fromChannelId: channelId,
                   fromChannelName: mergeMeta.name,
-                  summary,
+                  summary: summaryForReport,
                 });
                 const parentChannel = await interaction.client.channels
                   .fetch(mergeMeta.parentChannelId)
@@ -3184,13 +3237,14 @@ export async function startApp(
                   ["git", "merge", targetBranch, "--no-edit"],
                   rootWorkingDir,
                 );
+                const mergeSummary = summarizeGitMergeOutput(result.output);
                 if (result.exitCode === 0) {
                   await interaction.editReply(
-                    `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                    `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
                   );
                 } else {
                   await interaction.editReply(
-                    `❌ Merge failed.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                    `❌ Merge failed for \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
                   );
                 }
                 break;
@@ -4135,7 +4189,9 @@ export async function startApp(
 
             // Prefix the thread name with 🔴 (idempotent: skip if already present).
             const currentName = thread.name;
-            const newName = currentName.startsWith("🔴") ? currentName : `🔴 ${currentName}`;
+            const newName = (
+              currentName.startsWith("🔴") ? currentName : `🔴 ${currentName}`
+            ).slice(0, 100);
 
             const wasAlreadyArchived = thread.archived ?? false;
 
