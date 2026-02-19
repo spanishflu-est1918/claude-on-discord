@@ -1,12 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import process from "node:process";
 import { normalizeHeaderMap, verifyGuardianAuthorization } from "./auth";
-import {
-  isAnyAddress,
-  isLoopbackAddress,
-  listLanIpv4Addresses,
-} from "./config";
+import { isLoopbackAddress } from "./config";
 import { renderGuardianMobilePage } from "./mobile-page";
+import { buildGuardianMobileUrls } from "./mobile-urls";
 import { buildGuardianStatusSnapshot } from "./status-snapshot";
 import { consumeStreamLines } from "./stream-lines";
 import type { GuardianConfig, LogEntry, WorkerExitInfo } from "./types";
@@ -80,19 +77,15 @@ export class GuardianSupervisor {
     if (!this.server) {
       return [];
     }
-    const token = encodeURIComponent(this.config.controlSecret);
     const port = this.server.port;
-    if (isLoopbackAddress(this.config.controlBind)) {
-      return [`http://127.0.0.1:${port}/mobile?token=${token}`];
+    if (typeof port !== "number") {
+      return [];
     }
-    if (isAnyAddress(this.config.controlBind)) {
-      const lan = listLanIpv4Addresses();
-      if (lan.length === 0) {
-        return [`http://127.0.0.1:${port}/mobile?token=${token}`];
-      }
-      return lan.map((address) => `http://${address}:${port}/mobile?token=${token}`);
-    }
-    return [`http://${this.config.controlBind}:${port}/mobile?token=${token}`];
+    return buildGuardianMobileUrls({
+      controlBind: this.config.controlBind,
+      port,
+      controlSecret: this.config.controlSecret,
+    });
   }
 
   async shutdown(reason: string): Promise<void> {
