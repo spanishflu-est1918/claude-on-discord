@@ -51,6 +51,7 @@ import { createRunawayToolGuard } from "./runaway-tool-guard";
 import { handleDirectBashMessage } from "./direct-bash-handler";
 import { createStreamingStatusController } from "./streaming-status-controller";
 import { createLiveToolMessageController } from "./live-tool-message-controller";
+import { notifyRunFailure } from "./run-failure-notifier";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -395,26 +396,14 @@ export function createUserMessageHandler(input: {
           } else {
             console.error(`runner failure in channel ${channelId}: ${msg}`);
           }
-          let surfacedByStatus = false;
-          try {
-            await input.discordDispatch.enqueue(`status:${channelId}`, async () => {
-              await status.edit({
-                content: `${runawayStopReason ? "⚠️" : "❌"} ${msg}`,
-                components: [],
-              });
-            });
-            surfacedByStatus = true;
-          } catch {
-            // Keep run failures contained even if the status message can no longer be edited.
-          }
-          if (!surfacedByStatus) {
-            try {
-              await queueChannelMessage(`${runawayStopReason ? "⚠️" : "❌"} ${msg}`);
-            } catch (notifyError) {
-              const detail = notifyError instanceof Error ? notifyError.message : String(notifyError);
-              console.error(`failed to send failure notice for ${channelId}: ${detail}`);
-            }
-          }
+          await notifyRunFailure({
+            channelId,
+            msg,
+            runawayStop: Boolean(runawayStopReason),
+            status,
+            discordDispatch: input.discordDispatch,
+            queueChannelMessage: async (payload) => await queueChannelMessage(payload),
+          });
           await removeReaction(message, "🧠");
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
           await setThreadState(message.channel, runawayStopReason ? "⚠️" : "❌");
