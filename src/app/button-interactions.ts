@@ -47,14 +47,22 @@ async function handleQueueNoticeInteraction(
   }
 
   await input.interaction.deferUpdate();
+
+  // Atomically claim the notice before any async work — prevents double-fire from
+  // rapid clicks. If already claimed (cancelled or absent), silently ignore.
   const noticeInfo = input.queuedNoticesByMessageId.get(input.interaction.message.id);
+  if (!noticeInfo || noticeInfo.cancelled) {
+    return true;
+  }
+  noticeInfo.cancelled = true;
+  input.queuedNoticesByMessageId.delete(input.interaction.message.id);
 
   if (queueNotice.action === "steer") {
-    const steerText = noticeInfo?.text;
-    const steered = steerText ? input.steerRunner.steer(queueNotice.channelId, steerText) : false;
-    if (steered && noticeInfo) {
-      noticeInfo.cancelled = true;
-      input.queuedNoticesByMessageId.delete(input.interaction.message.id);
+    const steered = input.steerRunner.steer(queueNotice.channelId, noticeInfo.text);
+    if (!steered) {
+      // Steer failed (no active run to inject into) — release the claim so the
+      // message still runs normally once the current run finishes.
+      noticeInfo.cancelled = false;
     }
     try {
       await input.interaction.message.edit({
@@ -67,11 +75,6 @@ async function handleQueueNoticeInteraction(
       // Ignore edit failures.
     }
     return true;
-  }
-
-  if (noticeInfo) {
-    noticeInfo.cancelled = true;
-    input.queuedNoticesByMessageId.delete(input.interaction.message.id);
   }
   try {
     await input.interaction.message.delete();
