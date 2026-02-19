@@ -34,25 +34,24 @@ const slashCommands = [
     ),
   new SlashCommandBuilder()
     .setName("merge")
-    .setDescription("Summarize this fork thread and merge context back into the parent channel")
+    .setDescription(
+      "In a fork thread: summarize and merge back to parent. In parent: list thread worktrees.",
+    )
     .addStringOption((option) =>
       option
         .setName("focus")
-        .setDescription("Optional focus hint for the summary (e.g. 'decisions made', 'files changed')")
+        .setDescription("Fork thread: focus hint for summary (e.g. 'decisions made')")
         .setMaxLength(200),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("branch")
+        .setDescription("Parent channel: git branch name to merge into current branch"),
     ),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
     .setName("branches")
     .setDescription("List active thread branches and git divergence"),
-  new SlashCommandBuilder()
-    .setName("merge")
-    .setDescription("List thread worktrees and optionally merge one into current branch")
-    .addStringOption((option) =>
-      option
-        .setName("branch")
-        .setDescription("Thread branch name to merge into current branch (omit to just list)"),
-    ),
   new SlashCommandBuilder()
     .setName("diff")
     .setDescription("Show current git patch for this channel as a .diff attachment"),
