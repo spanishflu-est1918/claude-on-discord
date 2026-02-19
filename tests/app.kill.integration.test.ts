@@ -60,9 +60,9 @@ describe("startApp kill slash command", () => {
           isThread: () => true,
           name: "a".repeat(100),
           archived: false,
-          edit: async (input: { name: string; archived: boolean }) => {
-            editedThreadName = input.name;
-            archived = input.archived;
+          edit: async (input: { name?: string; archived?: boolean }) => {
+            if (input.name !== undefined) editedThreadName = input.name;
+            if (input.archived !== undefined) archived = input.archived;
           },
         },
         deferReply: async () => {},
