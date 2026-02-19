@@ -151,6 +151,26 @@ export function buildToolViewButtons(
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(button)];
 }
 
+/**
+ * Returns a bare ButtonBuilder for use as a SectionBuilder button accessory.
+ * Section accessory buttons are displayed inline (right-aligned) next to the
+ * section text — no ActionRow wrapper needed.
+ */
+export function buildToolViewSectionButton(
+  channelId: string,
+  toolId: string,
+  expanded: boolean,
+): ButtonBuilder {
+  const nextAction: ToolViewAction = expanded ? "collapse" : "expand";
+  const label = expanded ? "Collapse" : "Expand";
+  const emoji = expanded ? "🔽" : "▶️";
+  return new ButtonBuilder()
+    .setCustomId(`${TOOL_VIEW_PREFIX}${nextAction}:${channelId}:${toolId}`)
+    .setLabel(label)
+    .setStyle(ButtonStyle.Secondary)
+    .setEmoji(emoji);
+}
+
 export function parseToolViewCustomId(
   customId: string,
 ): { action: ToolViewAction; channelId: string; toolId: string } | null {
