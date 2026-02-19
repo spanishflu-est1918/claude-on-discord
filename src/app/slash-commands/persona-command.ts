@@ -29,7 +29,12 @@ export async function handlePersonaCommand(input: SessionSlashCommandInput): Pro
   // Persona changes don't need to reset a specific channel session —
   // the global prompt is picked up on the next run in any channel.
   if (!result.showPrompt) {
-    await input.interaction.reply(result.message);
+    const action = input.interaction.options.getSubcommand(true);
+    const personaMessage =
+      action === "set"
+        ? `Global persona set (\`${input.interaction.options.getString("text", true).trim().length}\` chars). Takes effect on the next message in any channel.`
+        : "Global persona cleared.";
+    await input.interaction.reply(personaMessage);
     return;
   }
 
