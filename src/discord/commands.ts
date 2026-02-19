@@ -101,6 +101,27 @@ const slashCommands = [
       subcommand.setName("clear").setDescription("Clear current channel system prompt"),
     ),
   new SlashCommandBuilder()
+    .setName("persona")
+    .setDescription("Manage global personality/system prompt applied to all channels")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("set")
+        .setDescription("Set global system prompt (applies to every channel)")
+        .addStringOption((option) =>
+          option
+            .setName("text")
+            .setDescription("Personality / system prompt text")
+            .setRequired(true)
+            .setMaxLength(4000),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("show").setDescription("Show current global system prompt"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("clear").setDescription("Clear global system prompt"),
+    ),
+  new SlashCommandBuilder()
     .setName("mentions")
     .setDescription("Manage mention requirement policy for this channel")
     .addSubcommand((subcommand) =>

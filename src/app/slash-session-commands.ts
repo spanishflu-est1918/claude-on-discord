@@ -29,6 +29,7 @@ import { handlePrCommand } from "./slash-commands/pr-command";
 import { type PendingProjectSwitch, handleProjectCommand } from "./slash-commands/project-command";
 import { handleScreenshotCommand } from "./slash-commands/screenshot-command";
 import { handleStatusCommand } from "./slash-commands/status-command";
+import { handlePersonaCommand } from "./slash-commands/persona-command";
 import { handleSystemPromptCommand } from "./slash-commands/systemprompt-command";
 import { handleWorktreeCommand } from "./slash-commands/worktree-command";
 
@@ -41,6 +42,11 @@ export async function handleSessionSlashCommands(
 ): Promise<boolean> {
   if (input.commandName === "systemprompt") {
     await handleSystemPromptCommand(input);
+    return true;
+  }
+
+  if (input.commandName === "persona") {
+    await handlePersonaCommand(input);
     return true;
   }
 
@@ -141,9 +147,13 @@ export async function handleSlashCommands(input: HandleSlashCommandsInput): Prom
     getChannelTurnCount: (targetChannelId) => input.repository.getChannelTurnCount(targetChannelId),
     setChannelSystemPrompt: (targetChannelId, text) =>
       input.repository.setChannelSystemPrompt(targetChannelId, text),
-    getChannelSystemPrompt: (targetChannelId) => input.repository.getChannelSystemPrompt(targetChannelId),
+    getChannelSystemPrompt: (targetChannelId) =>
+      input.repository.getChannelSystemPrompt(targetChannelId),
     clearChannelSystemPrompt: (targetChannelId) =>
       input.repository.clearChannelSystemPrompt(targetChannelId),
+    setGlobalSystemPrompt: (text) => input.repository.setGlobalSystemPrompt(text),
+    getGlobalSystemPrompt: () => input.repository.getGlobalSystemPrompt(),
+    clearGlobalSystemPrompt: () => input.repository.clearGlobalSystemPrompt(),
     setChannelMentionsMode: (targetChannelId, mode) =>
       input.repository.setChannelMentionsMode(targetChannelId, mode as ChannelMentionsMode),
     clearChannelMentionsMode: (targetChannelId) => input.repository.clearChannelMentionsMode(targetChannelId),

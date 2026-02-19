@@ -29,6 +29,7 @@ const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
 const CHANNEL_MENTIONS_MODE_PREFIX = "channel_mentions_mode:";
 const CHANNEL_PERMISSION_MODE_PREFIX = "channel_permission_mode:";
 const CHANNEL_MERGE_CONTEXT_PREFIX = "channel_merge_context:";
+export const GLOBAL_SYSTEM_PROMPT_KEY = "global:system_prompt";
 
 export function channelSystemPromptKey(channelId: string): string {
   return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;

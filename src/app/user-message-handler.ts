@@ -155,7 +155,10 @@ export function createUserMessageHandler(input: {
           return;
         }
 
+        const globalSystemPrompt = input.repository.getGlobalSystemPrompt();
         const channelSystemPrompt = input.repository.getChannelSystemPrompt(channelId);
+        const composedSystemPrompt =
+          [globalSystemPrompt, channelSystemPrompt].filter(Boolean).join("\n\n") || undefined;
         const pendingMergeContext = input.repository.getMergeContext(channelId);
         const stagedAttachments = await stageAttachments(message);
         const threadBranchEntries = input.repository.listThreadBranchMetaEntries();
@@ -230,7 +233,7 @@ export function createUserMessageHandler(input: {
             ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
             ...(shouldForkSession ? { forkSession: true } : {}),
             model: state.channel.model,
-            systemPrompt: channelSystemPrompt ?? undefined,
+            systemPrompt: composedSystemPrompt,
             permissionMode: permissionPolicy.permissionMode,
             ...(typeof guardedMaxTurns === "number" ? { maxTurns: guardedMaxTurns } : {}),
             ...(guardedThinking ? { thinking: guardedThinking } : {}),

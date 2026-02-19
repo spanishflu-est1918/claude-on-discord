@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ChannelRecord, SessionCostInsert, SessionTurn } from "../types";
 import {
+  GLOBAL_SYSTEM_PROMPT_KEY,
   channelMentionsModeKey,
   channelMergeContextKey,
   channelPermissionModeKey,
@@ -316,6 +317,18 @@ export class Repository {
 
   clearChannelSystemPrompt(channelId: string): void {
     this.deleteSetting(channelSystemPromptKey(channelId));
+  }
+
+  getGlobalSystemPrompt(): string | null {
+    return this.getSetting(GLOBAL_SYSTEM_PROMPT_KEY);
+  }
+
+  setGlobalSystemPrompt(prompt: string): void {
+    this.setSetting(GLOBAL_SYSTEM_PROMPT_KEY, prompt);
+  }
+
+  clearGlobalSystemPrompt(): void {
+    this.deleteSetting(GLOBAL_SYSTEM_PROMPT_KEY);
   }
 
   getThreadBranchMeta(channelId: string): string | null {
