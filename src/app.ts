@@ -2848,22 +2848,14 @@ export async function startApp(
               currentChannelId: channelId,
               entries: repository.listThreadBranchMetaEntries(),
             });
-            const lastDispatchRateLimit =
-              discordDispatchStats.lastRateLimitAtMs > 0
-                ? new Date(discordDispatchStats.lastRateLimitAtMs).toISOString()
-                : "never";
             const lines = [
-              `Project: \`${state.channel.workingDir}\``,
-              `Model: \`${state.channel.model}\``,
-              `Permission mode (session): mode=\`${permissionPolicy.mode}\`, effective=\`${permissionPolicy.permissionMode}\``,
-              `Session: ${state.channel.sessionId ? `\`${state.channel.sessionId}\`` : "none"}`,
-              `System prompt: ${channelSystemPrompt ? `set (\`${channelSystemPrompt.length}\` chars)` : "none"}`,
-              `Mentions: mode=\`${mentionPolicy.mode}\`, effective=\`${mentionPolicy.requireMention ? "required" : "off"}\``,
-              `Discord dispatcher: rate_limits=\`${discordDispatchStats.rateLimitHits}\`, last=\`${lastDispatchRateLimit}\`, lane=\`${discordDispatchStats.lastRateLimitLane || "n/a"}\``,
+              `**${state.channel.workingDir}**`,
+              `model: \`${state.channel.model}\` · turns: \`${turns}\` · cost: \`$${totalCost.toFixed(4)}\``,
+              `mode: \`${permissionPolicy.permissionMode}\` · mentions: \`${mentionPolicy.requireMention ? "required" : "off"}\``,
+              channelSystemPrompt ? `system prompt: set (\`${channelSystemPrompt.length}\` chars)` : null,
+              state.channel.sessionId ? `session: \`${state.channel.sessionId}\`` : null,
               ...threadStatusLines,
-              `Stored turns: \`${turns}\``,
-              `Total channel cost: \`$${totalCost.toFixed(4)}\``,
-            ];
+            ].filter((l): l is string => l !== null);
             await interaction.reply(lines.join("\n"));
             break;
           }
@@ -2896,23 +2888,18 @@ export async function startApp(
             }
 
             const lines = [
-              `Root channel: \`${rootChannelId}\``,
-              `Base branch: \`${baseBranch}\` (from \`${rootWorkingDir}\`)`,
-              "Active thread branches:",
+              `**Branches** (base: \`${baseBranch}\`):`,
             ];
 
             for (const meta of activeBranches) {
-              const lifecycle = meta.lifecycleState ?? "active";
-              const worktreeMode =
-                meta.worktreePath ??
-                (meta.worktreeMode === "prompt" ? "pending-choice" : "inherited-parent/root");
-
-              let branchInfo = "branch=unknown";
-              let divergence = "ahead/behind=unknown";
+              let branchPart = "inherited";
+              let divergencePart = "";
+              let worktreePart = "inherited";
               if (meta.worktreePath && existsSync(meta.worktreePath)) {
+                worktreePart = meta.worktreePath;
                 const branchName = await detectBranchName(meta.worktreePath);
                 if (branchName) {
-                  branchInfo = `branch=${branchName}`;
+                  branchPart = `\`${branchName}\``;
                 }
                 const revList = await runCommand(
                   ["git", "rev-list", "--left-right", "--count", `${baseBranch}...HEAD`],
@@ -2921,16 +2908,15 @@ export async function startApp(
                 if (revList.exitCode === 0) {
                   const counts = parseAheadBehind(revList.output);
                   if (counts) {
-                    divergence = `ahead=${counts.ahead}, behind=${counts.behind}`;
+                    divergencePart = ` ↑${counts.ahead} ↓${counts.behind}`;
                   }
                 }
-              } else if (!meta.worktreePath) {
-                branchInfo = "branch=inherited";
-                divergence = "ahead/behind=n/a";
+              } else if (meta.worktreeMode === "prompt") {
+                worktreePart = "pending";
               }
 
               lines.push(
-                `- ${meta.name} (\`${meta.channelId}\`): lifecycle=${lifecycle}; worktree=${worktreeMode}; ${branchInfo}; ${divergence}`,
+                `- **${meta.name}** ${branchPart}${divergencePart} @ \`${worktreePart}\``,
               );
             }
 
@@ -2941,6 +2927,89 @@ export async function startApp(
               if (chunk) {
                 await interaction.followUp(chunk);
               }
+            }
+            break;
+          }
+          case "merge": {
+            const state = sessions.getState(channelId, guildId);
+            const targetBranch = interaction.options.getString("branch");
+            await interaction.deferReply();
+
+            const mergeMetas = repository
+              .listThreadBranchMetaEntries()
+              .map((entry) => parseThreadBranchMeta(entry.value))
+              .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+            const currentMeta = mergeMetas.find((meta) => meta.channelId === channelId);
+            const rootChannelId = currentMeta?.rootChannelId ?? channelId;
+            const rootChannel = repository.getChannel(rootChannelId);
+            const rootWorkingDir = rootChannel?.workingDir ?? state.channel.workingDir;
+            const baseBranch = (await detectBranchName(rootWorkingDir)) ?? "main";
+
+            const activeForMerge = mergeMetas
+              .filter(
+                (meta) =>
+                  meta.rootChannelId === rootChannelId &&
+                  meta.worktreePath &&
+                  existsSync(meta.worktreePath) &&
+                  (meta.lifecycleState === "active" || typeof meta.lifecycleState === "undefined"),
+              )
+              .sort((a, b) => a.createdAt - b.createdAt);
+
+            if (targetBranch) {
+              // Perform the merge
+              const result = await runCommand(
+                ["git", "merge", targetBranch, "--no-edit"],
+                rootWorkingDir,
+              );
+              if (result.exitCode === 0) {
+                await interaction.editReply(
+                  `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                );
+              } else {
+                await interaction.editReply(
+                  `❌ Merge failed.\n\`\`\`\n${result.output.trim()}\n\`\`\``,
+                );
+              }
+              break;
+            }
+
+            if (activeForMerge.length === 0) {
+              await interaction.editReply(
+                `No thread worktrees found for root \`${rootChannelId}\`.`,
+              );
+              break;
+            }
+
+            const mergeLines = [`**Worktrees** (into \`${baseBranch}\`):`];
+            for (const meta of activeForMerge) {
+              const branchName = meta.worktreePath
+                ? ((await detectBranchName(meta.worktreePath)) ?? "unknown")
+                : "inherited";
+              let divergencePart = "";
+              if (meta.worktreePath) {
+                const revList = await runCommand(
+                  ["git", "rev-list", "--left-right", "--count", `${baseBranch}...HEAD`],
+                  meta.worktreePath,
+                );
+                if (revList.exitCode === 0) {
+                  const counts = parseAheadBehind(revList.output);
+                  if (counts) {
+                    divergencePart = ` ↑${counts.ahead} ↓${counts.behind}`;
+                  }
+                }
+              }
+              mergeLines.push(
+                `- **${meta.name}** \`${branchName}\`${divergencePart}`,
+              );
+            }
+            mergeLines.push(`\nTo merge: \`/merge branch:<branch-name>\``);
+
+            const mergeChunks = chunkDiscordText(mergeLines.join("\n"));
+            await interaction.editReply(mergeChunks[0] ?? "No worktrees.");
+            for (let i = 1; i < mergeChunks.length; i++) {
+              const chunk = mergeChunks[i];
+              if (chunk) await interaction.followUp(chunk);
             }
             break;
           }
