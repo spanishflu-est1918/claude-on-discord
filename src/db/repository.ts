@@ -1,30 +1,20 @@
 import type { Database } from "bun:sqlite";
 import type { ChannelRecord, SessionCostInsert, SessionTurn } from "../types";
+import {
+  channelMentionsModeKey,
+  channelMergeContextKey,
+  channelPermissionModeKey,
+  channelSystemPromptKey,
+  channelThreadBranchKey,
+  mapChannelRow,
+  mapSessionTurnRow,
+  threadBranchChannelIdFromKey,
+  threadBranchKeyPattern,
+  type ChannelRow,
+  type SessionTurnRow,
+  type SettingRow,
+} from "./repository-helpers";
 import { applySchema } from "./schema";
-
-type ChannelRow = {
-  channel_id: string;
-  guild_id: string;
-  working_dir: string;
-  session_id: string | null;
-  model: string;
-  created_at: number;
-  updated_at: number;
-};
-
-type SettingRow = {
-  key: string;
-  value: string;
-  updated_at: number;
-};
-
-type SessionTurnRow = {
-  id: number;
-  channel_id: string;
-  role: SessionTurn["role"];
-  content: string;
-  timestamp_ms: number;
-};
 
 export type UpsertChannelInput = {
   channelId: string;
@@ -33,12 +23,6 @@ export type UpsertChannelInput = {
   model?: string;
   sessionId?: string | null;
 };
-
-const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
-const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
-const CHANNEL_MENTIONS_MODE_PREFIX = "channel_mentions_mode:";
-const CHANNEL_PERMISSION_MODE_PREFIX = "channel_permission_mode:";
-const CHANNEL_MERGE_CONTEXT_PREFIX = "channel_merge_context:";
 
 export type ChannelMentionsMode = "default" | "required" | "off";
 export type ChannelPermissionMode =
@@ -49,51 +33,11 @@ export type ChannelPermissionMode =
   | "delegate"
   | "dontAsk";
 
-function channelSystemPromptKey(channelId: string): string {
-  return `${CHANNEL_SYSTEM_PROMPT_PREFIX}${channelId}`;
-}
-
-function channelThreadBranchKey(channelId: string): string {
-  return `${CHANNEL_THREAD_BRANCH_PREFIX}${channelId}`;
-}
-
-function channelMentionsModeKey(channelId: string): string {
-  return `${CHANNEL_MENTIONS_MODE_PREFIX}${channelId}`;
-}
-
-function channelPermissionModeKey(channelId: string): string {
-  return `${CHANNEL_PERMISSION_MODE_PREFIX}${channelId}`;
-}
-
-function channelMergeContextKey(channelId: string): string {
-  return `${CHANNEL_MERGE_CONTEXT_PREFIX}${channelId}`;
-}
-
 export interface MergeContextRecord {
   fromChannelId: string;
   fromChannelName: string;
   summary: string;
   mergedAt: number;
-}
-
-function mapChannelRow(row: ChannelRow): ChannelRecord {
-  return {
-    channelId: row.channel_id,
-    guildId: row.guild_id,
-    workingDir: row.working_dir,
-    sessionId: row.session_id,
-    model: row.model,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapSessionTurnRow(row: SessionTurnRow): SessionTurn {
-  return {
-    role: row.role,
-    content: row.content,
-    timestamp: row.timestamp_ms,
-  };
 }
 
 export class Repository {
@@ -454,11 +398,11 @@ export class Repository {
         WHERE key LIKE $pattern;
         `,
       )
-      .all({ pattern: `${CHANNEL_THREAD_BRANCH_PREFIX}%` });
+      .all({ pattern: threadBranchKeyPattern() });
 
     return rows
       .map((row) => {
-        const channelId = row.key.slice(CHANNEL_THREAD_BRANCH_PREFIX.length);
+        const channelId = threadBranchChannelIdFromKey(row.key);
         if (!channelId) {
           return null;
         }
