@@ -212,16 +212,6 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
   return seconds >= 10 ? `${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`;
 }
 
-function buildTimelineBlock(entry: LiveToolEntry, maxLines = 8): string | null {
-  if (entry.timeline.length === 0 || maxLines <= 0) {
-    return null;
-  }
-  const lines = entry.timeline
-    .slice(-maxLines)
-    .map((line) => `- ${clipText(line, 180)}`)
-    .join("\n");
-  return `**Timeline**\n${lines}`;
-}
 
 export function buildSingleLiveToolMessage(
   entry: LiveToolEntry,
@@ -239,10 +229,7 @@ export function buildSingleLiveToolMessage(
   if (displayLine) {
     headerTexts.push(new TextDisplayBuilder().setContent(`-# ${displayLine}`));
   }
-  const collapsedTimeline = !expanded ? buildTimelineBlock(entry, 3) : null;
-  if (collapsedTimeline && headerTexts.length < 3) {
-    headerTexts.push(new TextDisplayBuilder().setContent(clipRawText(collapsedTimeline, 900)));
-  } else if (!collapsedTimeline && entry.summary && !expanded && headerTexts.length < 3) {
+  if (entry.summary && !expanded && headerTexts.length < 3) {
     headerTexts.push(new TextDisplayBuilder().setContent(`-# ${clipText(entry.summary, 220)}`));
   }
   const section = new SectionBuilder()
@@ -257,10 +244,6 @@ export function buildSingleLiveToolMessage(
     const expandedParts: string[] = [];
     if (entry.summary) {
       expandedParts.push(`**Summary**\n${clipText(entry.summary, 900)}`);
-    }
-    const fullTimeline = buildTimelineBlock(entry, 8);
-    if (fullTimeline) {
-      expandedParts.push(fullTimeline);
     }
     if (entry.inputDetails) {
       expandedParts.push(`**Input**\n\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
