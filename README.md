@@ -86,6 +86,9 @@ bun start
 | `/status` | Channel status, session, branch info |
 | `/branches` | Active thread branches with worktree info |
 | `/compact` | Compact context and reset session |
+| `start` (CLI) | Start self-healing supervisor + secure control API (recommended) |
+| `worker` (CLI) | Start bridge directly without supervisor (advanced/debug) |
+| `guardian` (CLI) | Alias for `start` |
 
 While Claude is running, **Interrupt** (soft stop) and **Abort** (hard stop) buttons appear inline.
 
@@ -111,9 +114,65 @@ SESSION_HISTORY_MAX_ITEMS=40
 SESSION_TURN_MAX_CHARS=6000
 ACTIVE_RUN_MAX_AGE_MINUTES=30
 ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS=30
+
+# Guardian mode (optional)
+GUARDIAN_CONTROL_BIND=0.0.0.0
+GUARDIAN_CONTROL_PORT=8787
+GUARDIAN_CONTROL_SECRET=
+GUARDIAN_CONTROL_SECRET_FILE=./data/guardian-control.secret
 ```
 
 Full reference: [.env.example](.env.example)
+
+### Guardian mode (default `start`, recommended for mobile reliability)
+
+Run with self-healing supervision and a remote control surface:
+
+```bash
+bun start
+```
+
+Equivalent aliases:
+
+```bash
+bun run guardian
+claude-on-discord start
+```
+
+On startup, guardian prints a ready-to-open mobile control URL (already tokenized), so you can open it directly on your phone.
+
+What it adds:
+
+- automatic worker restart with backoff/cooldown crash-loop protection
+- heartbeat-based stale-process detection and restart
+- control API for phone/remote actions:
+  - `GET /healthz`
+  - `GET /status`
+  - `POST /restart`
+  - `POST /stop`
+  - `POST /start`
+  - `GET /logs?tail=200`
+
+Auth options for control API:
+
+1. Bearer token (simple): `Authorization: Bearer $GUARDIAN_CONTROL_SECRET`
+2. HMAC headers (replay-protected): `x-guardian-ts`, `x-guardian-nonce`, `x-guardian-signature`
+3. Query token for mobile/browser links: `?token=$GUARDIAN_CONTROL_SECRET`
+
+If `GUARDIAN_CONTROL_SECRET` is empty, guardian auto-generates a strong secret and persists it to `GUARDIAN_CONTROL_SECRET_FILE`.
+
+Example (Bearer):
+
+```bash
+curl -sS http://127.0.0.1:8787/status \
+  -H "Authorization: Bearer $GUARDIAN_CONTROL_SECRET"
+```
+
+Security notes:
+
+- default bind is `0.0.0.0` for easier phone access; set `127.0.0.1` if you want local-only control
+- if binding non-loopback, keep the auto-generated secret file private (or set your own long `GUARDIAN_CONTROL_SECRET`)
+- never expose this API publicly without an authenticated tunnel/reverse proxy
 
 ---
 

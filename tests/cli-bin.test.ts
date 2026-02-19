@@ -26,6 +26,8 @@ describe("cli bin", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("Usage:");
     expect(result.output).toContain("claude-on-discord <command>");
+    expect(result.output).toContain("guardian");
+    expect(result.output).toContain("worker");
   });
 
   test("rejects unknown command", async () => {

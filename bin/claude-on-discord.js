@@ -12,7 +12,9 @@ function printHelp() {
   console.log("Commands:");
   console.log("  setup    Run interactive setup and write .env (alias: init)");
   console.log("  init     Alias for setup");
-  console.log("  start    Start the Discord bridge");
+  console.log("  start    Start self-healing guardian + control API (recommended)");
+  console.log("  guardian Alias for start");
+  console.log("  worker   Start the Discord bridge directly (no supervisor)");
   console.log("  dev      Start in watch mode");
   console.log("  help     Show this help");
 }
@@ -23,6 +25,9 @@ function resolveBunArgs(command) {
     case "setup":
       return ["run", "src/init.ts"];
     case "start":
+    case "guardian":
+      return ["run", "src/guardian.ts"];
+    case "worker":
       return ["run", "src/index.ts"];
     case "dev":
       return ["--watch", "src/index.ts"];

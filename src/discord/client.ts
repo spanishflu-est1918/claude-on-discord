@@ -137,7 +137,8 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
     try {
       await options.onUserMessage(message);
     } catch (error) {
-      console.error("message handler failed", error);
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`message handler failed: ${detail}`);
       const msg = error instanceof Error ? error.message : "Unknown error";
       await message.reply(`❌ Failed to process message: ${msg}`);
     }
@@ -148,7 +149,8 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
       try {
         await options.onButtonInteraction(interaction);
       } catch (error) {
-        console.error("button interaction failed", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`button interaction failed: ${detail}`);
         const msg = error instanceof Error ? error.message : "Unknown error";
         if (interaction.deferred || interaction.replied) {
           await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
@@ -163,7 +165,8 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
       try {
         await options.onSlashCommand(interaction);
       } catch (error) {
-        console.error("slash command failed", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`slash command failed: ${detail}`);
         const msg = error instanceof Error ? error.message : "Unknown error";
         if (interaction.deferred || interaction.replied) {
           await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });

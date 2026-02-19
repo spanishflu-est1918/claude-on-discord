@@ -20,6 +20,8 @@ export type QueryFactoryInput = {
     | "resume"
     | "forkSession"
     | "mcpServers"
+    | "disallowedTools"
+    | "tools"
     | "settingSources"
     | "thinking"
     | "effort"
@@ -44,6 +46,8 @@ export interface RunRequest {
   thinking?: Options["thinking"];
   effort?: Options["effort"];
   permissionMode?: ClaudePermissionMode;
+  disallowedTools?: string[];
+  tools?: Options["tools"];
   abortController?: AbortController;
   onQueryStart?: (query: ClaudeQuery) => void;
   onMessage?: (message: ClaudeSDKMessage) => void;
@@ -80,6 +84,7 @@ function buildSystemPrompt(channelSystemPrompt?: string): string {
 type RunAttempt = {
   includeMcpServers: boolean;
   includeResume: boolean;
+  disableTools: boolean;
   settingSources: NonNullable<Options["settingSources"]>;
   label: string;
 };
@@ -183,6 +188,8 @@ interface WorkerConfig {
   resumeSessionId?: string;
   forkSession?: boolean;
   mcpServers?: Record<string, ClaudeMcpServerConfig>;
+  disallowedTools?: string[];
+  tools?: Options["tools"];
   settingSources: NonNullable<Options["settingSources"]>;
 }
 
@@ -213,6 +220,8 @@ class ChannelWorker {
       ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
       ...(config.resumeSessionId && config.forkSession ? { forkSession: true } : {}),
       ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
+      ...(config.disallowedTools ? { disallowedTools: config.disallowedTools } : {}),
+      ...(typeof config.tools !== "undefined" ? { tools: config.tools } : {}),
     };
 
     this.query = this.queryFactory({
@@ -463,6 +472,7 @@ export class ClaudeRunner {
           mcpServers,
           includeMcpServers: attempt.includeMcpServers,
           includeResume: attempt.includeResume,
+          disableTools: attempt.disableTools,
           settingSources: attempt.settingSources,
         });
         let worker = this.workersByChannel.get(request.channelId);
@@ -484,6 +494,8 @@ export class ClaudeRunner {
             resumeSessionId: attempt.includeResume ? request.sessionId : undefined,
             forkSession: attempt.includeResume ? request.forkSession : undefined,
             mcpServers: attempt.includeMcpServers ? mcpServers : undefined,
+            disallowedTools: request.disallowedTools,
+            tools: attempt.disableTools ? [] : request.tools,
             settingSources: attempt.settingSources,
           });
           this.workersByChannel.set(request.channelId, worker);
@@ -521,6 +533,7 @@ function buildWorkerSignature(input: {
   mcpServers?: Record<string, ClaudeMcpServerConfig>;
   includeMcpServers: boolean;
   includeResume: boolean;
+  disableTools: boolean;
   settingSources: NonNullable<Options["settingSources"]>;
 }): string {
   return JSON.stringify({
@@ -533,10 +546,20 @@ function buildWorkerSignature(input: {
     settingSources: input.settingSources,
     includeMcpServers: input.includeMcpServers,
     mcpServers: input.includeMcpServers ? toStableMcpSignature(input.mcpServers) : "",
+    disallowedTools: input.request.disallowedTools ? [...input.request.disallowedTools].sort() : [],
+    tools: input.disableTools ? [] : normalizeToolsSignature(input.request.tools),
+    disableTools: input.disableTools,
     includeResume: input.includeResume,
     resumeSessionId: input.includeResume ? (input.request.sessionId ?? "") : "",
     forkSession: input.includeResume ? Boolean(input.request.forkSession) : false,
   });
+}
+
+function normalizeToolsSignature(tools: Options["tools"] | undefined): unknown {
+  if (Array.isArray(tools)) {
+    return [...tools].sort();
+  }
+  return tools ?? null;
 }
 
 function toStableMcpSignature(
@@ -582,6 +605,7 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
     const key = [
       attempt.includeMcpServers ? "mcp" : "no-mcp",
       attempt.includeResume ? "resume" : "no-resume",
+      attempt.disableTools ? "no-tools" : "tools",
       attempt.settingSources.join(","),
     ].join("|");
     if (seen.has(key)) {
@@ -594,6 +618,7 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
   push({
     includeMcpServers: true,
     includeResume: true,
+    disableTools: false,
     settingSources: ["project", "local"],
     label: "default",
   });
@@ -602,6 +627,7 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
     push({
       includeMcpServers: false,
       includeResume: true,
+      disableTools: false,
       settingSources: ["project", "local"],
       label: "without MCP",
     });
@@ -611,6 +637,7 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
     push({
       includeMcpServers: true,
       includeResume: false,
+      disableTools: false,
       settingSources: ["project", "local"],
       label: "without session resume",
     });
@@ -620,6 +647,7 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
     push({
       includeMcpServers: false,
       includeResume: false,
+      disableTools: false,
       settingSources: ["project", "local"],
       label: "without MCP and session resume",
     });
@@ -628,8 +656,17 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
   push({
     includeMcpServers: false,
     includeResume: false,
+    disableTools: false,
     settingSources: ["user"],
     label: "safe mode (user settings only)",
+  });
+
+  push({
+    includeMcpServers: false,
+    includeResume: false,
+    disableTools: true,
+    settingSources: ["user"],
+    label: "safe mode (user settings only, tools disabled)",
   });
 
   return attempts;
@@ -650,12 +687,129 @@ function formatAttemptContext(attemptLabels: string[]): string | undefined {
 }
 
 function wrapRunnerError(error: unknown, context?: string): Error {
-  if (error instanceof Error) {
-    const message = context ? `${context} ${error.message}` : error.message;
-    return new Error(message, { cause: error });
+  try {
+    if (error instanceof Error) {
+      const normalizedErrorMessage = normalizeErrorMessage(error.message);
+      const base = context ? `${context} ${normalizedErrorMessage}` : normalizedErrorMessage;
+      const detail = extractProcessErrorDetail(error);
+      const message = detail ? `${base} Detail: ${detail}` : base;
+      return new Error(message, { cause: error });
+    }
+    const message = context ? `${context} ${String(error)}` : String(error);
+    return new Error(message);
+  } catch {
+    const fallback =
+      error instanceof Error
+        ? context
+          ? `${context} ${error.message}`
+          : error.message
+        : context
+          ? `${context} ${String(error)}`
+          : String(error);
+    return new Error(fallback || "Unknown runner error");
   }
-  const message = context ? `${context} ${String(error)}` : String(error);
-  return new Error(message);
+}
+
+function safeReadString(source: unknown, key: "message" | "stderr" | "stdout" | "all"): string | undefined {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+  try {
+    const value = (source as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeReadCause(source: unknown): unknown {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+  try {
+    return (source as { cause?: unknown }).cause;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractProcessErrorDetail(error: Error): string | undefined {
+  const seen = new Set<unknown>();
+  const queue: unknown[] = [error];
+  const snippets: string[] = [];
+
+  while (queue.length > 0 && seen.size < 10) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    const message = safeReadString(current, "message");
+    if (current !== error && message) {
+      snippets.push(message);
+    }
+    const stderr = safeReadString(current, "stderr");
+    if (stderr) {
+      snippets.push(stderr);
+    }
+    const all = safeReadString(current, "all");
+    if (all) {
+      snippets.push(all);
+    }
+    const stdout = safeReadString(current, "stdout");
+    if (stdout) {
+      snippets.push(stdout);
+    }
+    const cause = safeReadCause(current);
+    if (cause) {
+      queue.push(cause);
+    }
+  }
+
+  return summarizeErrorSnippet(snippets.join("\n"));
+}
+
+function normalizeErrorMessage(raw: string): string {
+  const cleaned = splitErrorLines(raw);
+  const primary = cleaned[0] ?? raw.trim();
+  return clipInline(primary || "Unknown error", 320);
+}
+
+function summarizeErrorSnippet(raw: string): string | undefined {
+  const lines = splitErrorLines(raw);
+  if (lines.length === 0) {
+    return undefined;
+  }
+
+  const preferred = lines.find(
+    (line) =>
+      /(invalid|failed|error|cannot|must|required|unexpected|enoent|eacces|eperm|permission|schema|json)/i.test(
+        line,
+      ) && !/\bexited with code 1\b/i.test(line),
+  );
+  const selected = preferred ?? lines[lines.length - 1];
+  if (!selected) {
+    return undefined;
+  }
+  return clipInline(selected, 320);
+}
+
+function splitErrorLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\d+\s+\|/.test(line))
+    .filter((line) => !/^at\s/.test(line));
+}
+
+function clipInline(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
 async function loadMcpServers(
