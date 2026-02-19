@@ -1,5 +1,6 @@
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { StopController } from "../../claude/stop";
+import { setThreadStatus } from "../thread-status";
 
 export async function handleKillCommand(input: {
   interaction: ChatInputCommandInteraction;
@@ -25,13 +26,11 @@ export async function handleKillCommand(input: {
 
   input.stopController.abort(input.channelId);
 
-  const currentName = thread.name;
-  const newName = (currentName.startsWith("🔴") ? currentName : `🔴 ${currentName}`).slice(0, 100);
-
   const wasAlreadyArchived = thread.archived ?? false;
 
-  await thread.edit({ name: newName, archived: true });
+  await setThreadStatus(thread, "killed");
+  await thread.edit({ archived: true });
 
   const statusNote = wasAlreadyArchived ? " (was already archived)" : "";
-  await input.interaction.editReply(`Killed and archived \`${newName}\`.${statusNote}`);
+  await input.interaction.editReply(`Killed and archived \`${thread.name}\`.${statusNote}`);
 }

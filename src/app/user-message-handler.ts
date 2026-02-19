@@ -37,7 +37,7 @@ import {
 import {
   maybeInheritThreadContext,
   saveThreadBranchMeta,
-  setThreadState,
+  setThreadStatus,
 } from "./thread-lifecycle";
 import {
   cleanupFiles,
@@ -178,7 +178,7 @@ export function createUserMessageHandler(input: {
         input.liveToolExpandStateByChannel.set(channelId, new Map());
 
         await addReaction(message, "🧠");
-        await setThreadState(message.channel, null);
+        await setThreadStatus(message.channel, "working");
         const status = await input.discordDispatch.enqueue(`channel:${channelId}`, async () => {
           return await message.reply({
             content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
@@ -368,7 +368,7 @@ export function createUserMessageHandler(input: {
 
           await removeReaction(message, "🧠");
           await addReaction(message, "✅");
-          await setThreadState(message.channel, "⚠️");
+          await setThreadStatus(message.channel, "needsAttention");
         } catch (error) {
           liveToolMessages.stopPolling();
           await streamingStatus.close();
@@ -396,7 +396,7 @@ export function createUserMessageHandler(input: {
           });
           await removeReaction(message, "🧠");
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
-          await setThreadState(message.channel, runawayStopReason ? "⚠️" : "❌");
+          await setThreadStatus(message.channel, runawayStopReason ? "needsAttention" : "error");
         } finally {
           // Release queue slot immediately so the next user message isn't
           // held behind file cleanup / stopController teardown.  The outer

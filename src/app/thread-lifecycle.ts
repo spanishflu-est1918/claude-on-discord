@@ -15,7 +15,6 @@ import {
   canEditSentMessage,
   canSendMessage,
   isThreadBootstrapChannel,
-  setThreadState,
   buildForkThreadTitle,
 } from "./thread-lifecycle-channel-utils";
 import type {
@@ -23,13 +22,15 @@ import type {
   EditableSentMessage,
   SendableChannel,
 } from "./thread-lifecycle-channel-utils";
+import { setThreadStatus } from "./thread-status";
+export type { ThreadStatus } from "./thread-status";
 export {
   buildForkThreadTitle,
   canCreateForkThread,
   canEditSentMessage,
   canSendMessage,
   isThreadBootstrapChannel,
-  setThreadState,
+  setThreadStatus,
 };
 export { detectBranchName, resolvePrBaseBranch, syncChannelTopic };
 export type { DiscordClientChannelFetcher, EditableSentMessage };
