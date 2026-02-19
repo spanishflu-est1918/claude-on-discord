@@ -1,70 +1,39 @@
 import { MessageFlags } from "discord.js";
+import { runPermissionModeAction } from "../command-actions/permission-mode-action";
 import type { SessionSlashCommandInput } from "./context";
 
 export async function handleModeCommand(input: SessionSlashCommandInput): Promise<void> {
   const action = input.interaction.options.getSubcommand(true);
-  const allowedModes = new Set([
-    "default",
-    "plan",
-    "acceptEdits",
-    "bypassPermissions",
-    "delegate",
-    "dontAsk",
-  ]);
+  const result = runPermissionModeAction({
+    channelId: input.channelId,
+    action:
+      action === "set"
+        ? { type: "set", mode: input.interaction.options.getString("mode", true) }
+        : action === "show"
+          ? { type: "show" }
+          : { type: "clear" },
+    defaultPermissionMode: input.defaultPermissionMode,
+    getActiveSessionId: input.getActiveSessionId,
+    setSessionPermissionMode: input.setSessionPermissionMode,
+    clearSessionPermissionMode: input.clearSessionPermissionMode,
+    resolvePermissionModeForSession: input.resolvePermissionModeForSession,
+  });
 
-  if (action === "set") {
-    const sessionId = input.getActiveSessionId(input.channelId);
-    if (!sessionId) {
-      await input.interaction.reply({
-        content: "No active session in this channel. Send a message first, then run `/mode set`.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    const modeRaw = input.interaction.options.getString("mode", true).trim();
-    if (!allowedModes.has(modeRaw)) {
-      await input.interaction.reply({
-        content:
-          "Invalid mode. Use one of: `default`, `plan`, `acceptEdits`, `bypassPermissions`, `delegate`, `dontAsk`.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    input.setSessionPermissionMode(
-      input.channelId,
-      modeRaw as Parameters<typeof input.setSessionPermissionMode>[1],
-    );
-    const effective = input.resolvePermissionModeForSession(input.channelId);
-    await input.interaction.reply(
-      `Permission mode for session \`${sessionId}\` set to \`${modeRaw}\` (effective: \`${effective.permissionMode}\`).`,
-    );
-    return;
-  }
-
-  if (action === "show") {
-    const effective = input.resolvePermissionModeForSession(input.channelId);
+  if (!result.ok) {
     await input.interaction.reply({
-      content:
-        `Permission mode: \`${effective.mode}\`\n` +
-        `Effective mode: \`${effective.permissionMode}\`\n` +
-        `Global default: \`${input.defaultPermissionMode}\``,
+      content: result.message,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const sessionId = input.getActiveSessionId(input.channelId);
-  if (!sessionId) {
+  if (result.shouldReplyEphemeral) {
     await input.interaction.reply({
-      content: "No active session in this channel. Nothing to clear.",
+      content: result.message,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
-  input.clearSessionPermissionMode(input.channelId);
-  const effective = input.resolvePermissionModeForSession(input.channelId);
-  await input.interaction.reply(
-    `Session permission mode override cleared for \`${sessionId}\` (effective: \`${effective.permissionMode}\`).`,
-  );
+
+  await input.interaction.reply(result.message);
 }

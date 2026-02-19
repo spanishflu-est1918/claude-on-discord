@@ -1,43 +1,38 @@
 import { MessageFlags } from "discord.js";
+import { runMentionsAction } from "../command-actions/mentions-action";
 import type { SessionSlashCommandInput } from "./context";
 
 export async function handleMentionsCommand(input: SessionSlashCommandInput): Promise<void> {
   const action = input.interaction.options.getSubcommand(true);
+  const result = runMentionsAction({
+    channelId: input.channelId,
+    action:
+      action === "set"
+        ? { type: "set", mode: input.interaction.options.getString("mode", true) }
+        : action === "show"
+          ? { type: "show" }
+          : { type: "clear" },
+    defaultRequireMention: input.defaultRequireMention,
+    setChannelMentionsMode: input.setChannelMentionsMode,
+    clearChannelMentionsMode: input.clearChannelMentionsMode,
+    resolveMentionRequirementForChannel: input.resolveMentionRequirementForChannel,
+  });
 
-  if (action === "set") {
-    const modeRaw = input.interaction.options.getString("mode", true).trim().toLowerCase();
-    if (modeRaw !== "default" && modeRaw !== "required" && modeRaw !== "off") {
-      await input.interaction.reply({
-        content: "Invalid mode. Use one of: `default`, `required`, `off`.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    input.setChannelMentionsMode(input.channelId, modeRaw);
-    const effective = input.resolveMentionRequirementForChannel(input.channelId);
-    await input.interaction.reply(
-      `Mentions mode for this channel set to \`${modeRaw}\` (effective: \`${effective.requireMention ? "required" : "off"}\`).`,
-    );
-    return;
-  }
-
-  if (action === "show") {
-    const effective = input.resolveMentionRequirementForChannel(input.channelId);
-    const globalDefault = input.defaultRequireMention ? "required" : "off";
+  if (!result.ok) {
     await input.interaction.reply({
-      content:
-        `Mentions mode: \`${effective.mode}\`\n` +
-        `Effective policy: \`${effective.requireMention ? "required" : "off"}\`\n` +
-        `Global default: \`${globalDefault}\``,
+      content: result.message,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  input.clearChannelMentionsMode(input.channelId);
-  const effective = input.resolveMentionRequirementForChannel(input.channelId);
-  await input.interaction.reply(
-    `Mentions mode override cleared (effective: \`${effective.requireMention ? "required" : "off"}\`).`,
-  );
+  if (result.shouldReplyEphemeral) {
+    await input.interaction.reply({
+      content: result.message,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await input.interaction.reply(result.message);
 }
