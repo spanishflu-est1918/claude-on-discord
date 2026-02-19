@@ -45,24 +45,29 @@ function readTextDisplayContent(payload: unknown): string {
     return "";
   }
   const parts: string[] = [];
-  for (const componentValue of (payload as { components: unknown[] }).components) {
-    let component = componentValue;
-    if (component && typeof component === "object" && "toJSON" in component) {
-      if (typeof (component as { toJSON?: unknown }).toJSON === "function") {
-        component = (component as { toJSON: () => unknown }).toJSON();
+
+  // Recursively collect TextDisplay (type 10) content, handling nested Containers (type 17)
+  function collectText(component: unknown): void {
+    let comp = component;
+    if (comp && typeof comp === "object" && "toJSON" in comp) {
+      if (typeof (comp as { toJSON?: unknown }).toJSON === "function") {
+        comp = (comp as { toJSON: () => unknown }).toJSON();
       }
     }
-    if (!component || typeof component !== "object") {
-      continue;
+    if (!comp || typeof comp !== "object") return;
+    const c = comp as Record<string, unknown>;
+    if (c.type === 10 && typeof c.content === "string") {
+      parts.push(c.content);
     }
-    if (
-      "type" in component &&
-      component.type === 10 &&
-      "content" in component &&
-      typeof component.content === "string"
-    ) {
-      parts.push(component.content);
+    if (Array.isArray(c.components)) {
+      for (const nested of c.components) {
+        collectText(nested);
+      }
     }
+  }
+
+  for (const componentValue of (payload as { components: unknown[] }).components) {
+    collectText(componentValue);
   }
   return parts.join("\n");
 }
@@ -220,10 +225,12 @@ describe("startApp tool stream integration", () => {
         readTextDisplayContent(record.initial),
         ...record.edits.map((edit) => readTextDisplayContent(edit)),
       ]);
-      expect(textDisplays.some((text) => text.includes("⏳ Bash"))).toBeTrue();
+      // Status icon + tool name (compact header format: "⏳ **Bash** · 0.6s")
+      expect(textDisplays.some((text) => text.includes("⏳") && text.includes("Bash"))).toBeTrue();
+      // Human-readable Bash display line: `$ ls -la`
       expect(textDisplays.some((text) => text.includes("ls -la"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("**Action:**"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("✅ Bash"))).toBeTrue();
+      // Done state (compact header format: "✅ **Bash** · …")
+      expect(textDisplays.some((text) => text.includes("✅") && text.includes("Bash"))).toBeTrue();
       expect(
         textDisplays.some((text) => text.includes("Listed files in the current directory.")),
       ).toBeTrue();
@@ -231,7 +238,9 @@ describe("startApp tool stream integration", () => {
         readFlags(record.initial),
         ...record.edits.map((edit) => readFlags(edit)),
       ]);
-      expect(flags.some((value) => value === MessageFlags.IsComponentsV2)).toBeTrue();
+      expect(
+        flags.some((value) => value !== null && (value & MessageFlags.IsComponentsV2) !== 0),
+      ).toBeTrue();
       expect(statusEdits.length).toBeGreaterThan(0);
     } finally {
       openedDb?.close();
@@ -352,7 +361,8 @@ describe("startApp tool stream integration", () => {
       ]);
       expect(textDisplays.some((text) => text.includes("WebFetch"))).toBeTrue();
       expect(textDisplays.some((text) => text.includes("https://example.com"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("**Action:** url:"))).toBeTrue();
+      // Human-readable WebFetch display line: "🔗 https://example.com"
+      expect(textDisplays.some((text) => text.includes("🔗 https://example.com"))).toBeTrue();
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });
@@ -469,7 +479,8 @@ describe("startApp tool stream integration", () => {
       expect(textDisplays.some((text) => text.includes("Timeline"))).toBeTrue();
       expect(textDisplays.some((text) => text.includes("task started:"))).toBeTrue();
       expect(textDisplays.some((text) => text.includes("completed:"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("**Action:** Explore:"))).toBeTrue();
+      // Human-readable Task display line: "🤖 Explore: Inspect src for TODOs..."
+      expect(textDisplays.some((text) => text.includes("🤖 Explore:"))).toBeTrue();
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

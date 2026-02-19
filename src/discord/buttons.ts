@@ -4,6 +4,7 @@ const INTERRUPT_PREFIX = "run:interrupt:";
 const ABORT_PREFIX = "run:abort:";
 const TOOL_VIEW_PREFIX = "run:toolview:";
 const QUEUE_DISMISS_PREFIX = "queue:dismiss:";
+const QUEUE_STEER_PREFIX = "queue:steer:";
 const PROJECT_KEEP_PREFIX = "project:keep:";
 const PROJECT_FRESH_PREFIX = "project:fresh:";
 const THREAD_WORKTREE_KEEP_PREFIX = "thread:worktree:keep:";
@@ -17,7 +18,7 @@ const DIFF_PATCH_PREFIX = "diff:patch:";
 
 export type RunControlAction = "interrupt" | "abort";
 export type ToolViewAction = "expand" | "collapse";
-export type QueueNoticeAction = "dismiss";
+export type QueueNoticeAction = "dismiss" | "steer";
 export type ProjectSwitchAction = "keep" | "fresh";
 export type ThreadWorktreeAction = "keep" | "create";
 export type ThreadCleanupAction = "keep" | "remove";
@@ -39,17 +40,23 @@ export function buildStopButtons(channelId: string): ActionRowBuilder<ButtonBuil
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(interruptButton, abortButton)];
 }
 
-export function buildQueueDismissButtons(
+export function buildQueueNoticeButtons(
   channelId: string,
   userId: string,
 ): ActionRowBuilder<ButtonBuilder>[] {
+  const steerButton = new ButtonBuilder()
+    .setCustomId(`${QUEUE_STEER_PREFIX}${channelId}:${userId}`)
+    .setLabel("Send Now")
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji("💬");
+
   const dismissButton = new ButtonBuilder()
     .setCustomId(`${QUEUE_DISMISS_PREFIX}${channelId}:${userId}`)
     .setLabel("Dismiss")
     .setStyle(ButtonStyle.Secondary)
     .setEmoji("✖️");
 
-  return [new ActionRowBuilder<ButtonBuilder>().addComponents(dismissButton)];
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(steerButton, dismissButton)];
 }
 
 export function buildProjectSwitchButtons(requestId: string): ActionRowBuilder<ButtonBuilder>[] {
@@ -102,23 +109,30 @@ export function parseRunControlCustomId(
   return null;
 }
 
-export function parseQueueDismissCustomId(
+export function parseQueueNoticeCustomId(
   customId: string,
 ): { action: QueueNoticeAction; channelId: string; userId: string } | null {
-  if (!customId.startsWith(QUEUE_DISMISS_PREFIX)) {
-    return null;
+  const prefixes: Array<[string, QueueNoticeAction]> = [
+    [QUEUE_DISMISS_PREFIX, "dismiss"],
+    [QUEUE_STEER_PREFIX, "steer"],
+  ];
+  for (const [prefix, action] of prefixes) {
+    if (!customId.startsWith(prefix)) {
+      continue;
+    }
+    const suffix = customId.slice(prefix.length);
+    const separator = suffix.indexOf(":");
+    if (separator <= 0 || separator >= suffix.length - 1) {
+      continue;
+    }
+    const channelId = suffix.slice(0, separator);
+    const userId = suffix.slice(separator + 1);
+    if (!channelId || !userId) {
+      continue;
+    }
+    return { action, channelId, userId };
   }
-  const suffix = customId.slice(QUEUE_DISMISS_PREFIX.length);
-  const separator = suffix.indexOf(":");
-  if (separator <= 0 || separator >= suffix.length - 1) {
-    return null;
-  }
-  const channelId = suffix.slice(0, separator);
-  const userId = suffix.slice(separator + 1);
-  if (!channelId || !userId) {
-    return null;
-  }
-  return { action: "dismiss", channelId, userId };
+  return null;
 }
 
 export function buildToolViewButtons(

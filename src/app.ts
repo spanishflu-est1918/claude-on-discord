@@ -4,28 +4,28 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   AttachmentBuilder,
-  ComponentType,
+  ContainerBuilder,
   type Message,
   MessageFlags,
-  type TextDisplayComponentData,
+  TextDisplayBuilder,
 } from "discord.js";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
 import { StopController } from "./claude/stop";
 import type { AppConfig } from "./config";
-import { type ChannelMentionsMode, Repository } from "./db/repository";
+import { type ChannelMentionsMode, type MergeContextRecord, Repository } from "./db/repository";
 import { openDatabase } from "./db/schema";
 import {
   buildDiffViewButtons,
   buildProjectSwitchButtons,
-  buildQueueDismissButtons,
+  buildQueueNoticeButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
-  parseQueueDismissCustomId,
+  parseQueueNoticeCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -268,6 +268,56 @@ function resolvePermissionModeForChannel(input: {
     return { permissionMode: input.defaultPermissionMode, mode };
   }
   return { permissionMode: mode, mode };
+}
+
+function buildMergeSummaryPrompt(focus?: string | null): string {
+  const lines = [
+    "Please provide a concise summary of what was accomplished in this conversation branch.",
+    "This summary will be merged back into the parent thread as context.",
+    "",
+    "Include:",
+    "- Key decisions made and why",
+    "- Files created, modified, or deleted (with paths)",
+    "- Problems solved or approaches tried",
+    "- Any unresolved issues or next steps",
+    "- Important context or conclusions the parent thread should know",
+    "",
+    "Be specific and actionable. Format it clearly so it reads as a handoff note.",
+  ];
+
+  if (focus?.trim()) {
+    lines.push("", `Focus especially on: ${focus.trim()}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildMergeContextInjection(context: {
+  fromChannelId: string;
+  fromChannelName: string;
+  summary: string;
+}): string {
+  return [
+    `[Merged context from fork \`${context.fromChannelName}\` (<#${context.fromChannelId}>)]`,
+    "",
+    context.summary,
+    "",
+    "[End of merged context — continue working in this thread with the above in mind]",
+  ].join("\n");
+}
+
+function buildMergeReportLines(input: {
+  fromChannelId: string;
+  fromChannelName: string;
+  summary: string;
+}): string {
+  return [
+    `🔀 **Merge from** <#${input.fromChannelId}> (\`${input.fromChannelName}\`)`,
+    "",
+    input.summary,
+    "",
+    "_This context has been injected into the next query in this channel._",
+  ].join("\n");
 }
 
 function compactHistory(
@@ -1487,6 +1537,129 @@ function deriveToolActivity(input: unknown): string | undefined {
   return undefined;
 }
 
+const STATUS_ACCENT_COLORS: Record<LiveToolStatus, number> = {
+  queued: 0x5865f2, // Discord blurple
+  running: 0xfee75c, // Yellow
+  done: 0x57f287, // Green
+  failed: 0xed4245, // Red
+  interrupted: 0x95a5a6, // Gray
+};
+
+/**
+ * Returns a short, human-readable description of what a tool is doing.
+ * Handles common Claude SDK tool schemas with emoji prefixes.
+ * Falls back to deriveToolActivity for unknown tools.
+ */
+function getToolDisplayLine(toolName: string, input: unknown): string | undefined {
+  const str = (keys: string | string[]) =>
+    readStringField(input, Array.isArray(keys) ? keys : [keys]);
+  const num = (key: string): number | undefined => {
+    if (typeof input !== "object" || input === null) return undefined;
+    const val = (input as Record<string, unknown>)[key];
+    return typeof val === "number" && Number.isFinite(val) ? val : undefined;
+  };
+  const shortenPath = (p: string) =>
+    p.replace(/^\/Users\/[^/]+\//, "~/").replace(/^\/home\/[^/]+\//, "~/");
+
+  switch (toolName) {
+    case "Read": {
+      const filePath = str("file_path");
+      if (!filePath) break;
+      const offset = num("offset");
+      const limit = num("limit");
+      const lineInfo =
+        offset && limit
+          ? ` · lines ${offset}–${offset + limit - 1}`
+          : offset
+            ? ` · from line ${offset}`
+            : limit
+              ? ` · first ${limit} lines`
+              : "";
+      return `📄 \`${shortenPath(filePath)}\`${lineInfo}`;
+    }
+    case "Write": {
+      const filePath = str("file_path");
+      return filePath ? `📝 \`${shortenPath(filePath)}\`` : undefined;
+    }
+    case "Edit": {
+      const filePath = str("file_path");
+      return filePath ? `✏️ \`${shortenPath(filePath)}\`` : undefined;
+    }
+    case "Bash": {
+      const cmd = str(["command", "cmd"]);
+      return cmd ? `\`$ ${clipText(cmd, 100)}\`` : undefined;
+    }
+    case "Glob": {
+      const pattern = str("pattern");
+      const searchPath = str("path");
+      if (!pattern) break;
+      return searchPath
+        ? `🔍 \`${pattern}\` in \`${shortenPath(searchPath)}\``
+        : `🔍 \`${pattern}\``;
+    }
+    case "Grep": {
+      const pattern = str("pattern");
+      const searchPath = str(["path", "glob"]);
+      if (!pattern) break;
+      return searchPath
+        ? `🔍 \`${clipText(pattern, 60)}\` in \`${shortenPath(searchPath)}\``
+        : `🔍 \`${clipText(pattern, 60)}\``;
+    }
+    case "WebSearch": {
+      const query = str("query");
+      return query ? `🌐 "${clipText(query, 100)}"` : undefined;
+    }
+    case "WebFetch": {
+      const url = str("url");
+      return url ? `🔗 ${clipText(url, 100)}` : undefined;
+    }
+    case "Task": {
+      const subagentType = str(["subagent_type", "agent_type"]);
+      const prompt = str(["prompt", "description", "task", "objective"]);
+      if (subagentType && prompt) {
+        return `🤖 ${subagentType}: ${clipText(prompt, 80)}`;
+      }
+      return prompt ? `🤖 ${clipText(prompt, 100)}` : undefined;
+    }
+    case "TodoWrite": {
+      const todos =
+        typeof input === "object" && input !== null
+          ? (input as Record<string, unknown>).todos
+          : undefined;
+      const count = Array.isArray(todos) ? todos.length : undefined;
+      return `📋 ${count !== undefined ? `${count} todo${count !== 1 ? "s" : ""}` : "todos"}`;
+    }
+    case "NotebookEdit": {
+      const nbPath = str("notebook_path");
+      return nbPath ? `📓 \`${shortenPath(nbPath)}\`` : undefined;
+    }
+  }
+  // Fallback: reuse deriveToolActivity for unknown / MCP tools
+  return deriveToolActivity(input);
+}
+
+/**
+ * Derives a human-readable display line from a LiveToolEntry by parsing its
+ * stored input preview/details JSON and calling getToolDisplayLine.
+ * Falls back to the pre-computed activity string.
+ */
+function buildToolEntryDisplayLine(entry: LiveToolEntry): string | undefined {
+  const tryParse = (json: string | undefined): unknown => {
+    if (!json) return null;
+    try {
+      return JSON.parse(json);
+    } catch {
+      return null;
+    }
+  };
+  const parsed = tryParse(entry.inputPreview) ?? tryParse(entry.inputDetails);
+  if (parsed !== null && typeof parsed === "object") {
+    const line = getToolDisplayLine(entry.name, parsed);
+    if (line) return line;
+  }
+  return entry.activity;
+}
+
 function summarizeToolInput(input: unknown): {
   preview?: string;
   details?: string;
@@ -1637,11 +1810,14 @@ function extractToolStartFromStreamEvent(message: ClaudeSDKMessage): {
       inputBufferSeed = undefined;
     }
   }
+  const summarized = summarizeToolInput(block.input);
   return {
     id,
     index: eventIndex,
     name: block.name ?? block.tool_name,
-    ...summarizeToolInput(block.input),
+    inputPreview: summarized.preview,
+    inputDetails: summarized.details,
+    activity: summarized.activity,
     inputBufferSeed,
   };
 }
@@ -1960,62 +2136,50 @@ function formatElapsedSeconds(entry: LiveToolEntry): string | null {
 }
 
 type LiveToolRenderPayload = {
-  flags: MessageFlags.IsComponentsV2;
-  components: Array<TextDisplayComponentData | ReturnType<typeof buildToolViewButtons>[number]>;
+  flags: number;
+  components: [ContainerBuilder];
 };
-
-function toolStatusLabel(status: LiveToolStatus): string {
-  switch (status) {
-    case "queued":
-      return "Queued";
-    case "running":
-      return "Running";
-    case "done":
-      return "Done";
-    case "failed":
-      return "Failed";
-    case "interrupted":
-      return "Interrupted";
-  }
-}
 
 function buildSingleLiveToolMessage(
   entry: LiveToolEntry,
   input: { channelId: string; expanded: boolean },
 ): LiveToolRenderPayload {
   const elapsed = formatElapsedSeconds(entry) ?? "n/a";
-  const lines = [
-    `### ${toolStatusIcon(entry.status)} ${entry.name}`,
-    "",
-    `**Status:** ${toolStatusLabel(entry.status)}`,
-    `**Elapsed:** ${elapsed}`,
-    `**Tool ID:** \`${entry.id}\``,
-  ];
-  if (entry.activity) {
-    lines.push(`**Action:** ${entry.activity}`);
+  const displayLine = buildToolEntryDisplayLine(entry);
+
+  // Compact header: status icon + bold tool name + elapsed time
+  const lines = [`${toolStatusIcon(entry.status)} **${entry.name}** · ${elapsed}`];
+
+  // Human-readable display line (no raw JSON)
+  if (displayLine) {
+    lines.push(displayLine);
   }
-  if (!input.expanded && entry.inputPreview) {
-    lines.push(`**Input:** \`${clipText(entry.inputPreview, 140)}\``);
-  }
+
+  // Expanded: summary, full input details, timeline
   if (input.expanded && entry.summary) {
     lines.push("", "**Summary**", clipText(entry.summary, 900));
   }
   if (input.expanded && entry.inputDetails) {
     lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
-  } else if (input.expanded && entry.inputPreview) {
+  } else if (input.expanded && !displayLine && entry.inputPreview) {
+    // Only show raw preview if we couldn't derive a human-readable display line
     lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
   }
   if (input.expanded && entry.timeline.length > 0) {
     lines.push("", "**Timeline**", ...entry.timeline.slice(-6).map((item) => `- ${item}`));
   }
-  const details: TextDisplayComponentData = {
-    type: ComponentType.TextDisplay,
-    content: clipRawText(lines.join("\n"), 3600),
-  };
+
+  const container = new ContainerBuilder().setAccentColor(STATUS_ACCENT_COLORS[entry.status]);
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(clipRawText(lines.join("\n"), 3600)),
+  );
+  for (const row of buildToolViewButtons(input.channelId, entry.id, input.expanded)) {
+    container.addActionRowComponents(row);
+  }
 
   return {
-    flags: MessageFlags.IsComponentsV2,
-    components: [details, ...buildToolViewButtons(input.channelId, entry.id, input.expanded)],
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.SuppressNotifications,
+    components: [container],
   };
 }
 
@@ -2090,6 +2254,8 @@ export async function startApp(
   >();
   const pendingDiffViews = new Map<string, DiffContext>();
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
+  // Maps queue notice message ID → steer info; allows mid-run message injection via "Send Now"
+  const queuedNoticesByMessageId = new Map<string, { text: string; cancelled: boolean }>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
   const liveToolExpandStateByChannel = new Map<string, Map<string, boolean>>();
   const sessionPermissionModeByChannel = new Map<string, ClaudePermissionMode>();
@@ -2641,34 +2807,55 @@ export async function startApp(
           return;
         }
 
-        const queueDismiss = parseQueueDismissCustomId(interaction.customId);
-        if (queueDismiss) {
-          if (interaction.channelId !== queueDismiss.channelId) {
+        const queueNotice = parseQueueNoticeCustomId(interaction.customId);
+        if (queueNotice) {
+          if (interaction.channelId !== queueNotice.channelId) {
             await interaction.reply({
               content: "This queue notice belongs to a different channel.",
               flags: MessageFlags.Ephemeral,
             });
             return;
           }
-          if (interaction.user.id !== queueDismiss.userId) {
+          if (interaction.user.id !== queueNotice.userId) {
             await interaction.reply({
-              content: "Only the queued user can dismiss this notice.",
+              content: "Only the queued user can interact with this notice.",
               flags: MessageFlags.Ephemeral,
             });
             return;
           }
 
           await interaction.deferUpdate();
-          try {
-            await interaction.message.delete();
-          } catch {
+
+          const noticeInfo = queuedNoticesByMessageId.get(interaction.message.id);
+          if (noticeInfo) {
+            noticeInfo.cancelled = true;
+            queuedNoticesByMessageId.delete(interaction.message.id);
+            if (queueNotice.action === "steer") {
+              runner.steer(queueNotice.channelId, noticeInfo.text);
+            }
+          }
+
+          if (queueNotice.action === "steer") {
             try {
               await interaction.message.edit({
-                content: "Queue notice dismissed.",
+                content: "💬 Sent to Claude.",
                 components: [],
               });
             } catch {
-              // Ignore queue notice dismiss fallback failures.
+              // Ignore edit failures.
+            }
+          } else {
+            try {
+              await interaction.message.delete();
+            } catch {
+              try {
+                await interaction.message.edit({
+                  content: "Queue notice dismissed.",
+                  components: [],
+                });
+              } catch {
+                // Ignore queue notice dismiss fallback failures.
+              }
             }
           }
           return;
@@ -2823,6 +3010,93 @@ export async function startApp(
               const detail = error instanceof Error ? error.message : String(error);
               console.warn(`Fork thread bootstrap failed for ${thread.id}: ${detail}`);
             });
+            break;
+          }
+          case "merge": {
+            // Must be run from a fork thread that has a parent
+            const mergeMeta = parseThreadBranchMeta(repository.getThreadBranchMeta(channelId));
+            if (!mergeMeta?.parentChannelId) {
+              await interaction.reply({
+                content:
+                  "This command can only be run from a fork thread. Run `/fork` first to create a branch.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            const mergeState = sessions.getState(channelId, guildId);
+            const forkSessionId = mergeState.channel.sessionId;
+
+            if (!forkSessionId) {
+              await interaction.reply({
+                content:
+                  "No active session in this fork yet — send at least one message first before merging.",
+                flags: MessageFlags.Ephemeral,
+              });
+              break;
+            }
+
+            await interaction.deferReply();
+
+            try {
+              // 1. Run a summarization query against the fork's live session
+              const summaryResult = await runner.run({
+                channelId,
+                prompt: buildMergeSummaryPrompt(interaction.options.getString("focus")),
+                cwd: mergeState.channel.workingDir,
+                sessionId: forkSessionId,
+                model: mergeState.channel.model,
+              });
+
+              const summary = summaryResult.text.trim() || "(No summary generated.)";
+
+              // 2. Store pending merge context on the parent channel
+              const mergeContext: MergeContextRecord = {
+                fromChannelId: channelId,
+                fromChannelName: mergeMeta.name,
+                summary,
+                mergedAt: Date.now(),
+              };
+              repository.setMergeContext(mergeMeta.parentChannelId, mergeContext);
+
+              // 3. Post merge report to parent channel
+              const mergeReport = buildMergeReportLines({
+                fromChannelId: channelId,
+                fromChannelName: mergeMeta.name,
+                summary,
+              });
+              const parentChannel = await interaction.client.channels
+                .fetch(mergeMeta.parentChannelId)
+                .catch(() => null);
+              if (parentChannel && canSendMessage(parentChannel)) {
+                const reportChunks = chunkDiscordText(mergeReport);
+                for (const chunk of reportChunks) {
+                  if (chunk) {
+                    await parentChannel.send(chunk);
+                  }
+                }
+              }
+
+              // 4. Archive the fork thread
+              const forkChannel = interaction.channel;
+              if (forkChannel && typeof (forkChannel as { setArchived?: unknown }).setArchived === "function") {
+                await (forkChannel as { setArchived: (v: boolean) => Promise<unknown> }).setArchived(true);
+              }
+
+              // 5. Update lifecycle state in metadata
+              saveThreadBranchMeta(repository, {
+                ...mergeMeta,
+                lifecycleState: "archived",
+                archivedAt: Date.now(),
+              });
+
+              await interaction.editReply(
+                `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+              );
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              await interaction.editReply(`❌ Merge failed: ${detail}`);
+            }
             break;
           }
           case "compact": {
@@ -3741,13 +4015,20 @@ export async function startApp(
           );
         };
 
+        // Track steer info so the user can inject this message mid-run via "Send Now"
+        let steerInfo: { text: string; cancelled: boolean } | null = null;
+        let steerNoticeMessageId: string | null = null;
+
         const wasQueued = pendingMessageRunsByChannel.has(channelId);
         if (wasQueued) {
+          steerInfo = { text: getMessagePrompt(message), cancelled: false };
           try {
-            await queueChannelMessage({
+            const noticeMsg = await queueChannelMessage({
               content: "⏳ Run in progress for this channel. Queued your message.",
-              components: buildQueueDismissButtons(channelId, message.author.id),
+              components: buildQueueNoticeButtons(channelId, message.author.id),
             });
+            steerNoticeMessageId = noticeMsg.id;
+            queuedNoticesByMessageId.set(noticeMsg.id, steerInfo);
           } catch {
             // Ignore queue notice failures.
           }
@@ -3757,6 +4038,14 @@ export async function startApp(
         const run = previousRun
           .catch(() => undefined)
           .then(async () => {
+            // Clean up steer tracking entry whether cancelled or not
+            if (steerNoticeMessageId) {
+              queuedNoticesByMessageId.delete(steerNoticeMessageId);
+            }
+            // If "Send Now" was clicked, the message was already injected — skip normal execution
+            if (steerInfo?.cancelled) {
+              return;
+            }
             if (suspendedChannels.has(channelId)) {
               return;
             }
@@ -3805,6 +4094,7 @@ export async function startApp(
               return;
             }
             const channelSystemPrompt = repository.getChannelSystemPrompt(channelId);
+            const pendingMergeContext = repository.getMergeContext(channelId);
             const stagedAttachments = await stageAttachments(message);
             const threadBranchEntries = repository.listThreadBranchMetaEntries();
             const threadBranchContext = buildThreadBranchAwarenessPrompt({
@@ -3829,7 +4119,10 @@ export async function startApp(
                 components: buildStopButtons(channelId),
               });
             });
-            const prompt = `${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
+            const mergeContextPrefix = pendingMergeContext
+              ? `${buildMergeContextInjection(pendingMergeContext)}\n\n`
+              : "";
+            const prompt = `${mergeContextPrefix}${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
             const seededPrompt = buildSeededPrompt(
               prompt,
               state.history,
@@ -4055,6 +4348,11 @@ export async function startApp(
                   const restMeta = { ...threadMeta, forkSourceSessionId: undefined };
                   saveThreadBranchMeta(repository, restMeta);
                 }
+              }
+
+              // One-shot: clear pending merge context after it has been consumed
+              if (pendingMergeContext) {
+                repository.clearMergeContext(channelId);
               }
 
               const outputText = result.text.trim();

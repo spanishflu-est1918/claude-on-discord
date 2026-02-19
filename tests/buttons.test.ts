@@ -3,14 +3,14 @@ import { ButtonStyle } from "discord.js";
 import {
   buildDiffViewButtons,
   buildProjectSwitchButtons,
-  buildQueueDismissButtons,
+  buildQueueNoticeButtons,
   buildStopButtons,
   buildThreadCleanupButtons,
   buildThreadWorktreeChoiceButtons,
   buildToolViewButtons,
   parseDiffViewCustomId,
   parseProjectSwitchCustomId,
-  parseQueueDismissCustomId,
+  parseQueueNoticeCustomId,
   parseRunControlCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -50,21 +50,35 @@ describe("discord buttons", () => {
     });
   });
 
-  test("builds and parses queue dismiss buttons", () => {
-    const rows = buildQueueDismissButtons("chan-9", "user-5");
+  test("builds queue notice buttons with Send Now + Dismiss", () => {
+    const rows = buildQueueNoticeButtons("chan-9", "user-5");
     expect(rows).toHaveLength(1);
 
     const components = rows[0]?.components ?? [];
-    expect(components).toHaveLength(1);
+    expect(components).toHaveLength(2);
 
-    const dismiss = components[0]?.toJSON();
+    const steer = components[0]?.toJSON();
+    const dismiss = components[1]?.toJSON();
+    const steerId = steer && "custom_id" in steer ? steer.custom_id : undefined;
     const dismissId = dismiss && "custom_id" in dismiss ? dismiss.custom_id : undefined;
+    const steerStyle = steer && "style" in steer ? steer.style : undefined;
     const dismissStyle = dismiss && "style" in dismiss ? dismiss.style : undefined;
-    expect(dismissId).toBe("queue:dismiss:chan-9:user-5");
-    expect(dismissStyle).toBe(ButtonStyle.Secondary);
 
-    expect(parseQueueDismissCustomId("queue:dismiss:chan-9:user-5")).toEqual({
+    expect(steerId).toBe("queue:steer:chan-9:user-5");
+    expect(dismissId).toBe("queue:dismiss:chan-9:user-5");
+    expect(steerStyle).toBe(ButtonStyle.Primary);
+    expect(dismissStyle).toBe(ButtonStyle.Secondary);
+  });
+
+  test("parses queue notice custom ids for both dismiss and steer actions", () => {
+    expect(parseQueueNoticeCustomId("queue:dismiss:chan-9:user-5")).toEqual({
       action: "dismiss",
+      channelId: "chan-9",
+      userId: "user-5",
+    });
+
+    expect(parseQueueNoticeCustomId("queue:steer:chan-9:user-5")).toEqual({
+      action: "steer",
       channelId: "chan-9",
       userId: "user-5",
     });
@@ -125,9 +139,11 @@ describe("discord buttons", () => {
     expect(parseRunControlCustomId("run:abort:")).toBeNull();
     expect(parseToolViewCustomId("run:toolview:expand:chan-only")).toBeNull();
     expect(parseToolViewCustomId("run:toolview:oops:chan:tool")).toBeNull();
-    expect(parseQueueDismissCustomId("queue:dismiss:")).toBeNull();
-    expect(parseQueueDismissCustomId("queue:dismiss:chan-only")).toBeNull();
-    expect(parseQueueDismissCustomId("queue:dismiss::user-only")).toBeNull();
+    expect(parseQueueNoticeCustomId("queue:dismiss:")).toBeNull();
+    expect(parseQueueNoticeCustomId("queue:dismiss:chan-only")).toBeNull();
+    expect(parseQueueNoticeCustomId("queue:dismiss::user-only")).toBeNull();
+    expect(parseQueueNoticeCustomId("queue:steer:")).toBeNull();
+    expect(parseQueueNoticeCustomId("queue:steer:chan-only")).toBeNull();
     expect(parseProjectSwitchCustomId("project:keep:")).toBeNull();
     expect(parseProjectSwitchCustomId("project:fresh:")).toBeNull();
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:keep:")).toBeNull();

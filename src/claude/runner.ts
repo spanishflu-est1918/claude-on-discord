@@ -246,6 +246,14 @@ class ChannelWorker {
     this.rejectPending(closeError);
   }
 
+  steer(message: string): boolean {
+    if (this.closed || this.pendingRuns.length === 0) {
+      return false;
+    }
+    this.inputQueue.enqueue(buildUserPromptMessage(message));
+    return true;
+  }
+
   async run(request: RunRequest): Promise<RunResult> {
     if (this.closed) {
       throw this.closeError ?? new Error("Worker is closed.");
@@ -423,6 +431,14 @@ export class ClaudeRunner {
       worker.close("Runner shutdown");
     }
     this.workersByChannel.clear();
+  }
+
+  steer(channelId: string, message: string): boolean {
+    const worker = this.workersByChannel.get(channelId);
+    if (!worker || worker.isClosed()) {
+      return false;
+    }
+    return worker.steer(message);
   }
 
   async run(request: RunRequest): Promise<RunResult> {

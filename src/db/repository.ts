@@ -38,6 +38,7 @@ const CHANNEL_SYSTEM_PROMPT_PREFIX = "channel_system_prompt:";
 const CHANNEL_THREAD_BRANCH_PREFIX = "channel_thread_branch:";
 const CHANNEL_MENTIONS_MODE_PREFIX = "channel_mentions_mode:";
 const CHANNEL_PERMISSION_MODE_PREFIX = "channel_permission_mode:";
+const CHANNEL_MERGE_CONTEXT_PREFIX = "channel_merge_context:";
 
 export type ChannelMentionsMode = "default" | "required" | "off";
 export type ChannelPermissionMode =
@@ -62,6 +63,17 @@ function channelMentionsModeKey(channelId: string): string {
 
 function channelPermissionModeKey(channelId: string): string {
   return `${CHANNEL_PERMISSION_MODE_PREFIX}${channelId}`;
+}
+
+function channelMergeContextKey(channelId: string): string {
+  return `${CHANNEL_MERGE_CONTEXT_PREFIX}${channelId}`;
+}
+
+export interface MergeContextRecord {
+  fromChannelId: string;
+  fromChannelName: string;
+  summary: string;
+  mergedAt: number;
 }
 
 function mapChannelRow(row: ChannelRow): ChannelRecord {
@@ -411,6 +423,26 @@ export class Repository {
 
   clearChannelPermissionMode(channelId: string): void {
     this.deleteSetting(channelPermissionModeKey(channelId));
+  }
+
+  getMergeContext(channelId: string): MergeContextRecord | null {
+    const raw = this.getSetting(channelMergeContextKey(channelId));
+    if (!raw) {
+      return null;
+    }
+    try {
+      return JSON.parse(raw) as MergeContextRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  setMergeContext(channelId: string, context: MergeContextRecord): void {
+    this.setSetting(channelMergeContextKey(channelId), JSON.stringify(context));
+  }
+
+  clearMergeContext(channelId: string): void {
+    this.deleteSetting(channelMergeContextKey(channelId));
   }
 
   listThreadBranchMetaEntries(): Array<{ channelId: string; value: string }> {

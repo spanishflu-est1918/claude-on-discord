@@ -32,6 +32,15 @@ const slashCommands = [
     .addStringOption((option) =>
       option.setName("title").setDescription("Optional thread title").setMaxLength(100),
     ),
+  new SlashCommandBuilder()
+    .setName("merge")
+    .setDescription("Summarize this fork thread and merge context back into the parent channel")
+    .addStringOption((option) =>
+      option
+        .setName("focus")
+        .setDescription("Optional focus hint for the summary (e.g. 'decisions made', 'files changed')")
+        .setMaxLength(200),
+    ),
   new SlashCommandBuilder().setName("status").setDescription("Show current channel session info"),
   new SlashCommandBuilder()
     .setName("branches")
