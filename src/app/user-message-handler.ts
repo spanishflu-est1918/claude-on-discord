@@ -205,11 +205,10 @@ export function createUserMessageHandler(input: {
         const basePrompt = `${mergeContextPrefix}${threadBranchContext}${getMessagePrompt(message)}${stagedAttachments.promptSuffix}`;
         const prompt = withNoInteractiveToolDirective(basePrompt);
         const applyRunnerSafetyGuards = shouldApplyRunnerSafetyGuards(prompt);
-        const guardedDisallowedTools = applyRunnerSafetyGuards ? ["Task"] : undefined;
-        const guardedMaxTurns = applyRunnerSafetyGuards ? 2 : undefined;
+        const guardedMaxTurns = applyRunnerSafetyGuards ? 4 : undefined;
         const guardedThinking = applyRunnerSafetyGuards ? ({ type: "disabled" } as const) : undefined;
         if (applyRunnerSafetyGuards) {
-          console.warn(`runner guard active for channel ${channelId}: Task disabled, maxTurns=2`);
+          console.warn(`runner guard active for channel ${channelId}: maxTurns=4`);
         }
         const seededPrompt = buildSeededPrompt(prompt, state.history, Boolean(resumeSessionId));
         const resumeFallbackPrompt = resumeSessionId
@@ -391,7 +390,6 @@ export function createUserMessageHandler(input: {
             model: state.channel.model,
             systemPrompt: channelSystemPrompt ?? undefined,
             permissionMode: permissionPolicy.permissionMode,
-            ...(guardedDisallowedTools ? { disallowedTools: guardedDisallowedTools } : {}),
             ...(typeof guardedMaxTurns === "number" ? { maxTurns: guardedMaxTurns } : {}),
             ...(guardedThinking ? { thinking: guardedThinking } : {}),
             abortController,
