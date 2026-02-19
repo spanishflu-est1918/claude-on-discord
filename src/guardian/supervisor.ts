@@ -1,7 +1,7 @@
-import { existsSync, statSync } from "node:fs";
 import process from "node:process";
 import { normalizeHeaderMap, verifyGuardianAuthorization } from "./auth";
 import { isLoopbackAddress } from "./config";
+import { getGuardianHeartbeatAgeMs } from "./heartbeat";
 import { renderGuardianMobilePage } from "./mobile-page";
 import { buildGuardianMobileUrls } from "./mobile-urls";
 import { buildGuardianStatusSnapshot } from "./status-snapshot";
@@ -296,21 +296,11 @@ export class GuardianSupervisor {
   }
 
   private getHeartbeatAgeMs(nowMs: number): number | null {
-    if (!this.childStartedAtMs) {
-      return null;
-    }
-    if (!existsSync(this.config.workerHeartbeatFile)) {
-      return null;
-    }
-    try {
-      const stat = statSync(this.config.workerHeartbeatFile);
-      if (stat.mtimeMs + 1000 < this.childStartedAtMs) {
-        return null;
-      }
-      return Math.max(0, nowMs - stat.mtimeMs);
-    } catch {
-      return null;
-    }
+    return getGuardianHeartbeatAgeMs({
+      childStartedAtMs: this.childStartedAtMs,
+      heartbeatFile: this.config.workerHeartbeatFile,
+      nowMs,
+    });
   }
 
   private async checkWorkerHeartbeat(): Promise<void> {
