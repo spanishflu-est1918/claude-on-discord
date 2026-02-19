@@ -46,6 +46,14 @@ const slashCommands = [
     .setName("branches")
     .setDescription("List active thread branches and git divergence"),
   new SlashCommandBuilder()
+    .setName("merge")
+    .setDescription("List thread worktrees and optionally merge one into current branch")
+    .addStringOption((option) =>
+      option
+        .setName("branch")
+        .setDescription("Thread branch name to merge into current branch (omit to just list)"),
+    ),
+  new SlashCommandBuilder()
     .setName("diff")
     .setDescription("Show current git patch for this channel as a .diff attachment"),
   new SlashCommandBuilder()
