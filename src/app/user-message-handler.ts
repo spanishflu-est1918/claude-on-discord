@@ -35,7 +35,6 @@ import {
   withNoInteractiveToolDirective,
 } from "./prompt-directives";
 import {
-  canSendMessage,
   maybeInheritThreadContext,
   saveThreadBranchMeta,
   setThreadState,
@@ -52,6 +51,7 @@ import { handleDirectBashMessage } from "./direct-bash-handler";
 import { createStreamingStatusController } from "./streaming-status-controller";
 import { createLiveToolMessageController } from "./live-tool-message-controller";
 import { notifyRunFailure } from "./run-failure-notifier";
+import { createQueuedChannelDispatch } from "./queued-channel-dispatch";
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -83,24 +83,12 @@ export function createUserMessageHandler(input: {
     if (input.suspendedChannels.has(channelId)) {
       return;
     }
-    const channelSendTarget = canSendMessage(message.channel) ? message.channel : null;
-    const queueChannelMessage = async (
-      payload: Parameters<typeof message.reply>[0],
-    ): Promise<Awaited<ReturnType<typeof message.reply>>> => {
-      return await input.discordDispatch.enqueue(
-        `channel:${channelId}`,
-        async () => await message.reply(payload),
-      );
-    };
-    const queueChannelSend = async (payload: unknown): Promise<unknown | null> => {
-      if (!channelSendTarget) {
-        return null;
-      }
-      return await input.discordDispatch.enqueue(
-        `channel:${channelId}`,
-        async () => await channelSendTarget.send(payload),
-      );
-    };
+    const { channelSendTarget, queueChannelMessage, queueChannelSend } =
+      createQueuedChannelDispatch({
+        channelId,
+        message,
+        discordDispatch: input.discordDispatch,
+      });
 
     let steerInfo: { text: string; cancelled: boolean } | null = null;
     let steerNoticeMessageId: string | null = null;
@@ -211,7 +199,6 @@ export function createUserMessageHandler(input: {
           : undefined;
         const abortController = new AbortController();
         const persistedFilenames = new Set<string>();
-        const toolSendTarget = canSendMessage(message.channel) ? message.channel : null;
         const runawayToolGuard = createRunawayToolGuard();
         let runawayStopReason: string | null = null;
         const streamingStatus = createStreamingStatusController({
@@ -223,7 +210,7 @@ export function createUserMessageHandler(input: {
           channelId,
           runToolTrace,
           discordDispatch: input.discordDispatch,
-          toolSendTarget,
+          toolSendTarget: channelSendTarget,
           getToolExpanded: (toolId) => input.getToolExpanded(channelId, toolId),
         });
         liveToolMessages.startPolling();
