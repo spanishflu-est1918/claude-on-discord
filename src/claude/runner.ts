@@ -450,10 +450,24 @@ export class ClaudeRunner {
           !attempt.includeResume && request.resumeFallbackPrompt
             ? request.resumeFallbackPrompt
             : request.prompt;
-        return await worker.run({
+        const result = await worker.run({
           ...request,
           prompt: effectivePrompt,
         });
+        const shouldRetryResult =
+          attempt.includeResume &&
+          index < attempts.length - 1 &&
+          shouldRetryAfterExecutionErrorResult(result);
+        if (shouldRetryResult) {
+          failedAttemptLabels.push(`${attempt.label} (execution error result)`);
+          const activeWorker = this.workersByChannel.get(request.channelId);
+          if (activeWorker) {
+            activeWorker.close("Worker reset after execution error result");
+            this.workersByChannel.delete(request.channelId);
+          }
+          continue;
+        }
+        return result;
       } catch (error) {
         failedAttemptLabels.push(attempt.label);
         const activeWorker = this.workersByChannel.get(request.channelId);
@@ -507,4 +521,14 @@ function normalizeToolsSignature(tools: Options["tools"] | undefined): unknown {
     return [...tools].sort();
   }
   return tools ?? null;
+}
+
+function shouldRetryAfterExecutionErrorResult(result: RunResult): boolean {
+  const resultMessage = result.messages.find(
+    (message) => message.type === "result",
+  ) as Extract<ClaudeSDKMessage, { type: "result" }> | undefined;
+  if (!resultMessage) {
+    return false;
+  }
+  return resultMessage.subtype === "error_during_execution";
 }

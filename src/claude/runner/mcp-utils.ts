@@ -71,7 +71,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: true,
     includeResume: true,
     disableTools: false,
-    settingSources: ["project", "local"],
+    settingSources: [],
     label: "default",
   });
 
@@ -80,7 +80,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: true,
       disableTools: false,
-      settingSources: ["project", "local"],
+      settingSources: [],
       label: "without MCP",
     });
   }
@@ -90,7 +90,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: true,
       includeResume: false,
       disableTools: false,
-      settingSources: ["project", "local"],
+      settingSources: [],
       label: "without session resume",
     });
   }
@@ -100,7 +100,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: false,
       disableTools: false,
-      settingSources: ["project", "local"],
+      settingSources: [],
       label: "without MCP and session resume",
     });
   }
