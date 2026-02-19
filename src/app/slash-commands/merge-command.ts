@@ -79,6 +79,7 @@ export async function handleMergeCommand(input: {
             cwd: forkWorkingDir,
             sessionId: forkSessionId,
             model: mergeState.channel.model,
+            maxTurns: 1,
           });
           const commitMsg =
             commitMsgResult.text.trim().split("\n")[0]?.trim() ?? "chore: auto-commit before merge";
@@ -142,6 +143,7 @@ export async function handleMergeCommand(input: {
         cwd: forkWorkingDir,
         sessionId: forkSessionId,
         model: mergeState.channel.model,
+        maxTurns: 1,
       });
 
       const summaryForContext = input.normalizeMergeSummary(summaryResult.text, 1000);
