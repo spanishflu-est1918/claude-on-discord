@@ -240,4 +240,174 @@ describe("startApp fork slash command", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("creates a sibling thread when forked from inside an existing thread", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-fork-sibling-"));
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb:
+      | {
+          close: () => void;
+          query: <T>(sql: string) => {
+            get: (params: Record<string, string>) => T | null;
+            run: (params: Record<string, string>) => unknown;
+          };
+        }
+      | undefined;
+
+    try {
+      const config: AppConfig = {
+        discordToken: "unused-token",
+        discordClientId: "unused-client",
+        discordGuildId: "unused-guild",
+        defaultWorkingDir: root,
+        databasePath: dbPath,
+        defaultModel: "sonnet",
+        autoThreadWorktree: false,
+        requireMentionInMultiUserChannels: false,
+        worktreeBootstrap: false,
+        claudePermissionMode: "bypassPermissions",
+      };
+
+      const siblingCreateCalls: Array<{ name: string; reason?: string }> = [];
+
+      // The parent channel that owns both thread-A and (after fork) thread-B.
+      const parentChannel = {
+        name: "main",
+        isThread: () => false,
+        threads: {
+          create: async (options: { name: string; reason?: string }) => {
+            siblingCreateCalls.push(options);
+            return {
+              id: "thread-B",
+              parentId: "parent-channel-1",
+              name: options.name,
+              isThread: () => true,
+              send: async () => {},
+            };
+          },
+        },
+      };
+
+      await startApp(config, {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db as unknown as {
+            close: () => void;
+            query: <T>(sql: string) => {
+              get: (params: Record<string, string>) => T | null;
+              run: (params: Record<string, string>) => unknown;
+            };
+          };
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async (id: string) => (id === "parent-channel-1" ? parentChannel : null) },
+          } as unknown as Client;
+        },
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      // Seed thread-A in the DB so it looks like an existing, active thread.
+      openedDb
+        ?.query(
+          `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+           VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+        )
+        .run({
+          channel_id: "thread-A",
+          guild_id: "guild-1",
+          working_dir: root,
+          session_id: "session-A",
+          model: "sonnet",
+        });
+      // Store thread-A metadata so the sibling fork knows its parentChannelId.
+      openedDb
+        ?.query(
+          `INSERT INTO settings (key, value)
+           VALUES ($key, $value);`,
+        )
+        .run({
+          key: "channel_thread_branch:thread-A",
+          value: JSON.stringify({
+            channelId: "thread-A",
+            guildId: "guild-1",
+            rootChannelId: "parent-channel-1",
+            parentChannelId: "parent-channel-1",
+            name: "thread-a",
+            createdAt: Date.now(),
+            worktreeMode: "inherited",
+            lifecycleState: "active",
+            cleanupState: "none",
+          }),
+        });
+
+      const replies: Array<{ content?: string; flags?: number }> = [];
+      await capturedSlashHandler({
+        commandName: "fork",
+        channelId: "thread-A",
+        guildId: "guild-1",
+        // Simulate being inside thread-A: isThread() returns true, parentId is known.
+        channel: {
+          name: "thread-a",
+          parentId: "parent-channel-1",
+          isThread: () => true,
+        },
+        options: {
+          getString: (name: string) => (name === "title" ? "thread-B-title" : null),
+        },
+        client: {
+          channels: {
+            fetch: async (id: string) => (id === "parent-channel-1" ? parentChannel : null),
+          },
+        },
+        reply: async (payload: string | { content?: string; flags?: number }) => {
+          if (typeof payload === "string") {
+            replies.push({ content: payload });
+            return;
+          }
+          replies.push(payload);
+        },
+      });
+
+      // The sibling thread should have been created on the parent channel.
+      expect(siblingCreateCalls).toEqual([
+        { name: "thread-B-title", reason: "Sibling fork created via /fork" },
+      ]);
+      expect(replies[0]?.content).toContain("Forked into thread <#thread-B>");
+      expect(replies[0]?.content).toContain("`thread-B-title`");
+
+      // Wait for async context inheritance to settle.
+      const waitUntil = Date.now() + 1000;
+      let threadBMeta: Record<string, unknown> | null = null;
+      while (Date.now() < waitUntil) {
+        const raw =
+          openedDb
+            ?.query<{ value: string | null }>("SELECT value FROM settings WHERE key = $key;")
+            .get({ key: "channel_thread_branch:thread-B" })?.value ?? null;
+        if (raw) {
+          threadBMeta = JSON.parse(raw) as Record<string, unknown>;
+          break;
+        }
+        await Bun.sleep(10);
+      }
+
+      // thread-B is a true sibling of thread-A: same parentChannelId, same rootChannelId.
+      expect(threadBMeta?.parentChannelId).toBe("parent-channel-1");
+      expect(threadBMeta?.rootChannelId).toBe("parent-channel-1");
+      // Context was inherited from thread-A (forkSourceSessionId = session-A).
+      expect(threadBMeta?.forkSourceSessionId).toBe("session-A");
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
