@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Client } from "discord.js";
@@ -171,6 +172,314 @@ describe("startApp merge slash command", () => {
       expect(mergeContext?.summary.length ?? 0).toBeLessThanOrEqual(1000);
       expect(parentMessages.length).toBeGreaterThan(0);
       expect(parentMessages.join("\n").length).toBeLessThan(2000);
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fork merge with worktree: auto-commits dirty state, merges all 4 phases, cleans up", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-merge-wt-happy-"));
+    const mainRepoDir = path.join(root, "main-repo");
+    const worktreeDir = path.join(root, "fork-worktree");
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb:
+      | {
+          close: () => void;
+          query: <T>(sql: string) => {
+            get: (params: Record<string, string>) => T | null;
+            run: (params: Record<string, string>) => unknown;
+          };
+        }
+      | undefined;
+    let mergeReply = "";
+    let archived = false;
+    const runnerCallPrompts: string[] = [];
+    const parentMessages: string[] = [];
+
+    try {
+      // Set up main git repo
+      await mkdir(mainRepoDir, { recursive: true });
+      await writeFile(path.join(mainRepoDir, "file.txt"), "base content\n");
+      await runCommand(["git", "init"], mainRepoDir);
+      await runCommand(["git", "config", "user.email", "test@test.com"], mainRepoDir);
+      await runCommand(["git", "config", "user.name", "Test"], mainRepoDir);
+      await runCommand(["git", "add", "file.txt"], mainRepoDir);
+      await runCommand(["git", "commit", "-m", "initial"], mainRepoDir);
+
+      // Create worktree on a fork branch
+      await runCommand(["git", "worktree", "add", worktreeDir, "-b", "fork-branch"], mainRepoDir);
+
+      // Make the worktree dirty (uncommitted new file)
+      await writeFile(path.join(worktreeDir, "new-feature.ts"), "export const x = 1;\n");
+
+      await startApp(createConfig(mainRepoDir, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db as unknown as typeof openedDb;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async ({ prompt }: { prompt: string }) => {
+              runnerCallPrompts.push(prompt);
+              // First call: auto-commit message. Second call: handoff summary.
+              return { text: "feat: add new feature implementation", messages: [] };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      // Insert parent channel state (main repo)
+      openedDb
+        ?.query(
+          `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+           VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+        )
+        .run({
+          channel_id: "parent-wt",
+          guild_id: "guild-1",
+          working_dir: mainRepoDir,
+          session_id: "parent-session",
+          model: "sonnet",
+        });
+
+      // Insert fork channel state (worktree)
+      openedDb
+        ?.query(
+          `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+           VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+        )
+        .run({
+          channel_id: "fork-wt",
+          guild_id: "guild-1",
+          working_dir: worktreeDir,
+          session_id: "fork-session-wt",
+          model: "sonnet",
+        });
+
+      // Insert fork thread branch meta with worktreePath
+      openedDb?.query("INSERT INTO settings (key, value) VALUES ($key, $value);").run({
+        key: "channel_thread_branch:fork-wt",
+        value: JSON.stringify({
+          channelId: "fork-wt",
+          guildId: "guild-1",
+          rootChannelId: "parent-wt",
+          parentChannelId: "parent-wt",
+          name: "fork-wt",
+          createdAt: Date.now(),
+          lifecycleState: "active",
+          cleanupState: "none",
+          worktreePath: worktreeDir,
+        }),
+      });
+
+      const parentChannel = {
+        send: async (payload: unknown) => {
+          if (typeof payload === "string") parentMessages.push(payload);
+        },
+      };
+
+      await capturedSlashHandler({
+        commandName: "merge",
+        channelId: "fork-wt",
+        guildId: "guild-1",
+        channel: {
+          isThread: () => true,
+          parentId: "parent-wt",
+          name: "fork-wt",
+          setArchived: async () => {
+            archived = true;
+          },
+        },
+        client: {
+          channels: { fetch: async () => parentChannel },
+        },
+        options: {
+          getString: (name: string) => (name === "focus" ? null : null),
+        },
+        deferReply: async () => {},
+        editReply: async (payload: string) => {
+          mergeReply = payload;
+        },
+        reply: async () => {},
+      });
+
+      // Runner was called at least twice: auto-commit message + handoff summary
+      expect(runnerCallPrompts.length).toBeGreaterThanOrEqual(2);
+
+      // fork-branch should be merged into main — auto-committed changes should appear in main log
+      // (worktreeDir is gone by now since cleanup ran, so we check mainRepoDir)
+      const mainLog = await runCommand(["git", "log", "--oneline"], mainRepoDir).catch(() => "");
+      expect(mainLog).toContain("feat: add new feature");
+
+      // Worktree dir should be gone (Phase 4 cleanup)
+      expect(existsSync(worktreeDir)).toBeFalse();
+
+      // Branch should be deleted
+      const branches = await runCommand(["git", "branch"], mainRepoDir).catch(() => "");
+      expect(branches).not.toContain("fork-branch");
+
+      // Thread archived, reply is success
+      expect(archived).toBeTrue();
+      expect(mergeReply).toContain("Merged into <#parent-wt>");
+      expect(mergeReply).toContain("fork-branch");
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fork merge with worktree aborts and reports conflicting files when main conflicts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-merge-wt-conflict-"));
+    const mainRepoDir = path.join(root, "main-repo");
+    const worktreeDir = path.join(root, "fork-worktree");
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let mergeReply = "";
+
+    try {
+      // Set up main repo with a shared file
+      await mkdir(mainRepoDir, { recursive: true });
+      await writeFile(path.join(mainRepoDir, "shared.txt"), "original\n");
+      await runCommand(["git", "init"], mainRepoDir);
+      await runCommand(["git", "config", "user.email", "test@test.com"], mainRepoDir);
+      await runCommand(["git", "config", "user.name", "Test"], mainRepoDir);
+      await runCommand(["git", "add", "shared.txt"], mainRepoDir);
+      await runCommand(["git", "commit", "-m", "initial"], mainRepoDir);
+
+      // Create fork worktree
+      await runCommand(["git", "worktree", "add", worktreeDir, "-b", "fork-branch"], mainRepoDir);
+
+      // Fork edits shared.txt
+      await writeFile(path.join(worktreeDir, "shared.txt"), "fork-side\n");
+      await runCommand(["git", "add", "shared.txt"], worktreeDir);
+      await runCommand(["git", "commit", "-m", "fork change"], worktreeDir);
+
+      // Main also edits shared.txt (diverges from fork point)
+      await writeFile(path.join(mainRepoDir, "shared.txt"), "main-side\n");
+      await runCommand(["git", "add", "shared.txt"], mainRepoDir);
+      await runCommand(["git", "commit", "-m", "main change"], mainRepoDir);
+
+      await startApp(createConfig(mainRepoDir, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async () => ({ text: "auto-commit message", messages: [] }),
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      const db = openedDb as unknown as {
+        query: <T>(sql: string) => {
+          get: (params: Record<string, string>) => T | null;
+          run: (params: Record<string, string>) => unknown;
+        };
+      };
+
+      db.query(
+        `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+         VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+      ).run({
+        channel_id: "parent-conf",
+        guild_id: "guild-1",
+        working_dir: mainRepoDir,
+        session_id: "parent-session",
+        model: "sonnet",
+      });
+
+      db.query(
+        `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+         VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+      ).run({
+        channel_id: "fork-conf",
+        guild_id: "guild-1",
+        working_dir: worktreeDir,
+        session_id: "fork-session-conf",
+        model: "sonnet",
+      });
+
+      db.query("INSERT INTO settings (key, value) VALUES ($key, $value);").run({
+        key: "channel_thread_branch:fork-conf",
+        value: JSON.stringify({
+          channelId: "fork-conf",
+          guildId: "guild-1",
+          rootChannelId: "parent-conf",
+          parentChannelId: "parent-conf",
+          name: "fork-conf",
+          createdAt: Date.now(),
+          lifecycleState: "active",
+          cleanupState: "none",
+          worktreePath: worktreeDir,
+        }),
+      });
+
+      await capturedSlashHandler({
+        commandName: "merge",
+        channelId: "fork-conf",
+        guildId: "guild-1",
+        channel: {
+          isThread: () => true,
+          parentId: "parent-conf",
+          name: "fork-conf",
+          setArchived: async () => {},
+        },
+        client: { channels: { fetch: async () => null } },
+        options: { getString: () => null },
+        deferReply: async () => {},
+        editReply: async (payload: string) => {
+          mergeReply = payload;
+        },
+        reply: async () => {},
+      });
+
+      // Should report conflict with the file name
+      expect(mergeReply).toContain("Conflict");
+      expect(mergeReply).toContain("shared.txt");
+      expect(mergeReply).toContain("/merge");
+
+      // Worktree should still exist (merge aborted, not cleaned up)
+      expect(existsSync(worktreeDir)).toBeTrue();
+
+      // Main repo should NOT be in MERGING state
+      const mergeHead = existsSync(path.join(mainRepoDir, ".git", "MERGE_HEAD"));
+      expect(mergeHead).toBeFalse();
+
+      // Worktree should NOT be in MERGING state (aborted)
+      const worktreeMergeHead = existsSync(
+        path.join(mainRepoDir, ".git", "worktrees", "fork-worktree", "MERGE_HEAD"),
+      );
+      expect(worktreeMergeHead).toBeFalse();
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

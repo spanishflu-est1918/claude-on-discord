@@ -55,10 +55,90 @@ export async function handleMergeCommand(input: {
     await input.interaction.deferReply();
 
     try {
+      const forkWorkingDir = mergeState.channel.workingDir;
+      const hasWorktree = !!mergeMeta.worktreePath;
+
+      let baseBranch = "main";
+      let forkBranch: string | null = null;
+      let parentWorkingDir = forkWorkingDir;
+
+      if (hasWorktree) {
+        const parentState = input.sessions.getState(mergeMeta.parentChannelId, input.guildId);
+        parentWorkingDir = parentState.channel.workingDir || forkWorkingDir;
+        baseBranch = (await input.detectBranchName(parentWorkingDir)) ?? "main";
+        forkBranch = await input.detectBranchName(forkWorkingDir);
+
+        // Phase 1: Auto-commit — commit any dirty state with an AI-generated message
+        const statusResult = await input.runCommand(["git", "status", "--porcelain"], forkWorkingDir);
+        if (statusResult.exitCode === 0 && statusResult.output.trim()) {
+          await input.interaction.editReply("⏳ Auto-committing uncommitted changes...");
+          const commitMsgResult = await input.runner.run({
+            channelId: input.channelId,
+            prompt: "Generate a short git commit message (imperative mood, under 72 chars, no period at end) summarizing the uncommitted changes in this worktree. Output only the commit message line, nothing else.",
+            cwd: forkWorkingDir,
+            sessionId: forkSessionId,
+            model: mergeState.channel.model,
+          });
+          const commitMsg =
+            commitMsgResult.text.trim().split("\n")[0]?.trim() ?? "chore: auto-commit before merge";
+          await input.runCommand(["git", "add", "-A"], forkWorkingDir);
+          await input.runCommand(["git", "commit", "-m", commitMsg], forkWorkingDir);
+        }
+
+        // Phase 2: Merge main → worktree (resolve conflicts here, not on main)
+        await input.interaction.editReply(
+          `⏳ Merging \`${baseBranch}\` → worktree to check for conflicts...`,
+        );
+        const mainIntoFork = await input.runCommand(
+          ["git", "merge", baseBranch, "--no-edit"],
+          forkWorkingDir,
+        );
+        if (mainIntoFork.exitCode !== 0) {
+          const conflictResult = await input.runCommand(
+            ["git", "diff", "--name-only", "--diff-filter=U"],
+            forkWorkingDir,
+          );
+          await input.runCommand(["git", "merge", "--abort"], forkWorkingDir);
+          const conflictFiles = conflictResult.output.trim() || "unknown files";
+          await input.interaction.editReply(
+            [
+              `⚠️ Conflict when merging \`${baseBranch}\` into your worktree.`,
+              `Resolve these files and run \`/merge\` again:`,
+              "```",
+              conflictFiles,
+              "```",
+            ].join("\n"),
+          );
+          return;
+        }
+
+        // Phase 3: Merge worktree → main
+        if (!forkBranch) {
+          await input.interaction.editReply("❌ Could not detect fork branch name.");
+          return;
+        }
+        await input.interaction.editReply(
+          `⏳ Merging \`${forkBranch}\` → \`${baseBranch}\`...`,
+        );
+        const forkIntoMain = await input.runCommand(
+          ["git", "merge", forkBranch, "--no-edit"],
+          parentWorkingDir,
+        );
+        if (forkIntoMain.exitCode !== 0) {
+          const summary = input.summarizeGitMergeOutput(forkIntoMain.output);
+          await input.interaction.editReply(
+            `❌ Failed to merge into \`${baseBranch}\`:\n${summary}`,
+          );
+          return;
+        }
+      }
+
+      // Generate semantic handoff summary
+      await input.interaction.editReply("⏳ Generating handoff summary...");
       const summaryResult = await input.runner.run({
         channelId: input.channelId,
         prompt: input.buildMergeSummaryPrompt(input.interaction.options.getString("focus")),
-        cwd: mergeState.channel.workingDir,
+        cwd: forkWorkingDir,
         sessionId: forkSessionId,
         model: mergeState.channel.model,
       });
@@ -90,6 +170,19 @@ export async function handleMergeCommand(input: {
         }
       }
 
+      // Phase 4: Cleanup — remove worktree and branch
+      if (hasWorktree && mergeMeta.worktreePath) {
+        await input.runCommand(
+          ["git", "worktree", "remove", mergeMeta.worktreePath, "--force"],
+          parentWorkingDir,
+        );
+        await input.runCommand(["git", "worktree", "prune"], parentWorkingDir);
+        if (forkBranch) {
+          // -d is safe here since we just merged it
+          await input.runCommand(["git", "branch", "-d", forkBranch], parentWorkingDir);
+        }
+      }
+
       const forkChannel = input.interaction.channel;
       if (
         forkChannel &&
@@ -102,10 +195,16 @@ export async function handleMergeCommand(input: {
         ...mergeMeta,
         lifecycleState: "archived",
         archivedAt: Date.now(),
+        cleanupState: hasWorktree ? "removed" : "none",
+        worktreePath: hasWorktree ? undefined : mergeMeta.worktreePath,
       });
 
+      const gitNote =
+        hasWorktree && forkBranch
+          ? ` \`${forkBranch}\` → \`${baseBranch}\`, worktree cleaned up.`
+          : "";
       await input.interaction.editReply(
-        `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+        `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.${gitNote}`,
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
