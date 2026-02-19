@@ -269,6 +269,7 @@ then just talk to it like Claude Code.
 
 - `→` Worktree per thread, fully automatic
 - `→` Webhooks into channels for automation workflows
+- `→` MCP parity for slash commands (same backend action path for tools + commands)
 - `→` Agent-guided `/fork` (ask, then create thread lane)
 - `→` Plan mode with explicit approval before execution
 - `→` Branch diff summaries in Discord

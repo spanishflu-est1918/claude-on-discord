@@ -12,7 +12,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 export type ClaudeModel = string;
-export type ClaudePermissionMode = SDKPermissionMode;
+export type ClaudePermissionMode = SDKPermissionMode | "delegate";
 export type ClaudeQuery = SDKQuery;
 export type ClaudeSDKMessage = SDKMessage;
 export type ClaudeSDKUserMessage = SDKUserMessage;

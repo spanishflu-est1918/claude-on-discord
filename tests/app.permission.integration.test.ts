@@ -12,7 +12,9 @@ describe("startApp mode slash command", () => {
     const root = await mkdtemp(path.join(tmpdir(), "app-permission-"));
     const dbPath = path.join(root, "state.sqlite");
     let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
     let openedDb: { close: () => void } | undefined;
+    let nextSessionIndex = 1;
 
     try {
       const config: AppConfig = {
@@ -37,16 +39,28 @@ describe("startApp mode slash command", () => {
         registerSlashCommands: async () => {},
         startDiscordClient: async (options) => {
           capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          capturedUserMessageHandler = options.onUserMessage as (message: unknown) => Promise<void>;
           return {
             destroy: () => {},
             channels: { fetch: async () => null },
           } as unknown as Client;
         },
+        createRunner: () =>
+          ({
+            run: async () => ({
+              text: "OK",
+              messages: [],
+              sessionId: `session-${nextSessionIndex++}`,
+            }),
+          }) as never,
         installSignalHandlers: false,
       });
 
-      if (typeof capturedSlashHandler !== "function") {
-        throw new Error("slash handler was not captured");
+      if (
+        typeof capturedSlashHandler !== "function" ||
+        typeof capturedUserMessageHandler !== "function"
+      ) {
+        throw new Error("handlers were not captured");
       }
 
       const replies: Array<{ content?: string; flags?: number }> = [];
@@ -72,6 +86,31 @@ describe("startApp mode slash command", () => {
         },
       });
 
+      const makeUserMessage = (content: string) => ({
+        content,
+        guildId: "guild-1",
+        author: { id: "user-1" },
+        attachments: { size: 0 },
+        reactions: { cache: new Map() },
+        client: { user: { id: "bot-1" } },
+        react: async () => {},
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async () => ({
+            edit: async () => {},
+          }),
+        },
+        reply: async () => ({
+          edit: async () => {},
+        }),
+      });
+
+      await capturedSlashHandler(makeInteraction("set"));
+      expect(replies[0]?.content).toContain("No active session");
+
+      await capturedUserMessageHandler(makeUserMessage("hello"));
       await capturedSlashHandler(makeInteraction("set"));
       await capturedSlashHandler(makeInteraction("show"));
       await capturedSlashHandler({
@@ -86,16 +125,17 @@ describe("startApp mode slash command", () => {
           replies.push(payload);
         },
       });
-      await capturedSlashHandler(makeInteraction("clear"));
+      await capturedUserMessageHandler(makeUserMessage("hello again"));
       await capturedSlashHandler(makeInteraction("show"));
+      await capturedSlashHandler(makeInteraction("clear"));
 
-      expect(replies[0]?.content).toContain("for this session set to `plan`");
-      expect(replies[1]?.content).toContain("Permission mode: `plan`");
-      expect(replies[1]?.content).toContain("Effective mode: `plan`");
-      expect(replies[2]?.content).toContain("Session reset");
-      expect(replies[3]?.content).toContain("override cleared");
+      expect(replies[1]?.content).toContain("session `session-1` set to `plan`");
+      expect(replies[2]?.content).toContain("Permission mode: `plan`");
+      expect(replies[2]?.content).toContain("Effective mode: `plan`");
+      expect(replies[3]?.content).toContain("Session reset");
       expect(replies[4]?.content).toContain("Permission mode: `default`");
       expect(replies[4]?.content).toContain("Effective mode: `bypassPermissions`");
+      expect(replies[5]?.content).toContain("override cleared for `session-2`");
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

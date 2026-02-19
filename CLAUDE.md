@@ -81,3 +81,12 @@ Priority references:
 - Prefer strict typing and explicit interfaces at module boundaries
 - Keep modules small and testable
 - Add tests for chunking, ring buffer, repository, and stop logic before expanding features
+- Slash command architecture:
+  - One slash command per file, named by command (for example `fork-command.ts`, `merge-command.ts`, `project-command.ts`)
+  - Keep a thin slash-command router that only dispatches to command modules
+  - Do not add new generic `helpers` modules for command behavior
+  - Shared logic should live in explicitly named action/service modules (for example `fork-action.ts`)
+- MCP/tool reuse requirement:
+  - Each slash command must expose core behavior through a reusable typed action/service function
+  - Discord command files should adapt Discord I/O to that reusable action, not own the business logic
+  - MCP tools and internal agents must call the same action/service function used by slash commands

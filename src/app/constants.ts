@@ -1,0 +1,2 @@
+export const ACTIVE_RUN_MAX_AGE_MS = 30 * 60 * 1000;
+export const ACTIVE_RUN_WATCHDOG_INTERVAL_MS = 30 * 1000;

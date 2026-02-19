@@ -26,7 +26,7 @@ function createMockQuery(messages: MessageLike[]): ClaudeQuery {
   return query as unknown as ClaudeQuery;
 }
 
-function createFailingQuery(error: Error): ClaudeQuery {
+function createFailingQuery(error: unknown): ClaudeQuery {
   const query = {
     [Symbol.asyncIterator]() {
       return {
@@ -169,6 +169,7 @@ describe("ClaudeRunner", () => {
       model: "opus",
       systemPrompt: "Respond in terse style.",
       permissionMode: "plan",
+      maxTurns: 3,
     });
 
     expect(capturedInput).toBeDefined();
@@ -177,6 +178,7 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.forkSession).toBe(true);
     expect(capturedInput?.options.model).toBe("opus");
     expect(capturedInput?.options.permissionMode).toBe("plan");
+    expect(capturedInput?.options.maxTurns).toBe(3);
     expect(capturedInput?.options.includePartialMessages).toBe(true);
     expect(capturedInput?.options.thinking).toEqual({ type: "adaptive" });
     expect(capturedInput?.options.systemPrompt).toContain("you CAN return files/images");
@@ -471,6 +473,27 @@ describe("ClaudeRunner", () => {
     }
   });
 
+  test("handles malformed thrown values without crashing wrapper logic", async () => {
+    const malicious = {
+      get message() {
+        throw new Error("message getter exploded");
+      },
+      toString() {
+        throw new Error("toString exploded");
+      },
+    };
+
+    const runner = new ClaudeRunner(() => createFailingQuery(malicious));
+
+    await expect(
+      runner.run({
+        channelId: "channel-1",
+        prompt: "Ping",
+        cwd: "/tmp",
+      }),
+    ).rejects.toThrow();
+  });
+
   test("retries without session resume when process exits with code 1", async () => {
     const calls: QueryFactoryInput[] = [];
     const runner = new ClaudeRunner((input) => {
@@ -719,7 +742,7 @@ describe("ClaudeRunner", () => {
 
       expect(result.text).toBe("Recovered with safe mode");
       expect(calls).toHaveLength(5);
-      expect(calls[4]?.options.settingSources).toEqual(["user"]);
+      expect(calls[4]?.options.settingSources).toEqual([]);
       expect(calls[4]?.options.mcpServers).toBeUndefined();
       expect(calls[4]?.options.resume).toBeUndefined();
     } finally {

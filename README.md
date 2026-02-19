@@ -185,6 +185,7 @@ Security notes:
 - `→` Fix double threads — deduplicate thread creation events at the gateway level
 - `→` Worktree per thread, fully automatic
 - `→` Webhooks into channels — map signed webhook endpoints to Discord channels for work automation
+- `→` MCP parity for slash commands — expose every slash command as an MCP tool backed by the same action/service implementation
 - `→` Agent-guided `/fork` tool — Claude proposes and creates a new thread lane after explicit user confirmation
 - `→` PR review conductor — structured review buttons with targeted prompts
 - `→` Multi-guild support

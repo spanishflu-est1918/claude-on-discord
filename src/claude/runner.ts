@@ -12,23 +12,30 @@ import type {
 export type QueryFactoryInput = {
   prompt: string | AsyncIterable<ClaudeSDKUserMessage>;
   abortController?: AbortController;
-  options: Pick<
-    Options,
-    | "cwd"
-    | "permissionMode"
-    | "model"
-    | "resume"
-    | "forkSession"
-    | "mcpServers"
-    | "disallowedTools"
-    | "tools"
-    | "settingSources"
-    | "thinking"
-    | "effort"
-    | "includePartialMessages"
-    | "systemPrompt"
-    | "allowDangerouslySkipPermissions"
-  >;
+  options: Omit<
+    Pick<
+      Options,
+      | "cwd"
+      | "permissionMode"
+      | "model"
+      | "resume"
+      | "forkSession"
+      | "mcpServers"
+      | "disallowedTools"
+      | "tools"
+      | "canUseTool"
+      | "settingSources"
+      | "thinking"
+      | "effort"
+      | "maxTurns"
+      | "includePartialMessages"
+      | "systemPrompt"
+      | "allowDangerouslySkipPermissions"
+    >,
+    "permissionMode"
+  > & {
+    permissionMode: ClaudePermissionMode;
+  };
 };
 
 export type QueryFactory = (input: QueryFactoryInput) => ClaudeQuery;
@@ -45,9 +52,12 @@ export interface RunRequest {
   mcpServers?: Record<string, ClaudeMcpServerConfig>;
   thinking?: Options["thinking"];
   effort?: Options["effort"];
+  maxTurns?: Options["maxTurns"];
   permissionMode?: ClaudePermissionMode;
   disallowedTools?: string[];
   tools?: Options["tools"];
+  canUseTool?: Options["canUseTool"];
+  toolPolicyKey?: string;
   abortController?: AbortController;
   onQueryStart?: (query: ClaudeQuery) => void;
   onMessage?: (message: ClaudeSDKMessage) => void;
@@ -184,12 +194,14 @@ interface WorkerConfig {
   model?: string;
   thinking?: Options["thinking"];
   effort?: Options["effort"];
+  maxTurns?: Options["maxTurns"];
   systemPrompt?: string;
   resumeSessionId?: string;
   forkSession?: boolean;
   mcpServers?: Record<string, ClaudeMcpServerConfig>;
   disallowedTools?: string[];
   tools?: Options["tools"];
+  canUseTool?: Options["canUseTool"];
   settingSources: NonNullable<Options["settingSources"]>;
 }
 
@@ -217,11 +229,13 @@ class ChannelWorker {
         : {}),
       ...(config.model ? { model: config.model } : {}),
       ...(config.effort ? { effort: config.effort } : {}),
+      ...(typeof config.maxTurns === "number" ? { maxTurns: config.maxTurns } : {}),
       ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
       ...(config.resumeSessionId && config.forkSession ? { forkSession: true } : {}),
       ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
       ...(config.disallowedTools ? { disallowedTools: config.disallowedTools } : {}),
       ...(typeof config.tools !== "undefined" ? { tools: config.tools } : {}),
+      ...(config.canUseTool ? { canUseTool: config.canUseTool } : {}),
     };
 
     this.query = this.queryFactory({
@@ -385,7 +399,12 @@ class ChannelWorker {
         this.closed = true;
       }
     } catch (error) {
-      const wrapped = wrapRunnerError(error);
+      let wrapped: Error;
+      try {
+        wrapped = safeWrapRunnerError(error);
+      } catch {
+        wrapped = new Error("Claude query failed.");
+      }
       this.closeError = wrapped;
       this.inputQueue.fail(wrapped);
       this.rejectPending(wrapped);
@@ -490,12 +509,14 @@ export class ClaudeRunner {
             model: request.model,
             thinking: request.thinking,
             effort: request.effort,
+            maxTurns: request.maxTurns,
             systemPrompt: request.systemPrompt,
             resumeSessionId: attempt.includeResume ? request.sessionId : undefined,
             forkSession: attempt.includeResume ? request.forkSession : undefined,
             mcpServers: attempt.includeMcpServers ? mcpServers : undefined,
             disallowedTools: request.disallowedTools,
             tools: attempt.disableTools ? [] : request.tools,
+            canUseTool: request.canUseTool,
             settingSources: attempt.settingSources,
           });
           this.workersByChannel.set(request.channelId, worker);
@@ -518,7 +539,7 @@ export class ClaudeRunner {
         }
         const canRetry = shouldRetryAfterProcessExit(error) && index < attempts.length - 1;
         if (!canRetry) {
-          throw wrapRunnerError(error, formatAttemptContext(failedAttemptLabels));
+          throw safeWrapRunnerError(error, formatAttemptContext(failedAttemptLabels));
         }
       }
     }
@@ -542,12 +563,14 @@ function buildWorkerSignature(input: {
     permissionMode: input.permissionMode,
     thinking: input.request.thinking ?? { type: "adaptive" },
     effort: input.request.effort ?? "",
+    maxTurns: input.request.maxTurns ?? null,
     systemPrompt: buildSystemPrompt(input.request.systemPrompt),
     settingSources: input.settingSources,
     includeMcpServers: input.includeMcpServers,
     mcpServers: input.includeMcpServers ? toStableMcpSignature(input.mcpServers) : "",
     disallowedTools: input.request.disallowedTools ? [...input.request.disallowedTools].sort() : [],
     tools: input.disableTools ? [] : normalizeToolsSignature(input.request.tools),
+    toolPolicyKey: input.request.toolPolicyKey ?? null,
     disableTools: input.disableTools,
     includeResume: input.includeResume,
     resumeSessionId: input.includeResume ? (input.request.sessionId ?? "") : "",
@@ -657,16 +680,16 @@ function buildRunAttempts(input: { hasMcpServers: boolean; hasSessionId: boolean
     includeMcpServers: false,
     includeResume: false,
     disableTools: false,
-    settingSources: ["user"],
-    label: "safe mode (user settings only)",
+    settingSources: [],
+    label: "safe mode (SDK isolation)",
   });
 
   push({
     includeMcpServers: false,
     includeResume: false,
     disableTools: true,
-    settingSources: ["user"],
-    label: "safe mode (user settings only, tools disabled)",
+    settingSources: [],
+    label: "safe mode (SDK isolation, tools disabled)",
   });
 
   return attempts;
@@ -686,31 +709,69 @@ function formatAttemptContext(attemptLabels: string[]): string | undefined {
   return `Attempted recovery modes: ${attemptLabels.join(" -> ")}.`;
 }
 
-function wrapRunnerError(error: unknown, context?: string): Error {
+function safeWrapRunnerError(error: unknown, context?: string): Error {
+  const primary = safePrimaryErrorMessageNoThrow(error);
+  const exitedCode1 = /\bexited with code 1\b/i.test(primary);
+  let base = exitedCode1
+    ? "Claude Code process exited with code 1"
+    : summarizePrimaryErrorNoThrow(primary);
+  if (context) {
+    base = `${context} ${base}`;
+  }
+  const detail = error instanceof Error ? safeExtractProcessErrorDetail(error) : undefined;
+  const message =
+    detail && !/\bexited with code 1\b/i.test(detail) ? `${base} Detail: ${detail}` : base;
   try {
-    if (error instanceof Error) {
-      const normalizedErrorMessage = normalizeErrorMessage(error.message);
-      const base = context ? `${context} ${normalizedErrorMessage}` : normalizedErrorMessage;
-      const detail = extractProcessErrorDetail(error);
-      const message = detail ? `${base} Detail: ${detail}` : base;
-      return new Error(message, { cause: error });
-    }
-    const message = context ? `${context} ${String(error)}` : String(error);
-    return new Error(message);
+    return new Error(clipInline(message, 420));
   } catch {
-    const fallback =
-      error instanceof Error
-        ? context
-          ? `${context} ${error.message}`
-          : error.message
-        : context
-          ? `${context} ${String(error)}`
-          : String(error);
-    return new Error(fallback || "Unknown runner error");
+    return new Error("Runner error");
   }
 }
 
-function safeReadString(source: unknown, key: "message" | "stderr" | "stdout" | "all"): string | undefined {
+function summarizePrimaryErrorNoThrow(primary: string): string {
+  try {
+    const firstLine = primary.split(/\r?\n/, 1)[0] ?? "";
+    const trimmed = firstLine.trim();
+    if (trimmed.length === 0) {
+      return "Runner error";
+    }
+    return trimmed.slice(0, 320);
+  } catch {
+    return "Runner error";
+  }
+}
+
+function safePrimaryErrorMessageNoThrow(error: unknown): string {
+  try {
+    if (error && typeof error === "object") {
+      const message = safeReadString(error, "message");
+      if (message && message.trim().length > 0) {
+        return message.slice(0, 10_000);
+      }
+    }
+  } catch {
+    // Ignore and fall back below.
+  }
+  try {
+    return String(error).slice(0, 10_000);
+  } catch {
+    return "Unknown runner error";
+  }
+}
+
+function safeExtractProcessErrorDetail(error: Error): string | undefined {
+  try {
+    const detail = extractProcessErrorDetail(error);
+    return detail ? detail.slice(0, 500) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeReadString(
+  source: unknown,
+  key: "message" | "stderr" | "stdout" | "all",
+): string | undefined {
   if (!source || typeof source !== "object") {
     return undefined;
   }
@@ -768,12 +829,6 @@ function extractProcessErrorDetail(error: Error): string | undefined {
   }
 
   return summarizeErrorSnippet(snippets.join("\n"));
-}
-
-function normalizeErrorMessage(raw: string): string {
-  const cleaned = splitErrorLines(raw);
-  const primary = cleaned[0] ?? raw.trim();
-  return clipInline(primary || "Unknown error", 320);
 }
 
 function summarizeErrorSnippet(raw: string): string | undefined {

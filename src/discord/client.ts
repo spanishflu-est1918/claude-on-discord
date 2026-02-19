@@ -140,7 +140,12 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`message handler failed: ${detail}`);
       const msg = error instanceof Error ? error.message : "Unknown error";
-      await message.reply(`❌ Failed to process message: ${msg}`);
+      try {
+        await message.reply(`❌ Failed to process message: ${msg}`);
+      } catch (replyError) {
+        const replyDetail = replyError instanceof Error ? replyError.message : String(replyError);
+        console.error(`failed to send message error reply: ${replyDetail}`);
+      }
     }
   });
 
@@ -152,10 +157,15 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
         const detail = error instanceof Error ? error.message : String(error);
         console.error(`button interaction failed: ${detail}`);
         const msg = error instanceof Error ? error.message : "Unknown error";
-        if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
-        } else {
-          await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+        try {
+          if (interaction.deferred || interaction.replied) {
+            await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+          } else {
+            await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+          }
+        } catch (replyError) {
+          const replyDetail = replyError instanceof Error ? replyError.message : String(replyError);
+          console.error(`failed to send button error reply: ${replyDetail}`);
         }
       }
       return;
@@ -168,10 +178,15 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
         const detail = error instanceof Error ? error.message : String(error);
         console.error(`slash command failed: ${detail}`);
         const msg = error instanceof Error ? error.message : "Unknown error";
-        if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
-        } else {
-          await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+        try {
+          if (interaction.deferred || interaction.replied) {
+            await interaction.followUp({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+          } else {
+            await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
+          }
+        } catch (replyError) {
+          const replyDetail = replyError instanceof Error ? replyError.message : String(replyError);
+          console.error(`failed to send slash error reply: ${replyDetail}`);
         }
       }
     }
