@@ -2,6 +2,7 @@ import process from "node:process";
 import { normalizeHeaderMap, verifyGuardianAuthorization } from "./auth";
 import { isLoopbackAddress } from "./config";
 import { getGuardianHeartbeatAgeMs } from "./heartbeat";
+import { resolveGuardianLogTail } from "./log-tail";
 import { renderGuardianMobilePage } from "./mobile-page";
 import { buildGuardianMobileUrls } from "./mobile-urls";
 import { buildGuardianStatusSnapshot } from "./status-snapshot";
@@ -429,11 +430,10 @@ export class GuardianSupervisor {
       });
     }
     if (request.method === "GET" && url.pathname === "/logs") {
-      const tailRaw = url.searchParams.get("tail");
-      const tail = tailRaw ? Number.parseInt(tailRaw, 10) : 200;
-      const safeTail = Number.isFinite(tail)
-        ? Math.min(Math.max(tail, 10), this.config.logTailLimit)
-        : 200;
+      const safeTail = resolveGuardianLogTail({
+        tailRaw: url.searchParams.get("tail"),
+        maxTail: this.config.logTailLimit,
+      });
       return Response.json({
         ok: true,
         logs: this.logs.slice(-safeTail),
