@@ -104,25 +104,14 @@ DISCORD_TOKEN=            # Discord bot token
 APPLICATION_ID=           # Discord application ID
 DISCORD_GUILD_ID=         # Your server ID
 
-# Optional
-DEFAULT_WORKING_DIR=~/www
-DATABASE_PATH=./data/claude-on-discord.sqlite
-DEFAULT_MODEL=sonnet
-AUTO_THREAD_WORKTREE=false
-REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=false
-SESSION_HISTORY_MAX_ITEMS=40
-SESSION_TURN_MAX_CHARS=6000
-ACTIVE_RUN_MAX_AGE_MINUTES=30
-ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS=30
-
-# Guardian mode (optional)
-GUARDIAN_CONTROL_BIND=0.0.0.0
-GUARDIAN_CONTROL_PORT=8787
+# Optional guardian control overrides
 GUARDIAN_CONTROL_SECRET=
-GUARDIAN_CONTROL_SECRET_FILE=./data/guardian-control.secret
+GUARDIAN_CONTROL_BIND=0.0.0.0
 ```
 
-Full reference: [.env.example](.env.example)
+Minimal starter template: [.env.example](.env.example)
+
+Advanced overrides are still supported (worktree behavior, session limits, watchdog tuning, restart backoff, auth skew/nonce windows), but intentionally omitted from the default template to reduce setup friction.
 
 ### Guardian mode (default `start`, recommended for mobile reliability)
 
