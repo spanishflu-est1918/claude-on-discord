@@ -476,11 +476,9 @@ describe("startApp tool stream integration", () => {
         ...record.edits.map((edit) => readTextDisplayContent(edit)),
       ]);
       expect(textDisplays.some((text) => text.includes("Task"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("Timeline"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("task started:"))).toBeTrue();
-      expect(textDisplays.some((text) => text.includes("completed:"))).toBeTrue();
       // Human-readable Task display line: "🤖 Explore: Inspect src for TODOs..."
       expect(textDisplays.some((text) => text.includes("🤖 Explore:"))).toBeTrue();
+      // Timeline is tracked internally but no longer rendered in the card UI (removed in f0207b4)
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });
