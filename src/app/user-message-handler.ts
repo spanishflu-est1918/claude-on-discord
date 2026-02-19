@@ -398,6 +398,12 @@ export function createUserMessageHandler(input: {
           await addReaction(message, runawayStopReason ? "⚠️" : "❌");
           await setThreadState(message.channel, runawayStopReason ? "⚠️" : "❌");
         } finally {
+          // Release queue slot immediately so the next user message isn't
+          // held behind file cleanup / stopController teardown.  The outer
+          // finally is kept as a safety net for unexpected early exits.
+          if (input.pendingMessageRunsByChannel.get(channelId) === run) {
+            input.pendingMessageRunsByChannel.delete(channelId);
+          }
           liveToolMessages.stopPolling();
           await cleanupFiles(stagedAttachments.stagedPaths);
           input.stopController.clear(channelId);
@@ -408,6 +414,8 @@ export function createUserMessageHandler(input: {
     try {
       await run;
     } finally {
+      // Safety net: inner finally should have already deleted this, but
+      // guard against any unexpected early exit from the .then() callback.
       if (input.pendingMessageRunsByChannel.get(channelId) === run) {
         input.pendingMessageRunsByChannel.delete(channelId);
       }
