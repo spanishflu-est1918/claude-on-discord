@@ -742,7 +742,7 @@ describe("ClaudeRunner", () => {
 
       expect(result.text).toBe("Recovered with safe mode");
       expect(calls).toHaveLength(5);
-      expect(calls[4]?.options.settingSources).toEqual([]);
+      expect(calls[4]?.options.settingSources).toEqual(["user", "project"]);
       expect(calls[4]?.options.mcpServers).toBeUndefined();
       expect(calls[4]?.options.resume).toBeUndefined();
     } finally {

@@ -71,7 +71,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: true,
     includeResume: true,
     disableTools: false,
-    settingSources: [],
+    settingSources: ["user", "project"],
     label: "default",
   });
 
@@ -80,7 +80,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: true,
       disableTools: false,
-      settingSources: [],
+      settingSources: ["user", "project"],
       label: "without MCP",
     });
   }
@@ -90,7 +90,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: true,
       includeResume: false,
       disableTools: false,
-      settingSources: [],
+      settingSources: ["user", "project"],
       label: "without session resume",
     });
   }
@@ -100,7 +100,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: false,
       disableTools: false,
-      settingSources: [],
+      settingSources: ["user", "project"],
       label: "without MCP and session resume",
     });
   }
@@ -109,7 +109,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: false,
     includeResume: false,
     disableTools: false,
-    settingSources: [],
+    settingSources: ["user", "project"],
     label: "safe mode (SDK isolation)",
   });
 
@@ -117,7 +117,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: false,
     includeResume: false,
     disableTools: true,
-    settingSources: [],
+    settingSources: ["user", "project"],
     label: "safe mode (SDK isolation, tools disabled)",
   });
 
