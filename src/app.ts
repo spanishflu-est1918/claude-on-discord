@@ -1999,7 +1999,7 @@ function buildSingleLiveToolMessage(
   if (input.expanded && entry.inputDetails) {
     lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputDetails, 1900)}\n\`\`\``);
   } else if (input.expanded && entry.inputPreview) {
-    lines.push("", "**Input**", `\`${clipText(entry.inputPreview, 700)}\``);
+    lines.push("", "**Input**", `\`\`\`json\n${clipRawText(entry.inputPreview, 700)}\n\`\`\``);
   }
   if (input.expanded && entry.timeline.length > 0) {
     lines.push("", "**Timeline**", ...entry.timeline.slice(-6).map((item) => `- ${item}`));
