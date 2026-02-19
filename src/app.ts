@@ -457,6 +457,53 @@ function canCreateForkThread(channel: unknown): channel is ForkableChannel {
   return typeof threads?.create === "function";
 }
 
+type RenameableThreadChannel = {
+  isThread: () => boolean;
+  edit: (options: { name: string }) => Promise<unknown>;
+  name: string;
+};
+
+function canRenameThread(channel: unknown): channel is RenameableThreadChannel {
+  return (
+    typeof channel === "object" &&
+    channel !== null &&
+    "isThread" in channel &&
+    typeof (channel as { isThread?: unknown }).isThread === "function" &&
+    (channel as { isThread: () => boolean }).isThread() &&
+    "edit" in channel &&
+    typeof (channel as { edit?: unknown }).edit === "function" &&
+    "name" in channel &&
+    typeof (channel as { name?: unknown }).name === "string"
+  );
+}
+
+const THREAD_STATE_PREFIXES = ["⚠️", "✅", "❌"] as const;
+type ThreadState = (typeof THREAD_STATE_PREFIXES)[number];
+
+function stripThreadStatePrefix(name: string): string {
+  for (const prefix of THREAD_STATE_PREFIXES) {
+    if (name.startsWith(`${prefix} `)) {
+      return name.slice(prefix.length + 1);
+    }
+    if (name.startsWith(prefix)) {
+      return name.slice(prefix.length);
+    }
+  }
+  return name;
+}
+
+async function setThreadState(channel: unknown, state: ThreadState | null): Promise<void> {
+  if (!canRenameThread(channel)) return;
+  const baseName = stripThreadStatePrefix(channel.name);
+  const newName = state ? `${state} ${baseName}` : baseName;
+  if (newName === channel.name) return;
+  try {
+    await channel.edit({ name: newName.slice(0, 100) });
+  } catch {
+    // Thread renaming is best-effort — ignore permission or rate-limit failures.
+  }
+}
+
 function buildForkThreadTitle(input: { requested: string | null; channelName?: string }): string {
   const requested = input.requested?.trim();
   if (requested) {
@@ -4231,6 +4278,7 @@ export async function startApp(
             liveToolExpandStateByChannel.set(channelId, new Map());
 
             await addReaction(message, "🧠");
+            await setThreadState(message.channel, null); // strip any stale state prefix — agent is working
             const status = await discordDispatch.enqueue(`channel:${channelId}`, async () => {
               return await message.reply({
                 content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
@@ -4530,6 +4578,7 @@ export async function startApp(
 
               await removeReaction(message, "🧠");
               await addReaction(message, "✅");
+              await setThreadState(message.channel, "⚠️"); // agent responded — needs your attention
             } catch (error) {
               if (streamFlushTimer) {
                 clearTimeout(streamFlushTimer);
@@ -4556,6 +4605,7 @@ export async function startApp(
               });
               await removeReaction(message, "🧠");
               await addReaction(message, "❌");
+              await setThreadState(message.channel, "❌"); // agent errored — needs attention
             } finally {
               stopSpinner();
               stopToolRenderTimer();
