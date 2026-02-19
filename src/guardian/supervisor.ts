@@ -7,6 +7,7 @@ import {
   listLanIpv4Addresses,
 } from "./config";
 import { renderGuardianMobilePage } from "./mobile-page";
+import { buildGuardianStatusSnapshot } from "./status-snapshot";
 import { consumeStreamLines } from "./stream-lines";
 import type { GuardianConfig, LogEntry, WorkerExitInfo } from "./types";
 
@@ -342,24 +343,19 @@ export class GuardianSupervisor {
   private statusSnapshot() {
     const nowMs = Date.now();
     const heartbeatAgeMs = this.getHeartbeatAgeMs(nowMs);
-    const cooldownRemainingMs = this.cooldownUntilMs > nowMs ? this.cooldownUntilMs - nowMs : 0;
-    return {
-      ok: true,
+    return buildGuardianStatusSnapshot({
+      nowMs,
+      startedAtMs: this.startedAtMs,
       guardianPid: process.pid,
-      uptimeMs: nowMs - this.startedAtMs,
-      worker: {
-        running: Boolean(this.child),
-        pid: this.child?.pid ?? null,
-        startedAtMs: this.childStartedAtMs,
-        heartbeatAgeMs,
-        staleHeartbeat:
-          typeof heartbeatAgeMs === "number" && heartbeatAgeMs > this.config.heartbeatTimeoutMs,
-        lastExit: this.lastExit,
-        manualStop: this.manualStop,
-        cooldownRemainingMs,
-        recentRestartCount: this.restartHistoryMs.length,
-      },
-    };
+      childPid: this.child?.pid ?? null,
+      childStartedAtMs: this.childStartedAtMs,
+      heartbeatAgeMs,
+      heartbeatTimeoutMs: this.config.heartbeatTimeoutMs,
+      lastExit: this.lastExit,
+      manualStop: this.manualStop,
+      cooldownUntilMs: this.cooldownUntilMs,
+      restartHistoryCount: this.restartHistoryMs.length,
+    });
   }
 
   private async handleRequest(request: Request): Promise<Response> {

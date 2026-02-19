@@ -1,12 +1,8 @@
 import { escapeHtml } from "./config";
+import type { GuardianStatusSnapshot } from "./status-snapshot";
 
 export function renderGuardianMobilePage(input: {
-  status: {
-    worker: {
-      running: boolean;
-      heartbeatAgeMs: number | null;
-    };
-  };
+  status: GuardianStatusSnapshot;
   token: string;
 }): string {
   const tokenParam = encodeURIComponent(input.token);
