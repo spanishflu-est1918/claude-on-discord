@@ -5,6 +5,7 @@ import type { StopController } from "../claude/stop";
 import type { Repository } from "../db/repository";
 import {
   parseDiffViewCustomId,
+  parseMergeCleanupCustomId,
   parseProjectSwitchCustomId,
   parseThreadCleanupCustomId,
   parseThreadWorktreeChoiceCustomId,
@@ -13,6 +14,7 @@ import { handleBasicButtonInteractions, type QueueNoticeInfo } from "./button-in
 import type { DiffContext } from "./diff-worktree";
 import type { LiveToolTrace } from "./live-tools";
 import { handleDiffViewButton } from "./custom-buttons/diff-view-button";
+import { handleMergeCleanupButton } from "./custom-buttons/merge-cleanup-button";
 import { handleProjectSwitchButton } from "./custom-buttons/project-switch-button";
 import { handleThreadCleanupButton } from "./custom-buttons/thread-cleanup-button";
 import { handleThreadWorktreeChoiceButton } from "./custom-buttons/thread-worktree-choice-button";
@@ -62,6 +64,17 @@ export async function handleCustomButtonInteraction(input: {
       syncChannelTopic: input.syncChannelTopic,
       worktreeBootstrap: input.worktreeBootstrap,
       worktreeBootstrapCommand: input.worktreeBootstrapCommand,
+    });
+  }
+
+  const mergeCleanup = parseMergeCleanupCustomId(input.interaction.customId);
+  if (mergeCleanup) {
+    return await handleMergeCleanupButton({
+      interaction: input.interaction,
+      parsed: mergeCleanup,
+      repository: input.repository,
+      runCommand: input.runCommand,
+      detectBranchName: input.detectBranchName,
     });
   }
 

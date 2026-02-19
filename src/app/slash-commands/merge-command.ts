@@ -3,6 +3,7 @@ import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { ClaudeRunner } from "../../claude/runner";
 import type { SessionManager } from "../../claude/session";
 import type { Repository } from "../../db/repository";
+import { buildMergeCleanupButtons } from "../../discord/buttons";
 import { parseThreadBranchMeta } from "../../discord/thread-branch";
 import type { saveThreadBranchMeta } from "../thread-lifecycle";
 
@@ -170,42 +171,37 @@ export async function handleMergeCommand(input: {
         }
       }
 
-      // Phase 4: Cleanup — remove worktree and branch
-      if (hasWorktree && mergeMeta.worktreePath) {
-        await input.runCommand(
-          ["git", "worktree", "remove", mergeMeta.worktreePath, "--force"],
-          parentWorkingDir,
-        );
-        await input.runCommand(["git", "worktree", "prune"], parentWorkingDir);
-        if (forkBranch) {
-          // -d is safe here since we just merged it
-          await input.runCommand(["git", "branch", "-d", forkBranch], parentWorkingDir);
+      if (!hasWorktree) {
+        // No worktree — semantic merge only, archive immediately
+        const forkChannel = input.interaction.channel;
+        if (
+          forkChannel &&
+          typeof (forkChannel as { setArchived?: unknown }).setArchived === "function"
+        ) {
+          await (forkChannel as { setArchived: (v: boolean) => Promise<unknown> }).setArchived(
+            true,
+          );
         }
+        input.saveThreadBranchMeta(input.repository, {
+          ...mergeMeta,
+          lifecycleState: "archived",
+          archivedAt: Date.now(),
+          cleanupState: "none",
+        });
+        await input.interaction.editReply(
+          `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+        );
+      } else {
+        // Worktree merge — prompt user to clean up or keep going
+        const gitNote = forkBranch ? ` \`${forkBranch}\` → \`${baseBranch}\`.` : "";
+        await input.interaction.editReply(
+          `✅ Merged into <#${mergeMeta.parentChannelId}>.${gitNote}`,
+        );
+        await input.interaction.followUp({
+          content: "Remove the worktree and branch, or keep going?",
+          components: buildMergeCleanupButtons(input.channelId),
+        });
       }
-
-      const forkChannel = input.interaction.channel;
-      if (
-        forkChannel &&
-        typeof (forkChannel as { setArchived?: unknown }).setArchived === "function"
-      ) {
-        await (forkChannel as { setArchived: (v: boolean) => Promise<unknown> }).setArchived(true);
-      }
-
-      input.saveThreadBranchMeta(input.repository, {
-        ...mergeMeta,
-        lifecycleState: "archived",
-        archivedAt: Date.now(),
-        cleanupState: hasWorktree ? "removed" : "none",
-        worktreePath: hasWorktree ? undefined : mergeMeta.worktreePath,
-      });
-
-      const gitNote =
-        hasWorktree && forkBranch
-          ? ` \`${forkBranch}\` → \`${baseBranch}\`, worktree cleaned up.`
-          : "";
-      await input.interaction.editReply(
-        `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.${gitNote}`,
-      );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await input.interaction.editReply(`❌ Merge failed: ${detail}`);

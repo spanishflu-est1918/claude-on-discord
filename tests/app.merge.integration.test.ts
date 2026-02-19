@@ -156,6 +156,7 @@ describe("startApp merge slash command", () => {
         editReply: async (payload: string) => {
           mergeReply = payload;
         },
+        followUp: async () => {},
         reply: async () => {},
       });
 
@@ -293,6 +294,7 @@ describe("startApp merge slash command", () => {
         },
       };
 
+      let followUpPayload: unknown;
       await capturedSlashHandler({
         commandName: "merge",
         channelId: "fork-wt",
@@ -315,28 +317,32 @@ describe("startApp merge slash command", () => {
         editReply: async (payload: string) => {
           mergeReply = payload;
         },
+        followUp: async (payload: unknown) => {
+          followUpPayload = payload;
+        },
         reply: async () => {},
       });
 
       // Runner was called at least twice: auto-commit message + handoff summary
       expect(runnerCallPrompts.length).toBeGreaterThanOrEqual(2);
 
-      // fork-branch should be merged into main — auto-committed changes should appear in main log
-      // (worktreeDir is gone by now since cleanup ran, so we check mainRepoDir)
+      // fork-branch should be merged into main — auto-committed changes appear in main log
       const mainLog = await runCommand(["git", "log", "--oneline"], mainRepoDir).catch(() => "");
       expect(mainLog).toContain("feat: add new feature");
 
-      // Worktree dir should be gone (Phase 4 cleanup)
-      expect(existsSync(worktreeDir)).toBeFalse();
+      // Worktree dir still exists — cleanup is button-driven, not automatic
+      expect(existsSync(worktreeDir)).toBeTrue();
 
-      // Branch should be deleted
-      const branches = await runCommand(["git", "branch"], mainRepoDir).catch(() => "");
-      expect(branches).not.toContain("fork-branch");
+      // Thread NOT archived yet — user hasn't clicked "Remove"
+      expect(archived).toBeFalse();
 
-      // Thread archived, reply is success
-      expect(archived).toBeTrue();
+      // Success reply has merge info
       expect(mergeReply).toContain("Merged into <#parent-wt>");
       expect(mergeReply).toContain("fork-branch");
+
+      // followUp sent with cleanup buttons
+      expect(followUpPayload).toBeTruthy();
+      expect((followUpPayload as { content?: string }).content).toContain("worktree");
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });
@@ -460,6 +466,7 @@ describe("startApp merge slash command", () => {
         editReply: async (payload: string) => {
           mergeReply = payload;
         },
+        followUp: async () => {},
         reply: async () => {},
       });
 
@@ -538,6 +545,7 @@ describe("startApp merge slash command", () => {
         editReply: async (payload: string) => {
           mergeReply = payload;
         },
+        followUp: async () => {},
         reply: async () => {},
       });
 
