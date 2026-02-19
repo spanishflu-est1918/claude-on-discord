@@ -3,6 +3,7 @@ import path from "node:path";
 import { MessageFlags, type ButtonInteraction } from "discord.js";
 import type { Repository } from "../../db/repository";
 import { buildThreadCleanupButtons } from "../../discord/buttons";
+import { runHook } from "../../discord/hook-runner";
 import { parseThreadBranchMeta } from "../../discord/thread-branch";
 import {
   resolveThreadParentWorkingDir,
@@ -90,6 +91,15 @@ export async function handleThreadCleanupButton(input: {
     ...rest,
     worktreeMode: "inherited",
     cleanupState: "removed",
+  });
+  await runHook({
+    hookName: "worktree_removed",
+    workingDir: parentWorkingDir,
+    env: {
+      COD_THREAD_ID: channelId,
+      COD_THREAD_SLUG: meta.name,
+      COD_WORKTREE_PATH: worktreePath,
+    },
   });
 
   const pruneSummary =

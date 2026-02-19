@@ -1,4 +1,5 @@
 import { buildThreadWorktreeChoiceButtons } from "../discord/buttons";
+import { runHook } from "../discord/hook-runner";
 import { parseThreadBranchMeta } from "../discord/thread-branch";
 import { runWorktreeBootstrap } from "../discord/worktree-bootstrap";
 import type { SessionManager } from "../claude/session";
@@ -136,6 +137,16 @@ export async function maybeInheritThreadContext(input: {
             `Thread worktree setup failed for ${input.channelId}: ${setup.output || "(no output)"}`,
           );
         }
+        await runHook({
+          hookName: "worktree_created",
+          workingDir: provisioned.worktreePath,
+          env: {
+            COD_THREAD_ID: input.channelId,
+            COD_THREAD_SLUG: threadName,
+            COD_WORKTREE_PATH: provisioned.worktreePath,
+            ...(parentChannelId ? { COD_PARENT_THREAD_ID: parentChannelId } : {}),
+          },
+        });
       }
       input.sessions.setWorkingDir(input.channelId, provisioned.worktreePath);
     }
@@ -152,6 +163,16 @@ export async function maybeInheritThreadContext(input: {
       ...(forkSourceSessionId ? { forkSourceSessionId } : {}),
       lifecycleState: "active",
       cleanupState: "none",
+    });
+    await runHook({
+      hookName: "thread_created",
+      workingDir: provisioned?.worktreePath ?? parent.workingDir,
+      env: {
+        COD_THREAD_ID: input.channelId,
+        COD_THREAD_SLUG: threadName,
+        ...(provisioned ? { COD_WORKTREE_PATH: provisioned.worktreePath } : {}),
+        ...(parentChannelId ? { COD_PARENT_THREAD_ID: parentChannelId } : {}),
+      },
     });
     return;
   }

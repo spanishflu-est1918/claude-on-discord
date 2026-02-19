@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { runHook } from "../../discord/hook-runner";
 import type { ClaudeRunner } from "../../claude/runner";
 import type { SessionManager } from "../../claude/session";
 import type { Repository } from "../../db/repository";
@@ -127,9 +128,33 @@ export async function handleMergeCommand(input: {
   const baseBranch = (await input.detectBranchName(rootWorkingDir)) ?? "main";
 
   if (targetBranch) {
+    const preMerge = await runHook({
+      hookName: "pre_merge",
+      workingDir: rootWorkingDir,
+      env: {
+        COD_THREAD_ID: input.channelId,
+        COD_BRANCH_NAME: targetBranch,
+      },
+    });
+    if (preMerge.ran && preMerge.exitCode !== 0) {
+      const detail = preMerge.output ? `\n\`\`\`\n${preMerge.output}\n\`\`\`` : "";
+      await input.interaction.editReply(
+        `❌ Merge aborted: \`pre_merge\` hook exited ${preMerge.exitCode}.${detail}`,
+      );
+      return;
+    }
+
     const result = await input.runCommand(["git", "merge", targetBranch, "--no-edit"], rootWorkingDir);
     const mergeSummary = input.summarizeGitMergeOutput(result.output);
     if (result.exitCode === 0) {
+      await runHook({
+        hookName: "post_merge",
+        workingDir: rootWorkingDir,
+        env: {
+          COD_THREAD_ID: input.channelId,
+          COD_BRANCH_NAME: targetBranch,
+        },
+      });
       await input.interaction.editReply(
         `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
       );
