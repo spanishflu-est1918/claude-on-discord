@@ -1,9 +1,7 @@
 import process from "node:process";
-import { normalizeHeaderMap, verifyGuardianAuthorization } from "./auth";
+import { handleGuardianControlRequest } from "./control-api";
 import { isLoopbackAddress } from "./config";
 import { getGuardianHeartbeatAgeMs } from "./heartbeat";
-import { resolveGuardianLogTail } from "./log-tail";
-import { renderGuardianMobilePage } from "./mobile-page";
 import { buildGuardianMobileUrls } from "./mobile-urls";
 import { buildGuardianStatusSnapshot } from "./status-snapshot";
 import { consumeStreamLines } from "./stream-lines";
@@ -343,110 +341,21 @@ export class GuardianSupervisor {
   }
 
   private async handleRequest(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/healthz") {
-      return Response.json({
-        ok: true,
-        service: "guardian",
-        ts: Date.now(),
-      });
-    }
-
-    const queryToken = url.searchParams.get("token") ?? url.searchParams.get("k");
-    const body = request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
-    const headers = normalizeHeaderMap(request.headers);
-    const auth = verifyGuardianAuthorization({
-      method: request.method,
-      path: url.pathname,
-      body,
-      headers,
-      queryToken,
-      secret: this.config.controlSecret,
-      nowMs: Date.now(),
+    return await handleGuardianControlRequest({
+      request,
+      config: this.config,
       nonceExpirations: this.nonceExpirations,
-      maxSkewMs: this.config.signatureMaxSkewMs,
-      nonceTtlMs: this.config.signatureNonceTtlMs,
+      logs: this.logs,
+      statusSnapshot: () => this.statusSnapshot(),
+      restartWorker: async () => await this.restartWorker("control API"),
+      stopWorker: async () => {
+        this.manualStop = true;
+        await this.stopWorker("control API", { manual: true });
+      },
+      startWorker: async () => {
+        this.manualStop = false;
+        return await this.startWorker("control API", { force: true });
+      },
     });
-    if (!auth.ok) {
-      return Response.json(
-        {
-          ok: false,
-          error: auth.reason,
-        },
-        {
-          status: 401,
-        },
-      );
-    }
-    if (request.method === "GET" && url.pathname === "/mobile") {
-      return new Response(
-        renderGuardianMobilePage({
-          status: this.statusSnapshot(),
-          token: this.config.controlSecret,
-        }),
-        {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-          },
-        },
-      );
-    }
-    const isFormPost = request.headers
-      .get("content-type")
-      ?.includes("application/x-www-form-urlencoded");
-    const shouldRedirectToMobile = request.method === "POST" && isFormPost && Boolean(queryToken);
-    const mobileLocation = `/mobile?token=${encodeURIComponent(queryToken ?? "")}`;
-
-    if (request.method === "GET" && url.pathname === "/status") {
-      return Response.json(this.statusSnapshot());
-    }
-    if (request.method === "POST" && url.pathname === "/restart") {
-      const restarted = await this.restartWorker("control API");
-      if (shouldRedirectToMobile) {
-        return Response.redirect(mobileLocation, 303);
-      }
-      return Response.json({
-        ...this.statusSnapshot(),
-        restarted,
-      });
-    }
-    if (request.method === "POST" && url.pathname === "/stop") {
-      this.manualStop = true;
-      await this.stopWorker("control API", { manual: true });
-      if (shouldRedirectToMobile) {
-        return Response.redirect(mobileLocation, 303);
-      }
-      return Response.json(this.statusSnapshot());
-    }
-    if (request.method === "POST" && url.pathname === "/start") {
-      this.manualStop = false;
-      const started = await this.startWorker("control API", { force: true });
-      if (shouldRedirectToMobile) {
-        return Response.redirect(mobileLocation, 303);
-      }
-      return Response.json({
-        ...this.statusSnapshot(),
-        started,
-      });
-    }
-    if (request.method === "GET" && url.pathname === "/logs") {
-      const safeTail = resolveGuardianLogTail({
-        tailRaw: url.searchParams.get("tail"),
-        maxTail: this.config.logTailLimit,
-      });
-      return Response.json({
-        ok: true,
-        logs: this.logs.slice(-safeTail),
-      });
-    }
-    return Response.json(
-      {
-        ok: false,
-        error: "Not found.",
-      },
-      {
-        status: 404,
-      },
-    );
   }
 }
