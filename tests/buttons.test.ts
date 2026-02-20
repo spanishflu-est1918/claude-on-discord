@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ButtonStyle } from "discord.js";
 import {
   buildDiffViewButtons,
+  buildMergeCleanupButtons,
   buildProjectSwitchButtons,
   buildQueueNoticeButtons,
   buildStopButtons,
@@ -9,6 +10,7 @@ import {
   buildThreadWorktreeChoiceButtons,
   buildToolViewButtons,
   parseDiffViewCustomId,
+  parseMergeCleanupCustomId,
   parseProjectSwitchCustomId,
   parseQueueNoticeCustomId,
   parseRunControlCustomId,
@@ -150,6 +152,8 @@ describe("discord buttons", () => {
     expect(parseThreadWorktreeChoiceCustomId("thread:worktree:create:")).toBeNull();
     expect(parseThreadCleanupCustomId("thread:cleanup:keep:")).toBeNull();
     expect(parseThreadCleanupCustomId("thread:cleanup:remove:")).toBeNull();
+    expect(parseMergeCleanupCustomId("merge:cleanup:keep:")).toBeNull();
+    expect(parseMergeCleanupCustomId("merge:cleanup:remove:")).toBeNull();
     expect(parseDiffViewCustomId("diff:summary:")).toBeNull();
     expect(parseDiffViewCustomId("diff:files:")).toBeNull();
     expect(parseDiffViewCustomId("diff:stat:")).toBeNull();
@@ -246,6 +250,35 @@ describe("discord buttons", () => {
     expect(parseDiffViewCustomId("diff:patch:req-77")).toEqual({
       action: "patch",
       requestId: "req-77",
+    });
+  });
+
+  test("builds and parses merge cleanup buttons", () => {
+    const rows = buildMergeCleanupButtons("thread-merge-1");
+    expect(rows).toHaveLength(1);
+
+    const components = rows[0]?.components ?? [];
+    expect(components).toHaveLength(2);
+
+    const keep = components[0]?.toJSON();
+    const remove = components[1]?.toJSON();
+    const keepId = keep && "custom_id" in keep ? keep.custom_id : undefined;
+    const removeId = remove && "custom_id" in remove ? remove.custom_id : undefined;
+    const keepStyle = keep && "style" in keep ? keep.style : undefined;
+    const removeStyle = remove && "style" in remove ? remove.style : undefined;
+
+    expect(keepId).toBe("merge:cleanup:keep:thread-merge-1");
+    expect(removeId).toBe("merge:cleanup:remove:thread-merge-1");
+    expect(keepStyle).toBe(ButtonStyle.Secondary);
+    expect(removeStyle).toBe(ButtonStyle.Danger);
+
+    expect(parseMergeCleanupCustomId("merge:cleanup:keep:thread-merge-1")).toEqual({
+      action: "keep",
+      channelId: "thread-merge-1",
+    });
+    expect(parseMergeCleanupCustomId("merge:cleanup:remove:thread-merge-1")).toEqual({
+      action: "remove",
+      channelId: "thread-merge-1",
     });
   });
 });

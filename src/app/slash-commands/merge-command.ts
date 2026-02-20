@@ -4,6 +4,7 @@ import type { ClaudeRunner } from "../../claude/runner";
 import type { SessionManager } from "../../claude/session";
 import type { Repository } from "../../db/repository";
 import { buildMergeCleanupButtons } from "../../discord/buttons";
+import { runHook } from "../../discord/hook-runner";
 import { parseThreadBranchMeta } from "../../discord/thread-branch";
 import type { saveThreadBranchMeta } from "../thread-lifecycle";
 
@@ -16,6 +17,70 @@ type AheadBehind = {
   ahead: number;
   behind: number;
 };
+
+function resolveAutoCommitMessage(raw: string): string {
+  const firstNonEmptyLine = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return firstNonEmptyLine ?? "chore: auto-commit before merge";
+}
+
+function formatHookFailureMessage(value: { hookName: string; detail: string }): string {
+  return `❌ Merge aborted: failed to run \`${value.hookName}\` hook (${value.detail}).`;
+}
+
+async function runPreMergeHook(input: {
+  workingDir: string;
+  channelId: string;
+  branchName: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const preMerge = await runHook({
+      hookName: "pre_merge",
+      workingDir: input.workingDir,
+      env: {
+        COD_THREAD_ID: input.channelId,
+        COD_BRANCH_NAME: input.branchName,
+      },
+    });
+    if (preMerge.ran && preMerge.exitCode !== 0) {
+      const detail = preMerge.output ? `\n\`\`\`\n${preMerge.output}\n\`\`\`` : "";
+      return {
+        ok: false,
+        message: `❌ Merge aborted: \`pre_merge\` hook exited ${preMerge.exitCode}.${detail}`,
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: formatHookFailureMessage({ hookName: "pre_merge", detail }) };
+  }
+}
+
+async function runPostMergeHook(input: {
+  workingDir: string;
+  channelId: string;
+  branchName: string;
+}): Promise<string | null> {
+  try {
+    const postMerge = await runHook({
+      hookName: "post_merge",
+      workingDir: input.workingDir,
+      env: {
+        COD_THREAD_ID: input.channelId,
+        COD_BRANCH_NAME: input.branchName,
+      },
+    });
+    if (postMerge.ran && postMerge.exitCode !== 0) {
+      return `⚠️ \`post_merge\` hook exited ${postMerge.exitCode}.`;
+    }
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `⚠️ \`post_merge\` hook failed: ${detail}`;
+  }
+}
 
 export async function handleMergeCommand(input: {
   interaction: ChatInputCommandInteraction;
@@ -57,15 +122,18 @@ export async function handleMergeCommand(input: {
 
     try {
       const forkWorkingDir = mergeState.channel.workingDir;
-      const hasWorktree = !!mergeMeta.worktreePath;
+      const parentState = input.sessions.getState(mergeMeta.parentChannelId, input.guildId);
+      let parentWorkingDir = parentState.channel.workingDir || forkWorkingDir;
+      const hasWorktree =
+        Boolean(mergeMeta.worktreePath) ||
+        mergeMeta.worktreeMode === "worktree" ||
+        parentWorkingDir !== forkWorkingDir;
 
       let baseBranch = "main";
       let forkBranch: string | null = null;
-      let parentWorkingDir = forkWorkingDir;
+      let postMergeWarning: string | null = null;
 
       if (hasWorktree) {
-        const parentState = input.sessions.getState(mergeMeta.parentChannelId, input.guildId);
-        parentWorkingDir = parentState.channel.workingDir || forkWorkingDir;
         baseBranch = (await input.detectBranchName(parentWorkingDir)) ?? "main";
         forkBranch = await input.detectBranchName(forkWorkingDir);
 
@@ -81,10 +149,24 @@ export async function handleMergeCommand(input: {
             model: mergeState.channel.model,
             maxTurns: 1,
           });
-          const commitMsg =
-            commitMsgResult.text.trim().split("\n")[0]?.trim() ?? "chore: auto-commit before merge";
-          await input.runCommand(["git", "add", "-A"], forkWorkingDir);
-          await input.runCommand(["git", "commit", "-m", commitMsg], forkWorkingDir);
+          const commitMsg = resolveAutoCommitMessage(commitMsgResult.text);
+          const addResult = await input.runCommand(["git", "add", "-A"], forkWorkingDir);
+          if (addResult.exitCode !== 0) {
+            await input.interaction.editReply(
+              `❌ Failed to stage changes before merge.\n\`\`\`\n${addResult.output || "(no output)"}\n\`\`\``,
+            );
+            return;
+          }
+          const commitResult = await input.runCommand(
+            ["git", "commit", "-m", commitMsg],
+            forkWorkingDir,
+          );
+          if (commitResult.exitCode !== 0) {
+            await input.interaction.editReply(
+              `❌ Failed to auto-commit changes before merge.\n\`\`\`\n${commitResult.output || "(no output)"}\n\`\`\``,
+            );
+            return;
+          }
         }
 
         // Phase 2: Merge main → worktree (resolve conflicts here, not on main)
@@ -119,6 +201,15 @@ export async function handleMergeCommand(input: {
           await input.interaction.editReply("❌ Could not detect fork branch name.");
           return;
         }
+        const preMerge = await runPreMergeHook({
+          workingDir: parentWorkingDir,
+          channelId: input.channelId,
+          branchName: forkBranch,
+        });
+        if (!preMerge.ok) {
+          await input.interaction.editReply(preMerge.message);
+          return;
+        }
         await input.interaction.editReply(
           `⏳ Merging \`${forkBranch}\` → \`${baseBranch}\`...`,
         );
@@ -133,6 +224,11 @@ export async function handleMergeCommand(input: {
           );
           return;
         }
+        postMergeWarning = await runPostMergeHook({
+          workingDir: parentWorkingDir,
+          channelId: input.channelId,
+          branchName: forkBranch,
+        });
       }
 
       // Generate semantic handoff summary
@@ -191,13 +287,19 @@ export async function handleMergeCommand(input: {
           cleanupState: "none",
         });
         await input.interaction.editReply(
-          `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+          [
+            `✅ Merged into <#${mergeMeta.parentChannelId}>. Fork thread archived.`,
+            ...(postMergeWarning ? [postMergeWarning] : []),
+          ].join("\n"),
         );
       } else {
         // Worktree merge — prompt user to clean up or keep going
         const gitNote = forkBranch ? ` \`${forkBranch}\` → \`${baseBranch}\`.` : "";
         await input.interaction.editReply(
-          `✅ Merged into <#${mergeMeta.parentChannelId}>.${gitNote}`,
+          [
+            `✅ Merged into <#${mergeMeta.parentChannelId}>.${gitNote}`,
+            ...(postMergeWarning ? [postMergeWarning] : []),
+          ].join("\n"),
         );
         await input.interaction.followUp({
           content: "Remove the worktree and branch, or keep going?",
@@ -225,14 +327,30 @@ export async function handleMergeCommand(input: {
   const baseBranch = (await input.detectBranchName(rootWorkingDir)) ?? "main";
 
   if (targetBranch) {
+    const preMerge = await runPreMergeHook({
+      workingDir: rootWorkingDir,
+      channelId: input.channelId,
+      branchName: targetBranch,
+    });
+    if (!preMerge.ok) {
+      await input.interaction.editReply(preMerge.message);
+      return;
+    }
     const result = await input.runCommand(
       ["git", "merge", targetBranch, "--no-edit"],
       rootWorkingDir,
     );
     const mergeSummary = input.summarizeGitMergeOutput(result.output);
     if (result.exitCode === 0) {
+      const postMergeWarning = await runPostMergeHook({
+        workingDir: rootWorkingDir,
+        channelId: input.channelId,
+        branchName: targetBranch,
+      });
       await input.interaction.editReply(
-        `✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.\n${mergeSummary}`,
+        [`✅ Merged \`${targetBranch}\` into \`${baseBranch}\`.`, mergeSummary, postMergeWarning]
+          .filter(Boolean)
+          .join("\n"),
       );
       return;
     }

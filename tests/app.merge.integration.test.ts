@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Client } from "discord.js";
@@ -552,6 +552,291 @@ describe("startApp merge slash command", () => {
       expect(mergeReply).toContain("Merged `feature`");
       expect(mergeReply).not.toContain("```");
       expect(mergeReply.length).toBeLessThan(500);
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("parent merge runs pre_merge and post_merge hooks", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-merge-hooks-"));
+    const dbPath = path.join(root, "state.sqlite");
+    const hooksDir = path.join(root, ".claude-hooks");
+    const hookLogPath = path.join(root, ".hook-log");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let mergeReply = "";
+
+    try {
+      await writeFile(path.join(root, "file.txt"), "base\n", "utf-8");
+      await runCommand(["git", "init"], root);
+      await runCommand(["git", "config", "user.email", "codex@example.com"], root);
+      await runCommand(["git", "config", "user.name", "Codex"], root);
+      await runCommand(["git", "add", "file.txt"], root);
+      await runCommand(["git", "commit", "-m", "base"], root);
+      await runCommand(["git", "checkout", "-b", "feature"], root);
+      await writeFile(path.join(root, "file.txt"), "base\nfeature\n", "utf-8");
+      await runCommand(["git", "add", "file.txt"], root);
+      await runCommand(["git", "commit", "-m", "feature"], root);
+      await runCommand(["git", "checkout", "-"], root);
+
+      await mkdir(hooksDir, { recursive: true });
+      await writeFile(
+        path.join(hooksDir, "pre_merge"),
+        `#!/bin/sh
+echo "pre:$COD_BRANCH_NAME" >> "$COD_PROJECT_PATH/.hook-log"
+`,
+        "utf-8",
+      );
+      await writeFile(
+        path.join(hooksDir, "post_merge"),
+        `#!/bin/sh
+echo "post:$COD_BRANCH_NAME" >> "$COD_PROJECT_PATH/.hook-log"
+`,
+        "utf-8",
+      );
+
+      await startApp(createConfig(root, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      await capturedSlashHandler({
+        commandName: "merge",
+        channelId: "parent-hooks",
+        guildId: "guild-1",
+        options: {
+          getString: (name: string) => (name === "branch" ? "feature" : null),
+        },
+        deferReply: async () => {},
+        editReply: async (payload: string) => {
+          mergeReply = payload;
+        },
+        followUp: async () => {},
+        reply: async () => {},
+      });
+
+      const hookLog = await readFile(hookLogPath, "utf-8");
+      expect(mergeReply).toContain("Merged `feature`");
+      expect(hookLog).toContain("pre:feature");
+      expect(hookLog).toContain("post:feature");
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("parent merge still succeeds when post_merge hook exits non-zero", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-merge-post-hook-fail-"));
+    const dbPath = path.join(root, "state.sqlite");
+    const hooksDir = path.join(root, ".claude-hooks");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let mergeReply = "";
+
+    try {
+      await writeFile(path.join(root, "file.txt"), "base\n", "utf-8");
+      await runCommand(["git", "init"], root);
+      await runCommand(["git", "config", "user.email", "codex@example.com"], root);
+      await runCommand(["git", "config", "user.name", "Codex"], root);
+      await runCommand(["git", "add", "file.txt"], root);
+      await runCommand(["git", "commit", "-m", "base"], root);
+      await runCommand(["git", "checkout", "-b", "feature"], root);
+      await writeFile(path.join(root, "file.txt"), "base\nfeature\n", "utf-8");
+      await runCommand(["git", "add", "file.txt"], root);
+      await runCommand(["git", "commit", "-m", "feature"], root);
+      await runCommand(["git", "checkout", "-"], root);
+
+      await mkdir(hooksDir, { recursive: true });
+      await writeFile(path.join(hooksDir, "pre_merge"), "#!/bin/sh\nexit 0\n", "utf-8");
+      await writeFile(path.join(hooksDir, "post_merge"), "#!/bin/sh\nexit 9\n", "utf-8");
+
+      await startApp(createConfig(root, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      await capturedSlashHandler({
+        commandName: "merge",
+        channelId: "parent-post-hook-fail",
+        guildId: "guild-1",
+        options: {
+          getString: (name: string) => (name === "branch" ? "feature" : null),
+        },
+        deferReply: async () => {},
+        editReply: async (payload: string) => {
+          mergeReply = payload;
+        },
+        followUp: async () => {},
+        reply: async () => {},
+      });
+
+      const mergedFile = await readFile(path.join(root, "file.txt"), "utf-8");
+      expect(mergeReply).toContain("Merged `feature`");
+      expect(mergeReply).toContain("post_merge");
+      expect(mergedFile).toContain("feature");
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("worktree merge falls back to default auto-commit message when generator is empty", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-merge-autocommit-fallback-"));
+    const mainRepoDir = path.join(root, "main-repo");
+    const worktreeDir = path.join(root, "fork-worktree");
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb:
+      | {
+          close: () => void;
+          query: <T>(sql: string) => {
+            get: (params: Record<string, string>) => T | null;
+            run: (params: Record<string, string>) => unknown;
+          };
+        }
+      | undefined;
+    let mergeReply = "";
+    let runnerCalls = 0;
+
+    try {
+      await mkdir(mainRepoDir, { recursive: true });
+      await writeFile(path.join(mainRepoDir, "file.txt"), "base content\n");
+      await runCommand(["git", "init"], mainRepoDir);
+      await runCommand(["git", "config", "user.email", "test@test.com"], mainRepoDir);
+      await runCommand(["git", "config", "user.name", "Test"], mainRepoDir);
+      await runCommand(["git", "add", "file.txt"], mainRepoDir);
+      await runCommand(["git", "commit", "-m", "initial"], mainRepoDir);
+      await runCommand(["git", "worktree", "add", worktreeDir, "-b", "fork-branch"], mainRepoDir);
+      await writeFile(path.join(worktreeDir, "new-feature.ts"), "export const y = 2;\n");
+
+      await startApp(createConfig(mainRepoDir, dbPath), {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db as unknown as typeof openedDb;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async () => {
+              runnerCalls += 1;
+              if (runnerCalls === 1) {
+                return { text: "   \n", messages: [] };
+              }
+              return { text: "- done", messages: [] };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      openedDb
+        ?.query(
+          `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+           VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+        )
+        .run({
+          channel_id: "parent-autocommit-fallback",
+          guild_id: "guild-1",
+          working_dir: mainRepoDir,
+          session_id: "parent-session",
+          model: "sonnet",
+        });
+
+      openedDb
+        ?.query(
+          `INSERT INTO channels (channel_id, guild_id, working_dir, session_id, model)
+           VALUES ($channel_id, $guild_id, $working_dir, $session_id, $model);`,
+        )
+        .run({
+          channel_id: "fork-autocommit-fallback",
+          guild_id: "guild-1",
+          working_dir: worktreeDir,
+          session_id: "fork-session",
+          model: "sonnet",
+        });
+
+      openedDb?.query("INSERT INTO settings (key, value) VALUES ($key, $value);").run({
+        key: "channel_thread_branch:fork-autocommit-fallback",
+        value: JSON.stringify({
+          channelId: "fork-autocommit-fallback",
+          guildId: "guild-1",
+          rootChannelId: "parent-autocommit-fallback",
+          parentChannelId: "parent-autocommit-fallback",
+          name: "fork-autocommit-fallback",
+          createdAt: Date.now(),
+          lifecycleState: "active",
+          cleanupState: "none",
+          worktreePath: worktreeDir,
+        }),
+      });
+
+      await capturedSlashHandler({
+        commandName: "merge",
+        channelId: "fork-autocommit-fallback",
+        guildId: "guild-1",
+        channel: {
+          isThread: () => true,
+          parentId: "parent-autocommit-fallback",
+          name: "fork-autocommit-fallback",
+          setArchived: async () => {},
+        },
+        client: { channels: { fetch: async () => null } },
+        options: { getString: () => null },
+        deferReply: async () => {},
+        editReply: async (payload: string) => {
+          mergeReply = payload;
+        },
+        followUp: async () => {},
+        reply: async () => {},
+      });
+
+      const log = await runCommand(["git", "log", "--oneline", "--all"], mainRepoDir);
+      expect(mergeReply).toContain("Merged into <#parent-autocommit-fallback>");
+      expect(log).toContain("chore: auto-commit before merge");
     } finally {
       openedDb?.close();
       await rm(root, { recursive: true, force: true });

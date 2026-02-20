@@ -92,15 +92,20 @@ export async function handleThreadCleanupButton(input: {
     worktreeMode: "inherited",
     cleanupState: "removed",
   });
-  await runHook({
-    hookName: "worktree_removed",
-    workingDir: parentWorkingDir,
-    env: {
-      COD_THREAD_ID: channelId,
-      COD_THREAD_SLUG: meta.name,
-      COD_WORKTREE_PATH: worktreePath,
-    },
-  });
+  try {
+    await runHook({
+      hookName: "worktree_removed",
+      workingDir: parentWorkingDir,
+      env: {
+        COD_THREAD_ID: channelId,
+        COD_THREAD_SLUG: meta.name,
+        COD_WORKTREE_PATH: worktreePath,
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`worktree_removed hook failed for ${channelId}: ${detail}`);
+  }
 
   const pruneSummary =
     pruneResult.exitCode === 0
