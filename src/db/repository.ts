@@ -1,20 +1,17 @@
 import type { Database } from "bun:sqlite";
 import type { ChannelRecord, SessionCostInsert, SessionTurn } from "../types";
 import {
-  GLOBAL_SYSTEM_PROMPT_KEY,
-  channelMentionsModeKey,
-  channelMergeContextKey,
-  channelPermissionModeKey,
-  channelSystemPromptKey,
-  channelThreadBranchKey,
   mapChannelRow,
   mapSessionTurnRow,
-  threadBranchChannelIdFromKey,
-  threadBranchKeyPattern,
   type ChannelRow,
   type SessionTurnRow,
-  type SettingRow,
 } from "./repository-helpers";
+import {
+  RepositorySettingsStore,
+  type ChannelMentionsMode,
+  type ChannelPermissionMode,
+  type MergeContextRecord,
+} from "./repository-settings";
 import { applySchema } from "./schema";
 
 export type UpsertChannelInput = {
@@ -25,25 +22,14 @@ export type UpsertChannelInput = {
   sessionId?: string | null;
 };
 
-export type ChannelMentionsMode = "default" | "required" | "off";
-export type ChannelPermissionMode =
-  | "default"
-  | "plan"
-  | "acceptEdits"
-  | "bypassPermissions"
-  | "delegate"
-  | "dontAsk";
-
-export interface MergeContextRecord {
-  fromChannelId: string;
-  fromChannelName: string;
-  summary: string;
-  mergedAt: number;
-}
+export type { ChannelMentionsMode, ChannelPermissionMode, MergeContextRecord };
 
 export class Repository {
+  private readonly settings: RepositorySettingsStore;
+
   constructor(private readonly database: Database) {
     applySchema(this.database);
+    this.settings = new RepositorySettingsStore(this.database);
   }
 
   upsertChannel(input: UpsertChannelInput): ChannelRecord {
@@ -283,144 +269,90 @@ export class Repository {
   }
 
   getSetting(key: string): string | null {
-    const row = this.database
-      .query<SettingRow, { key: string }>("SELECT * FROM settings WHERE key = $key;")
-      .get({ key: key });
-    return row?.value ?? null;
+    return this.settings.getSetting(key);
   }
 
   setSetting(key: string, value: string): void {
-    this.database
-      .query(
-        `
-        INSERT INTO settings (key, value)
-        VALUES ($key, $value)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = unixepoch();
-        `,
-      )
-      .run({ key: key, value: value });
+    this.settings.setSetting(key, value);
   }
 
   deleteSetting(key: string): void {
-    this.database.query("DELETE FROM settings WHERE key = $key;").run({ key });
+    this.settings.deleteSetting(key);
   }
 
   getChannelSystemPrompt(channelId: string): string | null {
-    return this.getSetting(channelSystemPromptKey(channelId));
+    return this.settings.getChannelSystemPrompt(channelId);
   }
 
   setChannelSystemPrompt(channelId: string, prompt: string): void {
-    this.setSetting(channelSystemPromptKey(channelId), prompt);
+    this.settings.setChannelSystemPrompt(channelId, prompt);
   }
 
   clearChannelSystemPrompt(channelId: string): void {
-    this.deleteSetting(channelSystemPromptKey(channelId));
+    this.settings.clearChannelSystemPrompt(channelId);
   }
 
   getGlobalSystemPrompt(): string | null {
-    return this.getSetting(GLOBAL_SYSTEM_PROMPT_KEY);
+    return this.settings.getGlobalSystemPrompt();
   }
 
   setGlobalSystemPrompt(prompt: string): void {
-    this.setSetting(GLOBAL_SYSTEM_PROMPT_KEY, prompt);
+    this.settings.setGlobalSystemPrompt(prompt);
   }
 
   clearGlobalSystemPrompt(): void {
-    this.deleteSetting(GLOBAL_SYSTEM_PROMPT_KEY);
+    this.settings.clearGlobalSystemPrompt();
   }
 
   getThreadBranchMeta(channelId: string): string | null {
-    return this.getSetting(channelThreadBranchKey(channelId));
+    return this.settings.getThreadBranchMeta(channelId);
   }
 
   setThreadBranchMeta(channelId: string, metaJson: string): void {
-    this.setSetting(channelThreadBranchKey(channelId), metaJson);
+    this.settings.setThreadBranchMeta(channelId, metaJson);
   }
 
   clearThreadBranchMeta(channelId: string): void {
-    this.deleteSetting(channelThreadBranchKey(channelId));
+    this.settings.clearThreadBranchMeta(channelId);
   }
 
   getChannelMentionsMode(channelId: string): ChannelMentionsMode | null {
-    const raw = this.getSetting(channelMentionsModeKey(channelId));
-    if (raw === "default" || raw === "required" || raw === "off") {
-      return raw;
-    }
-    return null;
+    return this.settings.getChannelMentionsMode(channelId);
   }
 
   setChannelMentionsMode(channelId: string, mode: ChannelMentionsMode): void {
-    this.setSetting(channelMentionsModeKey(channelId), mode);
+    this.settings.setChannelMentionsMode(channelId, mode);
   }
 
   clearChannelMentionsMode(channelId: string): void {
-    this.deleteSetting(channelMentionsModeKey(channelId));
+    this.settings.clearChannelMentionsMode(channelId);
   }
 
   getChannelPermissionMode(channelId: string): ChannelPermissionMode | null {
-    const raw = this.getSetting(channelPermissionModeKey(channelId));
-    if (
-      raw === "default" ||
-      raw === "plan" ||
-      raw === "acceptEdits" ||
-      raw === "bypassPermissions" ||
-      raw === "delegate" ||
-      raw === "dontAsk"
-    ) {
-      return raw;
-    }
-    return null;
+    return this.settings.getChannelPermissionMode(channelId);
   }
 
   setChannelPermissionMode(channelId: string, mode: ChannelPermissionMode): void {
-    this.setSetting(channelPermissionModeKey(channelId), mode);
+    this.settings.setChannelPermissionMode(channelId, mode);
   }
 
   clearChannelPermissionMode(channelId: string): void {
-    this.deleteSetting(channelPermissionModeKey(channelId));
+    this.settings.clearChannelPermissionMode(channelId);
   }
 
   getMergeContext(channelId: string): MergeContextRecord | null {
-    const raw = this.getSetting(channelMergeContextKey(channelId));
-    if (!raw) {
-      return null;
-    }
-    try {
-      return JSON.parse(raw) as MergeContextRecord;
-    } catch {
-      return null;
-    }
+    return this.settings.getMergeContext(channelId);
   }
 
   setMergeContext(channelId: string, context: MergeContextRecord): void {
-    this.setSetting(channelMergeContextKey(channelId), JSON.stringify(context));
+    this.settings.setMergeContext(channelId, context);
   }
 
   clearMergeContext(channelId: string): void {
-    this.deleteSetting(channelMergeContextKey(channelId));
+    this.settings.clearMergeContext(channelId);
   }
 
   listThreadBranchMetaEntries(): Array<{ channelId: string; value: string }> {
-    const rows = this.database
-      .query<Pick<SettingRow, "key" | "value">, { pattern: string }>(
-        `
-        SELECT key, value
-        FROM settings
-        WHERE key LIKE $pattern;
-        `,
-      )
-      .all({ pattern: threadBranchKeyPattern() });
-
-    return rows
-      .map((row) => {
-        const channelId = threadBranchChannelIdFromKey(row.key);
-        if (!channelId) {
-          return null;
-        }
-        return { channelId, value: row.value };
-      })
-      .filter((entry): entry is { channelId: string; value: string } => entry !== null);
+    return this.settings.listThreadBranchMetaEntries();
   }
 }
