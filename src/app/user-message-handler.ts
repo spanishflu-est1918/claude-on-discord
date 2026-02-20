@@ -95,6 +95,37 @@ const SAFETY_DISALLOWED_TOOLS = [
   "mcp__*",
 ] as const;
 
+function firstToolNameFromSdkMessage(message: unknown): string | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const typed = message as {
+    type?: unknown;
+    message?: { content?: unknown };
+  };
+  if (typed.type !== "assistant") {
+    return null;
+  }
+  const content = typed.message?.content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const typedBlock = block as { type?: unknown; name?: unknown };
+    if (
+      (typedBlock.type === "tool_use" || typedBlock.type === "server_tool_use") &&
+      typeof typedBlock.name === "string" &&
+      typedBlock.name.trim().length > 0
+    ) {
+      return typedBlock.name;
+    }
+  }
+  return null;
+}
+
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
   suspendedChannels: Set<string>;
@@ -309,6 +340,14 @@ export function createUserMessageHandler(input: {
               streamingStatus.appendThinking(thinkingDelta);
             },
             onMessage: (sdkMessage) => {
+              const guardedToolName = applyRunnerSafetyGuards
+                ? firstToolNameFromSdkMessage(sdkMessage)
+                : null;
+              if (guardedToolName) {
+                runawayStopReason =
+                  runawayStopReason ??
+                  `Stopped safety-guarded run after blocked tool call: ${guardedToolName}.`;
+              }
               runawayStopReason = runawayStopReason ?? runawayToolGuard.observeMessage(sdkMessage);
               if (runawayStopReason && !abortController.signal.aborted) {
                 console.warn(`runner runaway guard in channel ${channelId}: ${runawayStopReason}`);
