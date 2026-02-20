@@ -30,6 +30,9 @@ export interface ThreadLifecycleEvent {
   thread: AnyThreadChannel;
 }
 
+const RECENT_MESSAGE_ID_TTL_MS = 5 * 60 * 1000;
+const MAX_RECENT_MESSAGE_IDS = 5000;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -101,9 +104,36 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
   });
 
   const observedHumanSendersByChannel = new Map<string, Set<string>>();
+  const recentlySeenMessageIds = new Map<string, number>();
+
+  const shouldSkipDuplicateMessage = (messageId: string): boolean => {
+    const now = Date.now();
+    for (const [seenMessageId, seenAt] of recentlySeenMessageIds) {
+      if (now - seenAt > RECENT_MESSAGE_ID_TTL_MS) {
+        recentlySeenMessageIds.delete(seenMessageId);
+      }
+    }
+
+    if (recentlySeenMessageIds.has(messageId)) {
+      return true;
+    }
+
+    recentlySeenMessageIds.set(messageId, now);
+    while (recentlySeenMessageIds.size > MAX_RECENT_MESSAGE_IDS) {
+      const oldestMessageId = recentlySeenMessageIds.keys().next().value;
+      if (!oldestMessageId) {
+        break;
+      }
+      recentlySeenMessageIds.delete(oldestMessageId);
+    }
+    return false;
+  };
 
   client.on("messageCreate", async (message) => {
     if (message.author.bot) {
+      return;
+    }
+    if (typeof message.id === "string" && shouldSkipDuplicateMessage(message.id)) {
       return;
     }
     const content = message.content.trim();

@@ -59,6 +59,33 @@ describe("Discord client integration routing", () => {
     client.destroy();
   });
 
+  test("deduplicates repeated messageCreate events with the same message id", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    const duplicateMessage = {
+      id: "msg-dup-1",
+      author: { bot: false },
+      content: "testing forks",
+      attachments: { size: 0 },
+      reply: async () => {},
+    };
+
+    emitEvent(client, "messageCreate", duplicateMessage);
+    emitEvent(client, "messageCreate", duplicateMessage);
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["testing forks"]);
+    client.destroy();
+  });
+
   test("requires explicit mention in multi-user guild channels when enabled", async () => {
     const seen: string[] = [];
     const client = createDiscordClient({
