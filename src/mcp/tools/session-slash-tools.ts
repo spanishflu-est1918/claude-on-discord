@@ -26,6 +26,7 @@ type SessionToolDeps = {
     permissionMode: ClaudePermissionMode;
   };
   getState: (channelId: string, guildId: string) => {
+    channel: { workingDir: string };
     history: Array<{ role: "user" | "assistant"; content: string }>;
   };
   compactHistory: (
@@ -40,6 +41,7 @@ type SessionToolDeps = {
   stopControllerSetModel: (channelId: string, model: string) => Promise<void>;
   stopControllerIsActive: (channelId: string) => boolean;
   stopControllerAbort: (channelId: string) => void;
+  runBashCommand: (command: string, cwd: string) => Promise<{ exitCode: number; output: string }>;
 };
 
 export type SessionSlashToolOutput = {
@@ -53,7 +55,8 @@ export type SessionSlashToolOutput = {
     | "new"
     | "compact"
     | "model"
-    | "stop";
+    | "stop"
+    | "bash";
 };
 
 export function createSessionSlashMcpTools(
@@ -186,6 +189,35 @@ export function createSessionSlashMcpTools(
           ok: true,
           action: "stop",
           message: result.message,
+        };
+      },
+    },
+    {
+      name: "discord_bash",
+      description: "Run a shell command in the channel working directory via the shared /bash action.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string" },
+          guildId: { type: "string" },
+          command: { type: "string" },
+        },
+        required: ["channelId", "guildId", "command"],
+      },
+      execute: async (input) => {
+        const channelId = String(input.channelId ?? "");
+        const guildId = String(input.guildId ?? "");
+        const command = String(input.command ?? "");
+        const state = deps.getState(channelId, guildId);
+        const result = await slashActionCatalog.bash({
+          command,
+          workingDir: state.channel.workingDir,
+          runBashCommand: deps.runBashCommand,
+        });
+        return {
+          ok: true,
+          action: "bash",
+          message: `exit=${result.exitCode}\n${result.payload}`,
         };
       },
     },

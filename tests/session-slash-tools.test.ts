@@ -59,7 +59,12 @@ function buildDeps() {
         permissionMode: mode === "default" ? "bypassPermissions" : mode,
       };
     },
+    runBashCommand: async (_command: string, _cwd: string) => ({
+      exitCode: 0,
+      output: "ok",
+    }),
     getState: () => ({
+      channel: { workingDir: "/tmp/work" },
       history: [
         { role: "user" as const, content: "hello" },
         { role: "assistant" as const, content: "world" },
@@ -90,6 +95,7 @@ describe("session slash MCP tools", () => {
       "discord_compact",
       "discord_model",
       "discord_stop",
+      "discord_bash",
       "discord_systemprompt",
       "discord_mentions",
       "discord_mode",

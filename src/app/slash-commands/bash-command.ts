@@ -1,5 +1,6 @@
 import { type ChatInputCommandInteraction } from "discord.js";
 import type { SessionManager } from "../../claude/session";
+import { runBashAction } from "../command-actions/bash-action";
 
 export async function handleBashCommand(input: {
   interaction: ChatInputCommandInteraction;
@@ -13,10 +14,12 @@ export async function handleBashCommand(input: {
   const state = input.sessions.getState(input.channelId, input.guildId);
   await input.interaction.deferReply();
 
-  const result = await input.runBashCommand(command, state.channel.workingDir);
-  const outputText = result.output || "(no output)";
-  const payload = `\`\`\`bash\n$ ${command}\n${outputText}\n[exit ${result.exitCode}]\n\`\`\``;
-  const chunks = input.chunkDiscordText(payload);
+  const result = await runBashAction({
+    command,
+    workingDir: state.channel.workingDir,
+    runBashCommand: input.runBashCommand,
+  });
+  const chunks = input.chunkDiscordText(result.payload);
   const firstChunk = chunks[0] ?? "(no output)";
   await input.interaction.editReply(firstChunk);
 

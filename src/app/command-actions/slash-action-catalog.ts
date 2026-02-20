@@ -7,6 +7,7 @@ import { runNewSessionAction } from "./new-action";
 import { runCompactAction } from "./compact-action";
 import { runModelAction } from "./model-action";
 import { runStopAction } from "./stop-action";
+import { runBashAction } from "./bash-action";
 
 export const slashActionCatalog = {
   cost: runCostAction,
@@ -18,6 +19,7 @@ export const slashActionCatalog = {
   compact: runCompactAction,
   model: runModelAction,
   stop: runStopAction,
+  bash: runBashAction,
 } as const;
 
 export type SlashActionCatalog = typeof slashActionCatalog;
