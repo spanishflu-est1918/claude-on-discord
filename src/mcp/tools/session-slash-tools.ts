@@ -25,12 +25,35 @@ type SessionToolDeps = {
     mode: string;
     permissionMode: ClaudePermissionMode;
   };
+  getState: (channelId: string, guildId: string) => {
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+  };
+  compactHistory: (
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+    maxLines?: number,
+  ) => string;
+  appendTurn: (
+    channelId: string,
+    turn: { role: "assistant" | "user"; content: string },
+  ) => void;
+  setSessionModel: (channelId: string, model: string) => void;
+  stopControllerSetModel: (channelId: string, model: string) => Promise<void>;
+  stopControllerIsActive: (channelId: string) => boolean;
+  stopControllerAbort: (channelId: string) => void;
 };
 
 export type SessionSlashToolOutput = {
   ok: boolean;
   message: string;
-  action: "cost" | "mentions" | "mode" | "systemprompt";
+  action:
+    | "cost"
+    | "mentions"
+    | "mode"
+    | "systemprompt"
+    | "new"
+    | "compact"
+    | "model"
+    | "stop";
 };
 
 export function createSessionSlashMcpTools(
@@ -57,6 +80,111 @@ export function createSessionSlashMcpTools(
         return {
           ok: true,
           action: "cost",
+          message: result.message,
+        };
+      },
+    },
+    {
+      name: "discord_new",
+      description: "Reset session context for a channel using the same action path as /new.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string" },
+        },
+        required: ["channelId"],
+      },
+      execute: (input) => {
+        const channelId = String(input.channelId ?? "");
+        const result = slashActionCatalog.newSession({
+          channelId,
+          clearSessionPermissionMode: deps.clearSessionPermissionMode,
+          resetSession: deps.resetSessionId,
+        });
+        return {
+          ok: true,
+          action: "new",
+          message: result.message,
+        };
+      },
+    },
+    {
+      name: "discord_compact",
+      description: "Compact channel context and reset session using the same action path as /compact.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string" },
+          guildId: { type: "string" },
+        },
+        required: ["channelId", "guildId"],
+      },
+      execute: (input) => {
+        const channelId = String(input.channelId ?? "");
+        const guildId = String(input.guildId ?? "");
+        const result = slashActionCatalog.compact({
+          channelId,
+          guildId,
+          getState: deps.getState,
+          compactHistory: deps.compactHistory,
+          clearSessionPermissionMode: deps.clearSessionPermissionMode,
+          resetSession: deps.resetSessionId,
+          appendTurn: deps.appendTurn,
+        });
+        return {
+          ok: true,
+          action: "compact",
+          message: result.message,
+        };
+      },
+    },
+    {
+      name: "discord_model",
+      description: "Set channel model using the same action path as /model.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string" },
+          model: { type: "string" },
+        },
+        required: ["channelId", "model"],
+      },
+      execute: async (input) => {
+        const channelId = String(input.channelId ?? "");
+        const model = String(input.model ?? "");
+        const result = await slashActionCatalog.model({
+          channelId,
+          model,
+          setSessionModel: deps.setSessionModel,
+          stopControllerSetModel: deps.stopControllerSetModel,
+        });
+        return {
+          ok: true,
+          action: "model",
+          message: result.message,
+        };
+      },
+    },
+    {
+      name: "discord_stop",
+      description: "Abort an active channel run using the same action path as /stop.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string" },
+        },
+        required: ["channelId"],
+      },
+      execute: (input) => {
+        const channelId = String(input.channelId ?? "");
+        const result = slashActionCatalog.stop({
+          channelId,
+          isActive: deps.stopControllerIsActive,
+          abort: deps.stopControllerAbort,
+        });
+        return {
+          ok: true,
+          action: "stop",
           message: result.message,
         };
       },

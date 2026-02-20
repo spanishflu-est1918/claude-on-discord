@@ -1,6 +1,7 @@
 import { type ChatInputCommandInteraction } from "discord.js";
 import type { SessionManager } from "../../claude/session";
 import type { StopController } from "../../claude/stop";
+import { runModelAction } from "../command-actions/model-action";
 
 export async function handleModelCommand(input: {
   interaction: ChatInputCommandInteraction;
@@ -9,7 +10,12 @@ export async function handleModelCommand(input: {
   stopController: StopController;
 }): Promise<void> {
   const model = input.interaction.options.getString("name", true);
-  input.sessions.setModel(input.channelId, model);
-  await input.stopController.setModel(input.channelId, model);
-  await input.interaction.reply(`Model set to \`${model}\`.`);
+  const result = await runModelAction({
+    channelId: input.channelId,
+    model,
+    setSessionModel: (channelId, model) => input.sessions.setModel(channelId, model),
+    stopControllerSetModel: async (channelId, model) =>
+      await input.stopController.setModel(channelId, model),
+  });
+  await input.interaction.reply(result.message);
 }

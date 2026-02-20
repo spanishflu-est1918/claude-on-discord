@@ -1,5 +1,6 @@
 import { type ChatInputCommandInteraction } from "discord.js";
 import type { SessionManager } from "../../claude/session";
+import { runCompactAction } from "../command-actions/compact-action";
 
 export async function handleCompactCommand(input: {
   interaction: ChatInputCommandInteraction;
@@ -12,13 +13,14 @@ export async function handleCompactCommand(input: {
   ) => string;
   clearSessionPermissionMode: (channelId: string) => void;
 }): Promise<void> {
-  const state = input.sessions.getState(input.channelId, input.guildId);
-  const summary = input.compactHistory(state.history);
-  input.clearSessionPermissionMode(input.channelId);
-  input.sessions.resetSession(input.channelId);
-  input.sessions.appendTurn(input.channelId, {
-    role: "assistant",
-    content: `Context summary:\n${summary}`,
+  const result = runCompactAction({
+    channelId: input.channelId,
+    guildId: input.guildId,
+    getState: (channelId, guildId) => input.sessions.getState(channelId, guildId),
+    compactHistory: input.compactHistory,
+    clearSessionPermissionMode: input.clearSessionPermissionMode,
+    resetSession: (channelId) => input.sessions.resetSession(channelId),
+    appendTurn: (channelId, turn) => input.sessions.appendTurn(channelId, turn),
   });
-  await input.interaction.reply("Context compacted and session reset.");
+  await input.interaction.reply(result.message);
 }

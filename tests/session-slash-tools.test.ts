@@ -7,6 +7,8 @@ function buildDeps() {
     mentionsModeByChannel: new Map<string, "default" | "required" | "off">(),
     permissionModeByChannel: new Map<string, "default" | "plan" | "acceptEdits" | "bypassPermissions" | "delegate" | "dontAsk">(),
     activeSessionByChannel: new Map<string, string | null>(),
+    modelByChannel: new Map<string, string>(),
+    stopAbortCalls: [] as string[],
     resetCalls: [] as string[],
     clearPermissionCalls: [] as string[],
   };
@@ -57,6 +59,22 @@ function buildDeps() {
         permissionMode: mode === "default" ? "bypassPermissions" : mode,
       };
     },
+    getState: () => ({
+      history: [
+        { role: "user" as const, content: "hello" },
+        { role: "assistant" as const, content: "world" },
+      ],
+    }),
+    compactHistory: () => "summary",
+    appendTurn: () => undefined,
+    setSessionModel: (channelId: string, model: string) => {
+      store.modelByChannel.set(channelId, model);
+    },
+    stopControllerSetModel: async () => undefined,
+    stopControllerIsActive: () => false,
+    stopControllerAbort: (channelId: string) => {
+      store.stopAbortCalls.push(channelId);
+    },
   };
 
   return { deps, store };
@@ -68,6 +86,10 @@ describe("session slash MCP tools", () => {
     const tools = createSessionSlashMcpTools(deps);
     expect(tools.map((tool) => tool.name)).toEqual([
       "discord_cost",
+      "discord_new",
+      "discord_compact",
+      "discord_model",
+      "discord_stop",
       "discord_systemprompt",
       "discord_mentions",
       "discord_mode",
