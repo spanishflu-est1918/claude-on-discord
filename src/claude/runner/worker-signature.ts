@@ -10,6 +10,7 @@ export function buildWorkerSignature(input: {
   includeMcpServers: boolean;
   includeResume: boolean;
   disableTools: boolean;
+  disallowedTools: string[];
   settingSources: NonNullable<Options["settingSources"]>;
   toStableMcpSignature: (mcpServers?: Record<string, ClaudeMcpServerConfig>) => unknown;
 }): string {
@@ -24,7 +25,7 @@ export function buildWorkerSignature(input: {
     settingSources: input.settingSources,
     includeMcpServers: input.includeMcpServers,
     mcpServers: input.includeMcpServers ? input.toStableMcpSignature(input.mcpServers) : "",
-    disallowedTools: input.request.disallowedTools ? [...input.request.disallowedTools].sort() : [],
+    disallowedTools: input.disallowedTools,
     tools: input.disableTools ? [] : normalizeToolsSignature(input.request.tools),
     toolPolicyKey: input.request.toolPolicyKey ?? null,
     disableTools: input.disableTools,

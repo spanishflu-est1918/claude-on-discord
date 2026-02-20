@@ -23,7 +23,7 @@
     "@types/bun": "latest"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.47",
+    "@anthropic-ai/claude-agent-sdk": "0.2.49",
     "discord.js": "^14.25.1",
     "zod": "^4.3.6"
   },
