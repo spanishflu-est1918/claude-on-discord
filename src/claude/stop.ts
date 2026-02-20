@@ -31,7 +31,14 @@ export class StopController {
     return this.activeRuns.has(channelId);
   }
 
-  clear(channelId: string): void {
+  clear(channelId: string, expectedRun?: ActiveRun): void {
+    const active = this.activeRuns.get(channelId);
+    if (!active) {
+      return;
+    }
+    if (expectedRun && active !== expectedRun) {
+      return;
+    }
     this.activeRuns.delete(channelId);
   }
 

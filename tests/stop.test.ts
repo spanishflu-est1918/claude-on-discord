@@ -52,6 +52,25 @@ describe("StopController", () => {
     expect(controller.get("channel-1")?.query).toBe(query);
   });
 
+  test("clear with expected run does not clear a newer replacement run", () => {
+    const controller = new StopController();
+    const first = controller.register("channel-1", {
+      query: createMockQuery({ interrupted: false }),
+      abortController: new AbortController(),
+    });
+    const secondState: QueryState = { interrupted: false };
+    const secondQuery = createMockQuery(secondState);
+    const second = controller.register("channel-1", {
+      query: secondQuery,
+      abortController: new AbortController(),
+    });
+
+    controller.clear("channel-1", first);
+
+    expect(controller.isActive("channel-1")).toBe(true);
+    expect(controller.get("channel-1")).toBe(second);
+  });
+
   test("interrupt delegates to query interrupt", async () => {
     const controller = new StopController();
     const state: QueryState = { interrupted: false };
