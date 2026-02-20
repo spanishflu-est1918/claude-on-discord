@@ -20,6 +20,7 @@ export function withNoInteractiveToolDirective(prompt: string): string {
   }
   const directive =
     "System override: do not call askUserQuestion (or any interactive user-input tool). " +
-    "Respond with a direct proposal in one pass, without follow-up questions.";
+    "Respond with a direct proposal in one pass, without follow-up questions. " +
+    "Use no tools, and keep the response concise (maximum 12 bullets).";
   return `${directive}\n\n${prompt}`;
 }

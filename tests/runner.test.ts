@@ -186,6 +186,83 @@ describe("ClaudeRunner", () => {
     expect(capturedInput?.options.systemPrompt).toContain("Respond in terse style.");
   });
 
+  test("skips resume and forkSession when disableResume is set", async () => {
+    let capturedInput: QueryFactoryInput | undefined;
+    const runner = new ClaudeRunner((input) => {
+      capturedInput = input;
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-3",
+          duration_ms: 1,
+          total_cost_usd: 0,
+          num_turns: 1,
+          result: "ok",
+          is_error: false,
+          duration_api_ms: 1,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "u3",
+        },
+      ]);
+    });
+
+    await runner.run({
+      channelId: "channel-1",
+      prompt: "Ping",
+      cwd: "/repo",
+      sessionId: "session-3",
+      forkSession: true,
+      disableResume: true,
+      model: "opus",
+      permissionMode: "plan",
+      maxTurns: 3,
+    });
+
+    expect(capturedInput).toBeDefined();
+    expect(capturedInput?.options.resume).toBeUndefined();
+    expect(capturedInput?.options.forkSession).toBeUndefined();
+  });
+
+  test("uses request settingSources override", async () => {
+    let capturedInput: QueryFactoryInput | undefined;
+    const runner = new ClaudeRunner((input) => {
+      capturedInput = input;
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-settings",
+          duration_ms: 1,
+          total_cost_usd: 0,
+          num_turns: 1,
+          result: "ok",
+          is_error: false,
+          duration_api_ms: 1,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "u-settings",
+        },
+      ]);
+    });
+
+    await runner.run({
+      channelId: "channel-1",
+      prompt: "Ping",
+      cwd: "/repo",
+      settingSources: [],
+      model: "sonnet",
+    });
+
+    expect(capturedInput).toBeDefined();
+    expect(capturedInput?.options.settingSources).toEqual([]);
+  });
+
   test("calls onQueryStart, onTextDelta, and onThinkingDelta callbacks", async () => {
     const textDeltas: string[] = [];
     const thinkingDeltas: string[] = [];
@@ -430,7 +507,7 @@ describe("ClaudeRunner", () => {
 
       expect(result.text).toBe("Recovered");
       expect(calls).toHaveLength(2);
-      expect(calls[0]?.options.mcpServers).toBeDefined();
+      expect(calls[0]?.options.mcpServers).toBeUndefined();
       expect(calls[1]?.options.mcpServers).toBeUndefined();
     } finally {
       await rm(workingDir, { recursive: true, force: true });
@@ -627,6 +704,66 @@ describe("ClaudeRunner", () => {
     expect(calls[1]?.options.forkSession).toBeUndefined();
   });
 
+  test("retries without resume after execution-error result on resumed session", async () => {
+    const calls: QueryFactoryInput[] = [];
+    const runner = new ClaudeRunner((input) => {
+      calls.push(input);
+      if (calls.length === 1) {
+        return createMockQuery([
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            session_id: "session-stale",
+            duration_ms: 10,
+            total_cost_usd: 0,
+            num_turns: 0,
+            result: "",
+            is_error: true,
+            duration_api_ms: 10,
+            stop_reason: null,
+            usage: {},
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "resume-exec-error-1",
+          },
+        ]);
+      }
+      return createMockQuery([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-fresh",
+          duration_ms: 20,
+          total_cost_usd: 0.001,
+          num_turns: 1,
+          result: "Recovered after resume execution error",
+          is_error: false,
+          duration_api_ms: 10,
+          stop_reason: "end_turn",
+          usage: {},
+          modelUsage: {},
+          permission_denials: [],
+          uuid: "resume-exec-error-2",
+        },
+      ]);
+    });
+
+    const result = await runner.run({
+      channelId: "channel-1",
+      prompt: "Ping",
+      cwd: "/tmp",
+      sessionId: "session-stale",
+      forkSession: true,
+    });
+
+    expect(result.text).toBe("Recovered after resume execution error");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.options.resume).toBe("session-stale");
+    expect(calls[0]?.options.forkSession).toBe(true);
+    expect(calls[1]?.options.resume).toBeUndefined();
+    expect(calls[1]?.options.forkSession).toBeUndefined();
+  });
+
   test("retries without MCP and session resume when both recovery steps are needed", async () => {
     const workingDir = await mkdtemp(path.join(tmpdir(), "runner-mcp-session-retry-"));
     await mkdir(path.join(workingDir, ".claude"), { recursive: true });
@@ -679,11 +816,11 @@ describe("ClaudeRunner", () => {
 
       expect(result.text).toBe("Recovered after both fallbacks");
       expect(calls).toHaveLength(3);
-      expect(calls[0]?.options.mcpServers).toBeDefined();
+      expect(calls[0]?.options.mcpServers).toBeUndefined();
       expect(calls[0]?.options.resume).toBe("session-stale");
       expect(calls[1]?.options.mcpServers).toBeUndefined();
-      expect(calls[1]?.options.resume).toBe("session-stale");
-      expect(calls[2]?.options.mcpServers).toBeDefined();
+      expect(calls[1]?.options.resume).toBeUndefined();
+      expect(calls[2]?.options.mcpServers).toBeUndefined();
       expect(calls[2]?.options.resume).toBeUndefined();
     } finally {
       await rm(workingDir, { recursive: true, force: true });
@@ -710,7 +847,7 @@ describe("ClaudeRunner", () => {
       const calls: QueryFactoryInput[] = [];
       const runner = new ClaudeRunner((input) => {
         calls.push(input);
-        if (calls.length <= 4) {
+        if (calls.length <= 2) {
           return createFailingQuery(new Error("Claude Code process exited with code 1"));
         }
         return createMockQuery([
@@ -741,10 +878,11 @@ describe("ClaudeRunner", () => {
       });
 
       expect(result.text).toBe("Recovered with safe mode");
-      expect(calls).toHaveLength(5);
-      expect(calls[4]?.options.settingSources).toEqual(["user", "project"]);
-      expect(calls[4]?.options.mcpServers).toBeUndefined();
-      expect(calls[4]?.options.resume).toBeUndefined();
+      expect(calls).toHaveLength(3);
+      expect(calls[2]?.options.settingSources).toEqual(["user", "project"]);
+      expect(calls[2]?.options.mcpServers).toBeUndefined();
+      expect(calls[2]?.options.resume).toBeUndefined();
+      expect(calls[2]?.options.tools).toEqual([]);
     } finally {
       await rm(workingDir, { recursive: true, force: true });
     }

@@ -55,6 +55,8 @@ export interface RunRequest {
   channelId: string;
   prompt: string;
   resumeFallbackPrompt?: string;
+  disableResume?: boolean;
+  settingSources?: NonNullable<Options["settingSources"]>;
   cwd: string;
   sessionId?: string;
   forkSession?: boolean;
@@ -109,11 +111,13 @@ export class ClaudeRunner {
 
   async run(request: RunRequest): Promise<RunResult> {
     const permissionMode = request.permissionMode ?? "bypassPermissions";
+    const disallowedTools = mergeDisallowedTools(request.disallowedTools);
     const loadedMcpServers = await loadMcpServers(request.cwd);
     const mcpServers = mergeMcpServers(loadedMcpServers, request.mcpServers);
     const attempts = buildRunAttempts({
       hasMcpServers: Boolean(mcpServers),
-      hasSessionId: Boolean(request.sessionId),
+      hasSessionId: Boolean(request.sessionId) && !request.disableResume,
+      settingSources: request.settingSources ?? ["user", "project"],
     });
     const failedAttemptLabels: string[] = [];
 
@@ -132,6 +136,7 @@ export class ClaudeRunner {
           disableTools: attempt.disableTools,
           settingSources: attempt.settingSources,
           toStableMcpSignature,
+          disallowedTools,
         });
         let worker = this.workersByChannel.get(request.channelId);
         if (worker && (worker.isClosed() || !worker.matches(workerSignature))) {
@@ -153,7 +158,7 @@ export class ClaudeRunner {
             resumeSessionId: attempt.includeResume ? request.sessionId : undefined,
             forkSession: attempt.includeResume ? request.forkSession : undefined,
             mcpServers: attempt.includeMcpServers ? mcpServers : undefined,
-            disallowedTools: request.disallowedTools,
+            disallowedTools,
             tools: attempt.disableTools ? [] : request.tools,
             canUseTool: request.canUseTool,
             settingSources: attempt.settingSources,
@@ -199,6 +204,16 @@ export class ClaudeRunner {
 
     throw new Error("Runner exhausted retries without returning a result.");
   }
+}
+
+const REQUIRED_DISALLOWED_TOOLS = ["EnterWorktree"] as const;
+
+function mergeDisallowedTools(disallowedTools: string[] | undefined): string[] {
+  const merged = new Set<string>(disallowedTools ?? []);
+  for (const toolName of REQUIRED_DISALLOWED_TOOLS) {
+    merged.add(toolName);
+  }
+  return [...merged].sort();
 }
 
 function shouldRetryAfterExecutionErrorResult(result: RunResult): boolean {

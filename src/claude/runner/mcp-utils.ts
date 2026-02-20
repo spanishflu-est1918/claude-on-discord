@@ -49,6 +49,7 @@ export function mergeMcpServers(
 export function buildRunAttempts(input: {
   hasMcpServers: boolean;
   hasSessionId: boolean;
+  settingSources: NonNullable<Options["settingSources"]>;
 }): RunAttempt[] {
   const attempts: RunAttempt[] = [];
   const seen = new Set<string>();
@@ -68,10 +69,10 @@ export function buildRunAttempts(input: {
   };
 
   push({
-    includeMcpServers: true,
-    includeResume: true,
+    includeMcpServers: false,
+    includeResume: input.hasSessionId,
     disableTools: false,
-    settingSources: ["user", "project"],
+    settingSources: input.settingSources,
     label: "default",
   });
 
@@ -80,17 +81,17 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: true,
       disableTools: false,
-      settingSources: ["user", "project"],
+      settingSources: input.settingSources,
       label: "without MCP",
     });
   }
 
   if (input.hasSessionId) {
     push({
-      includeMcpServers: true,
+      includeMcpServers: false,
       includeResume: false,
       disableTools: false,
-      settingSources: ["user", "project"],
+      settingSources: input.settingSources,
       label: "without session resume",
     });
   }
@@ -100,7 +101,7 @@ export function buildRunAttempts(input: {
       includeMcpServers: false,
       includeResume: false,
       disableTools: false,
-      settingSources: ["user", "project"],
+      settingSources: input.settingSources,
       label: "without MCP and session resume",
     });
   }
@@ -109,7 +110,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: false,
     includeResume: false,
     disableTools: false,
-    settingSources: ["user", "project"],
+    settingSources: input.settingSources,
     label: "safe mode (SDK isolation)",
   });
 
@@ -117,7 +118,7 @@ export function buildRunAttempts(input: {
     includeMcpServers: false,
     includeResume: false,
     disableTools: true,
-    settingSources: ["user", "project"],
+    settingSources: input.settingSources,
     label: "safe mode (SDK isolation, tools disabled)",
   });
 

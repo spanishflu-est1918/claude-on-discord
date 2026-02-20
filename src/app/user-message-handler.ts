@@ -1,7 +1,7 @@
 import type { Message } from "discord.js";
 import type { ClaudeRunner } from "../claude/runner";
 import type { SessionManager } from "../claude/session";
-import type { StopController } from "../claude/stop";
+import type { ActiveRun, StopController } from "../claude/stop";
 import type { Repository } from "../db/repository";
 import type { ClaudePermissionMode } from "../types";
 import { buildQueueNoticeButtons, buildStopButtons } from "../discord/buttons";
@@ -54,6 +54,30 @@ import { notifyRunFailure } from "./run-failure-notifier";
 import { createQueuedChannelDispatch } from "./queued-channel-dispatch";
 import { runHook } from "../discord/hook-runner";
 import { logRunnerSkillDebug } from "./runner-skill-debug";
+
+const SAFETY_DISALLOWED_TOOLS = [
+  "Task",
+  "Bash",
+  "Read",
+  "Grep",
+  "Glob",
+  "LS",
+  "WebFetch",
+  "WebSearch",
+  "Edit",
+  "Write",
+  "MultiEdit",
+  "NotebookEdit",
+  "NotebookRead",
+  "TodoRead",
+  "TodoWrite",
+  "mcp__filesystem-with-morph__warpgrep_codebase_search",
+  "mcp__exa__get_code_context_exa",
+  "mcp__exa__web_search_exa",
+  "mcp__filesystem-with-morph__*",
+  "mcp__exa__*",
+  "mcp__*",
+] as const;
 
 export function createUserMessageHandler(input: {
   isShuttingDown: () => boolean;
@@ -195,6 +219,9 @@ export function createUserMessageHandler(input: {
         const applyRunnerSafetyGuards = shouldApplyRunnerSafetyGuards(prompt);
         const guardedMaxTurns = applyRunnerSafetyGuards ? 8 : undefined;
         const guardedThinking = applyRunnerSafetyGuards ? ({ type: "disabled" } as const) : undefined;
+        const guardedDisallowedTools = applyRunnerSafetyGuards
+          ? [...SAFETY_DISALLOWED_TOOLS]
+          : undefined;
         if (applyRunnerSafetyGuards) {
           console.warn(`runner guard active for channel ${channelId}: maxTurns=8`);
         }
@@ -203,6 +230,7 @@ export function createUserMessageHandler(input: {
           ? buildSeededPrompt(prompt, state.history, false)
           : undefined;
         const abortController = new AbortController();
+        let registeredRun: ActiveRun | null = null;
         const persistedFilenames = new Set<string>();
         const runawayToolGuard = createRunawayToolGuard();
         let runawayStopReason: string | null = null;
@@ -249,11 +277,13 @@ export function createUserMessageHandler(input: {
             model: state.channel.model,
             systemPrompt: composedSystemPrompt,
             permissionMode: permissionPolicy.permissionMode,
+            ...(applyRunnerSafetyGuards ? { disableResume: true } : {}),
             ...(typeof guardedMaxTurns === "number" ? { maxTurns: guardedMaxTurns } : {}),
             ...(guardedThinking ? { thinking: guardedThinking } : {}),
+            ...(guardedDisallowedTools ? { disallowedTools: guardedDisallowedTools } : {}),
             abortController,
             onQueryStart: (query) => {
-              input.stopController.register(channelId, { query, abortController });
+              registeredRun = input.stopController.register(channelId, { query, abortController });
               logRunnerSkillDebug(channelId, query);
             },
             onTextDelta: (textDelta) => {
@@ -416,7 +446,9 @@ export function createUserMessageHandler(input: {
             },
           });
           await cleanupFiles(stagedAttachments.stagedPaths);
-          input.stopController.clear(channelId);
+          if (registeredRun) {
+            input.stopController.clear(channelId, registeredRun);
+          }
         }
       });
 
