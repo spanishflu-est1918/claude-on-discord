@@ -1,4 +1,5 @@
 import type { StopController } from "../claude/stop";
+import type { ThreadDebugger } from "./thread-debugger";
 import type { WorkerHeartbeatManager } from "./worker-heartbeat";
 
 export function createRuntimeLifecycleManager(input: {
@@ -14,6 +15,7 @@ export function createRuntimeLifecycleManager(input: {
   workerHeartbeatManager: WorkerHeartbeatManager;
   getDiscordClient: () => { destroy: () => void } | null;
   closeDatabase: () => void;
+  threadDebugger?: ThreadDebugger;
 }): {
   clearActiveRunsWithSessionReset: (reason: string) => void;
   abortChannelRunWithSessionReset: (channelId: string, reason: string) => boolean;
@@ -25,6 +27,10 @@ export function createRuntimeLifecycleManager(input: {
 
   const clearActiveRunsWithSessionReset = (reason: string): void => {
     const activeChannelIds = input.stopController.getActiveChannelIds();
+    input.threadDebugger?.log({
+      event: "runtime.clear_active_runs.start",
+      detail: { reason, activeChannels: activeChannelIds },
+    });
     if (activeChannelIds.length === 0) {
       return;
     }
@@ -34,16 +40,35 @@ export function createRuntimeLifecycleManager(input: {
     }
     const aborted = input.stopController.abortAll();
     console.warn(`Cleared ${aborted.length} active run(s) due to ${reason}.`);
+    input.threadDebugger?.log({
+      event: "runtime.clear_active_runs.end",
+      detail: { reason, abortedChannels: aborted },
+    });
   };
 
   const abortChannelRunWithSessionReset = (channelId: string, reason: string): boolean => {
+    input.threadDebugger?.log({
+      event: "runtime.abort_channel.start",
+      channelId,
+      detail: { reason },
+    });
     const aborted = input.stopController.abort(channelId);
     if (!aborted) {
+      input.threadDebugger?.log({
+        event: "runtime.abort_channel.miss",
+        channelId,
+        detail: { reason },
+      });
       return false;
     }
     input.clearSessionPermissionMode(channelId);
     input.setSessionId(channelId, null);
     console.warn(`Aborted active run for channel ${channelId} (${reason}).`);
+    input.threadDebugger?.log({
+      event: "runtime.abort_channel.done",
+      channelId,
+      detail: { reason },
+    });
     return true;
   };
 
@@ -64,6 +89,10 @@ export function createRuntimeLifecycleManager(input: {
         input.setSessionId(staleChannelId, null);
       }
       console.warn(`Reaped ${staleChannelIds.length} stale active run(s).`);
+      input.threadDebugger?.log({
+        event: "runtime.stale_runs_reaped",
+        detail: { staleChannelIds, maxAgeMs: input.activeRunMaxAgeMs },
+      });
     }, input.activeRunWatchdogIntervalMs);
     staleRunWatchdog.unref?.();
   };
@@ -73,6 +102,10 @@ export function createRuntimeLifecycleManager(input: {
       return shutdownPromise;
     }
     input.setShuttingDown(true);
+    input.threadDebugger?.log({
+      event: "runtime.shutdown.start",
+      detail: { reason },
+    });
     shutdownPromise = (async () => {
       console.log(`Shutting down (${reason})...`);
       input.clearTransientState();
@@ -102,6 +135,10 @@ export function createRuntimeLifecycleManager(input: {
       }
 
       console.log("Shutdown complete.");
+      input.threadDebugger?.log({
+        event: "runtime.shutdown.complete",
+        detail: { reason },
+      });
     })();
 
     return shutdownPromise;

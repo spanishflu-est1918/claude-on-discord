@@ -1,4 +1,4 @@
-import { type ButtonInteraction } from "discord.js";
+import type { ButtonInteraction } from "discord.js";
 import type { ClaudeRunner } from "../claude/runner";
 import type { SessionManager } from "../claude/session";
 import type { StopController } from "../claude/stop";
@@ -11,13 +11,13 @@ import {
   parseThreadWorktreeChoiceCustomId,
 } from "../discord/buttons";
 import { handleBasicButtonInteractions, type QueueNoticeInfo } from "./button-interactions";
-import type { DiffContext } from "./diff-worktree";
-import type { LiveToolTrace } from "./live-tools";
 import { handleDiffViewButton } from "./custom-buttons/diff-view-button";
 import { handleMergeCleanupButton } from "./custom-buttons/merge-cleanup-button";
 import { handleProjectSwitchButton } from "./custom-buttons/project-switch-button";
 import { handleThreadCleanupButton } from "./custom-buttons/thread-cleanup-button";
 import { handleThreadWorktreeChoiceButton } from "./custom-buttons/thread-worktree-choice-button";
+import type { DiffContext } from "./diff-worktree";
+import type { LiveToolTrace } from "./live-tools";
 import type { PendingProjectSwitch } from "./slash-commands/project-command";
 
 export async function handleCustomButtonInteraction(input: {
@@ -39,6 +39,7 @@ export async function handleCustomButtonInteraction(input: {
   setToolExpanded: (channelId: string, toolId: string, expanded: boolean) => void;
   runner: ClaudeRunner;
   stopController: StopController;
+  abortPendingRun: (channelId: string) => boolean;
 }): Promise<boolean> {
   const projectSwitch = parseProjectSwitchCustomId(input.interaction.customId);
   if (projectSwitch) {
@@ -109,7 +110,11 @@ export async function handleCustomButtonInteraction(input: {
     getToolExpanded: input.getToolExpanded,
     setToolExpanded: input.setToolExpanded,
     steerRunner: input.runner,
-    stopController: input.stopController,
+    stopController: {
+      interrupt: async (channelId) => await input.stopController.interrupt(channelId),
+      abort: (channelId) => input.stopController.abort(channelId),
+      abortPending: (channelId) => input.abortPendingRun(channelId),
+    },
   });
   if (handledBasicButton) {
     return true;

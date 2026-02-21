@@ -113,6 +113,8 @@ Minimal starter template: [.env.example](.env.example)
 
 Advanced overrides are still supported (worktree behavior, session limits, watchdog tuning, restart backoff, auth skew/nonce windows), but intentionally omitted from the default template to reduce setup friction.
 
+For deep thread/run diagnostics, enable internal tracing with `THREAD_DEBUG_TRACE=1` (optional file sink: `THREAD_DEBUG_TRACE_FILE=./data/thread-debug.log`). See [Troubleshooting](docs/TROUBLESHOOTING.md).
+
 ### Guardian mode (default `start`, recommended for mobile reliability)
 
 Run with self-healing supervision and a remote control surface:

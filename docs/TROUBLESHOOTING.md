@@ -56,6 +56,25 @@ Current behavior:
 
 If you still see `(No response text)`, verify bot is running latest commits and restarted.
 
+## Thread Runs Hanging / Stalling
+
+Enable internal thread tracing (developer-only) before restart:
+
+```bash
+THREAD_DEBUG_TRACE=1 \
+THREAD_DEBUG_TRACE_FILE=./data/thread-debug.log \
+bun start
+```
+
+What it records:
+
+- per-thread queue lifecycle (queued, started, released)
+- runner lifecycle (query start, SDK message milestones, result/error)
+- thread lifecycle events (archive/unarchive/delete)
+- runtime aborts (manual abort, stale-run reaper, shutdown)
+
+Use this when a thread appears stuck and share the relevant trace lines around the stall window.
+
 ## Attachment Return Issues
 
 Input attachments are stable.

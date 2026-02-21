@@ -5,7 +5,10 @@ function buildDeps() {
   const store = {
     systemPromptByChannel: new Map<string, string>(),
     mentionsModeByChannel: new Map<string, "default" | "required" | "off">(),
-    permissionModeByChannel: new Map<string, "default" | "plan" | "acceptEdits" | "bypassPermissions" | "delegate" | "dontAsk">(),
+    permissionModeByChannel: new Map<
+      string,
+      "default" | "plan" | "acceptEdits" | "bypassPermissions" | "delegate" | "dontAsk"
+    >(),
     activeSessionByChannel: new Map<string, string | null>(),
     modelByChannel: new Map<string, string>(),
     stopAbortCalls: [] as string[],
@@ -21,7 +24,8 @@ function buildDeps() {
     setChannelSystemPrompt: (channelId: string, text: string) => {
       store.systemPromptByChannel.set(channelId, text);
     },
-    getChannelSystemPrompt: (channelId: string) => store.systemPromptByChannel.get(channelId) ?? null,
+    getChannelSystemPrompt: (channelId: string) =>
+      store.systemPromptByChannel.get(channelId) ?? null,
     clearChannelSystemPrompt: (channelId: string) => {
       store.systemPromptByChannel.delete(channelId);
     },
@@ -79,6 +83,7 @@ function buildDeps() {
     stopControllerIsActive: () => false,
     stopControllerAbort: (channelId: string) => {
       store.stopAbortCalls.push(channelId);
+      return true;
     },
   };
 

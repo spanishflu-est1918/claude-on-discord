@@ -318,4 +318,362 @@ describe("startApp message queue behavior", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("continues processing when thread status rename hangs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-queue-thread-status-timeout-"));
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let runnerCalls = 0;
+
+    try {
+      const config: AppConfig = {
+        discordToken: "unused-token",
+        discordClientId: "unused-client",
+        discordGuildId: "unused-guild",
+        defaultWorkingDir: root,
+        databasePath: dbPath,
+        defaultModel: "sonnet",
+        autoThreadWorktree: false,
+        requireMentionInMultiUserChannels: false,
+        worktreeBootstrap: true,
+        claudePermissionMode: "bypassPermissions",
+      };
+
+      await startApp(config, {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedUserMessageHandler = options.onUserMessage as (message: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async () => {
+              runnerCalls += 1;
+              return {
+                text: "done",
+                messages: [],
+              };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedUserMessageHandler !== "function") {
+        throw new Error("user message handler was not captured");
+      }
+
+      const message = {
+        content: "hello",
+        guildId: "guild-1",
+        author: { id: "user-1" },
+        attachments: { size: 0, values: () => [] },
+        reactions: { cache: new Map() },
+        client: { user: { id: "bot-1" } },
+        react: async () => {},
+        channel: {
+          id: "thread-1",
+          isThread: () => true,
+          parentId: "parent-1",
+          name: "test-thread",
+          edit: async () =>
+            await new Promise<void>(() => {
+              // Simulate Discord edit API hanging indefinitely.
+            }),
+          send: async () => {},
+        },
+        reply: async () => ({
+          edit: async () => {},
+        }),
+      };
+
+      await Promise.race([
+        capturedUserMessageHandler(message),
+        Bun.sleep(5_000).then(() => {
+          throw new Error("run timed out while status rename was hanging");
+        }),
+      ]);
+      expect(runnerCalls).toBe(1);
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("stop cancels a stuck pre-run and allows continuing the channel", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-queue-stop-stuck-"));
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let runnerCalls = 0;
+    const stopReplies: Array<{ content?: string }> = [];
+
+    try {
+      const config: AppConfig = {
+        discordToken: "unused-token",
+        discordClientId: "unused-client",
+        discordGuildId: "unused-guild",
+        defaultWorkingDir: root,
+        databasePath: dbPath,
+        defaultModel: "sonnet",
+        autoThreadWorktree: false,
+        requireMentionInMultiUserChannels: false,
+        worktreeBootstrap: true,
+        claudePermissionMode: "bypassPermissions",
+      };
+
+      await startApp(config, {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedUserMessageHandler = options.onUserMessage as (message: unknown) => Promise<void>;
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async () => {
+              runnerCalls += 1;
+              return {
+                text: "done",
+                messages: [],
+              };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedUserMessageHandler !== "function") {
+        throw new Error("user message handler was not captured");
+      }
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      const stuckMessage = {
+        content: "first",
+        guildId: "guild-1",
+        author: { id: "user-1" },
+        attachments: { size: 0, values: () => [] },
+        reactions: { cache: new Map() },
+        client: { user: { id: "bot-1" } },
+        react: async () =>
+          await new Promise<void>(() => {
+            // never resolves: simulates a Discord API hang before runner starts
+          }),
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async () => {},
+        },
+        reply: async () => ({
+          edit: async () => {},
+        }),
+      };
+
+      const firstRun = capturedUserMessageHandler(stuckMessage);
+      await Bun.sleep(30);
+
+      await capturedSlashHandler({
+        commandName: "stop",
+        channelId: "channel-1",
+        guildId: "guild-1",
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async () => {},
+        },
+        reply: async (payload: { content?: string }) => {
+          stopReplies.push(payload);
+        },
+      });
+
+      const secondMessage = createMockMessage({
+        content: "second",
+        channelId: "channel-1",
+        guildId: "guild-1",
+      });
+      await capturedUserMessageHandler(secondMessage);
+      await firstRun;
+
+      expect(runnerCalls).toBe(1);
+      expect(
+        stopReplies.some((item) => (item.content ?? "").includes("Pending run cancelled")),
+      ).toBeTrue();
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("abort unlocks channel even when streaming status edits are stuck", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "app-queue-stop-active-"));
+    const dbPath = path.join(root, "state.sqlite");
+    let capturedUserMessageHandler: ((message: unknown) => Promise<void>) | undefined;
+    let capturedSlashHandler: ((interaction: unknown) => Promise<void>) | undefined;
+    let openedDb: { close: () => void } | undefined;
+    let runnerCalls = 0;
+    let firstRunAbortSignal: AbortSignal | undefined;
+
+    try {
+      const config: AppConfig = {
+        discordToken: "unused-token",
+        discordClientId: "unused-client",
+        discordGuildId: "unused-guild",
+        defaultWorkingDir: root,
+        databasePath: dbPath,
+        defaultModel: "sonnet",
+        autoThreadWorktree: false,
+        requireMentionInMultiUserChannels: false,
+        worktreeBootstrap: true,
+        claudePermissionMode: "bypassPermissions",
+      };
+
+      await startApp(config, {
+        openDatabase: (databasePath) => {
+          const db = openDatabase(databasePath);
+          openedDb = db;
+          return db;
+        },
+        registerSlashCommands: async () => {},
+        startDiscordClient: async (options) => {
+          capturedUserMessageHandler = options.onUserMessage as (message: unknown) => Promise<void>;
+          capturedSlashHandler = options.onSlashCommand as (interaction: unknown) => Promise<void>;
+          return {
+            destroy: () => {},
+            channels: { fetch: async () => null },
+          } as unknown as Client;
+        },
+        createRunner: () =>
+          ({
+            run: async (request: {
+              abortController?: AbortController;
+              onQueryStart?: (query: {
+                interrupt: () => Promise<void>;
+                abort: () => Promise<void>;
+                setModel: (_model?: string) => Promise<void>;
+                stopTask: (_taskId: string) => Promise<void>;
+                close: () => void;
+              }) => void;
+              onThinkingDelta?: (thinking: string) => void;
+            }) => {
+              runnerCalls += 1;
+              request.onQueryStart?.({
+                interrupt: async () => {},
+                abort: async () => {},
+                setModel: async (_model?: string) => {},
+                stopTask: async (_taskId: string) => {},
+                close: () => {},
+              });
+
+              if (runnerCalls === 1) {
+                request.onThinkingDelta?.("thinking");
+                firstRunAbortSignal = request.abortController?.signal;
+                await new Promise<void>((resolve) => {
+                  const signal = request.abortController?.signal;
+                  if (!signal) {
+                    return;
+                  }
+                  if (signal.aborted) {
+                    resolve();
+                    return;
+                  }
+                  signal.addEventListener("abort", () => resolve(), { once: true });
+                });
+                throw new Error("Operation aborted.");
+              }
+
+              return {
+                text: "done",
+                messages: [],
+              };
+            },
+          }) as never,
+        installSignalHandlers: false,
+      });
+
+      if (typeof capturedUserMessageHandler !== "function") {
+        throw new Error("user message handler was not captured");
+      }
+      if (typeof capturedSlashHandler !== "function") {
+        throw new Error("slash handler was not captured");
+      }
+
+      const firstMessage = {
+        content: "first",
+        guildId: "guild-1",
+        author: { id: "user-1" },
+        attachments: { size: 0, values: () => [] },
+        reactions: { cache: new Map() },
+        client: { user: { id: "bot-1" } },
+        react: async () => {},
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async () => {},
+        },
+        reply: async () => ({
+          edit: async () =>
+            await new Promise<void>(() => {
+              // Never resolves to simulate stuck status edit queue.
+            }),
+        }),
+      };
+
+      const firstRun = capturedUserMessageHandler(firstMessage);
+      await Bun.sleep(40);
+      expect(firstRunAbortSignal?.aborted).toBeFalse();
+
+      await capturedSlashHandler({
+        commandName: "stop",
+        channelId: "channel-1",
+        guildId: "guild-1",
+        channel: {
+          id: "channel-1",
+          isThread: () => false,
+          parentId: null,
+          send: async () => {},
+        },
+        reply: async () => {},
+      });
+
+      const secondMessage = createMockMessage({
+        content: "second",
+        channelId: "channel-1",
+        guildId: "guild-1",
+      });
+
+      const secondRun = capturedUserMessageHandler(secondMessage);
+      await Promise.race([
+        secondRun,
+        Bun.sleep(1500).then(() => {
+          throw new Error("second run did not start after abort");
+        }),
+      ]);
+      await firstRun;
+      expect(runnerCalls).toBe(2);
+    } finally {
+      openedDb?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

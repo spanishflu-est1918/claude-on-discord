@@ -6,6 +6,7 @@ export function createAppRuntimeState(): {
   pendingProjectSwitches: Map<string, { channelId: string; guildId: string; workingDir: string }>;
   pendingDiffViews: Map<string, DiffContext>;
   pendingMessageRunsByChannel: Map<string, Promise<void>>;
+  pendingRunAbortControllersByChannel: Map<string, AbortController>;
   queuedNoticesByMessageId: Map<string, QueueNoticeInfo>;
   liveToolTracesByChannel: Map<string, LiveToolTrace>;
   liveToolExpandStateByChannel: Map<string, Map<string, boolean>>;
@@ -21,6 +22,7 @@ export function createAppRuntimeState(): {
   >();
   const pendingDiffViews = new Map<string, DiffContext>();
   const pendingMessageRunsByChannel = new Map<string, Promise<void>>();
+  const pendingRunAbortControllersByChannel = new Map<string, AbortController>();
   const queuedNoticesByMessageId = new Map<string, QueueNoticeInfo>();
   const liveToolTracesByChannel = new Map<string, LiveToolTrace>();
   const liveToolExpandStateByChannel = new Map<string, Map<string, boolean>>();
@@ -54,6 +56,7 @@ export function createAppRuntimeState(): {
   const clearTransientState = (): void => {
     pendingProjectSwitches.clear();
     pendingDiffViews.clear();
+    pendingRunAbortControllersByChannel.clear();
     liveToolTracesByChannel.clear();
     liveToolExpandStateByChannel.clear();
   };
@@ -62,6 +65,7 @@ export function createAppRuntimeState(): {
     pendingProjectSwitches,
     pendingDiffViews,
     pendingMessageRunsByChannel,
+    pendingRunAbortControllersByChannel,
     queuedNoticesByMessageId,
     liveToolTracesByChannel,
     liveToolExpandStateByChannel,

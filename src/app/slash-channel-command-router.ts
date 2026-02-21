@@ -1,10 +1,17 @@
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { type ChatInputCommandInteraction, MessageFlags } from "discord.js";
 import type { ClaudeRunner } from "../claude/runner";
 import type { SessionManager } from "../claude/session";
 import type { StopController } from "../claude/stop";
 import type { ChannelMentionsMode, Repository } from "../db/repository";
 import type { ClaudePermissionMode } from "../types";
-import { canSendMessage, saveThreadBranchMeta } from "./thread-lifecycle";
+import {
+  buildMergeReportLines,
+  buildMergeSummaryPrompt,
+  compactHistory,
+  normalizeMergeSummary,
+  summarizeGitMergeOutput,
+} from "./conversation-helpers";
+import { type DiffContext, parseAheadBehind } from "./diff-worktree";
 import { handleBashCommand } from "./slash-commands/bash-command";
 import { handleBranchesCommand } from "./slash-commands/branches-command";
 import { handleCompactCommand } from "./slash-commands/compact-command";
@@ -15,19 +22,12 @@ import { handleMergeCommand } from "./slash-commands/merge-command";
 import { handleModelCommand } from "./slash-commands/model-command";
 import { handleNewCommand } from "./slash-commands/new-command";
 import { handlePrCommand } from "./slash-commands/pr-command";
-import { type PendingProjectSwitch, handleProjectCommand } from "./slash-commands/project-command";
+import { handleProjectCommand, type PendingProjectSwitch } from "./slash-commands/project-command";
 import { handleScreenshotCommand } from "./slash-commands/screenshot-command";
 import { handleStatusCommand } from "./slash-commands/status-command";
 import { handleStopCommand } from "./slash-commands/stop-command";
 import { handleWorktreeCommand } from "./slash-commands/worktree-command";
-import { type DiffContext, parseAheadBehind } from "./diff-worktree";
-import {
-  buildMergeReportLines,
-  buildMergeSummaryPrompt,
-  compactHistory,
-  normalizeMergeSummary,
-  summarizeGitMergeOutput,
-} from "./conversation-helpers";
+import { canSendMessage, saveThreadBranchMeta } from "./thread-lifecycle";
 
 export type ChannelSlashCommandRouterInput = {
   interaction: ChatInputCommandInteraction;
@@ -49,6 +49,7 @@ export type ChannelSlashCommandRouterInput = {
   rememberDiffView: (requestId: string, context: DiffContext) => void;
   pendingProjectSwitches: Map<string, PendingProjectSwitch>;
   clearSessionPermissionMode: (channelId: string) => void;
+  abortPendingRun: (channelId: string) => boolean;
   config: {
     autoThreadWorktree: boolean;
     worktreeBootstrap: boolean;
@@ -256,6 +257,7 @@ export async function handleChannelSlashCommandRoute(
         interaction: input.interaction,
         channelId: input.channelId,
         stopController: input.stopController,
+        abortPendingRun: input.abortPendingRun,
       });
       break;
     }

@@ -90,4 +90,25 @@ describe("DiscordDispatchQueue", () => {
 
     expect(attempts).toBe(1);
   });
+
+  test("emits task lifecycle events", async () => {
+    const events: string[] = [];
+    const dispatcher = new DiscordDispatchQueue({
+      maxAttempts: 3,
+      baseBackoffMs: 1,
+      maxBackoffMs: 5,
+      onEvent: (event) => {
+        events.push(event.type);
+      },
+    });
+
+    await dispatcher.enqueue("lane-events", async () => "ok");
+    await expect(
+      dispatcher.enqueue("lane-events", async () => {
+        throw new Error("fail");
+      }),
+    ).rejects.toThrow("fail");
+
+    expect(events).toEqual(["task_start", "task_success", "task_start", "task_error"]);
+  });
 });

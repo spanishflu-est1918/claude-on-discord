@@ -21,6 +21,7 @@ type BasicButtonInteractionHandlersInput = {
   stopController: {
     interrupt: (channelId: string) => Promise<boolean>;
     abort: (channelId: string) => boolean;
+    abortPending: (channelId: string) => boolean;
   };
 };
 
@@ -148,8 +149,9 @@ async function handleRunControlInteraction(
     return true;
   }
   const aborted = input.stopController.abort(control.channelId);
+  const abortedPending = !aborted ? input.stopController.abortPending(control.channelId) : false;
   await input.interaction.reply({
-    content: aborted ? "Abort signal sent." : "No active run to abort.",
+    content: aborted || abortedPending ? "Abort signal sent." : "No active run to abort.",
     flags: MessageFlags.Ephemeral,
   });
   return true;

@@ -1,6 +1,6 @@
+import type { MessageEditOptions } from "discord.js";
 import { buildStopButtons } from "../discord/buttons";
 import type { DiscordDispatchQueue } from "../discord/dispatcher";
-import type { MessageEditOptions } from "discord.js";
 import { THINKING_SPINNER_FRAMES, toStreamingPreview } from "./live-tools";
 
 const STREAM_PREVIEW_DEBOUNCE_MS = 300;
@@ -113,10 +113,11 @@ export function createStreamingStatusController(input: {
     buildFinalPreview(finalText: string): string {
       return toStreamingPreview(finalText, streamedThinking);
     },
-    async close(): Promise<void> {
+    async close(options: { drain?: boolean } = {}): Promise<void> {
       if (closePromise) {
         return await closePromise;
       }
+      const shouldDrain = options.drain ?? true;
       closePromise = (async () => {
         if (streamFlushTimer) {
           clearTimeout(streamFlushTimer);
@@ -124,7 +125,10 @@ export function createStreamingStatusController(input: {
         }
         stopSpinner();
         closed = true;
-        await statusEditQueue;
+        pendingStatusEdit = null;
+        if (shouldDrain) {
+          await statusEditQueue;
+        }
       })();
       return await closePromise;
     },

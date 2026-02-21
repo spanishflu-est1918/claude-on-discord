@@ -16,16 +16,30 @@ export type HookResult = {
  * This works correctly from within secondary worktrees too.
  */
 async function findMainWorktreePath(workingDir: string): Promise<string | null> {
-  const proc = Bun.spawn({
-    cmd: ["git", "worktree", "list", "--porcelain"],
-    cwd: workingDir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  let stdoutStream: ReadableStream<Uint8Array> | null = null;
+  let exited: Promise<number> | null = null;
+  try {
+    const proc = Bun.spawn({
+      cmd: ["git", "worktree", "list", "--porcelain"],
+      cwd: workingDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof proc.stdout === "number") {
+      return null;
+    }
+    stdoutStream = proc.stdout;
+    exited = proc.exited;
+  } catch {
+    return null;
+  }
+  if (!stdoutStream || !exited) {
+    return null;
+  }
 
   const [stdout, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    proc.exited,
+    new Response(stdoutStream).text(),
+    exited,
   ]);
 
   if (exitCode !== 0) return null;

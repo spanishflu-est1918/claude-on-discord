@@ -1,19 +1,20 @@
 import { MessageFlags } from "discord.js";
 import { captureScreenshotWithAgentBrowser } from "./app/agent-browser";
-import { ACTIVE_RUN_MAX_AGE_MS, ACTIVE_RUN_WATCHDOG_INTERVAL_MS } from "./app/constants";
-import { createRuntimeLifecycleManager } from "./app/runtime-lifecycle";
-import { createAppRuntimeState } from "./app/runtime-state";
-import { createSessionPermissionBindings } from "./app/session-permissions";
-import { handleSlashCommands } from "./app/slash-session-commands";
-import { createUserMessageHandler } from "./app/user-message-handler";
 import {
   createMentionPolicyResolver,
   createSessionPermissionModeStore,
 } from "./app/channel-policies";
+import { ACTIVE_RUN_MAX_AGE_MS, ACTIVE_RUN_WATCHDOG_INTERVAL_MS } from "./app/constants";
 import { handleCustomButtonInteraction } from "./app/custom-button-interactions";
 import { runBashCommand, runCommand } from "./app/process-utils";
+import { createRuntimeLifecycleManager } from "./app/runtime-lifecycle";
+import { createAppRuntimeState } from "./app/runtime-state";
+import { createSessionPermissionBindings } from "./app/session-permissions";
+import { handleSlashCommands } from "./app/slash-session-commands";
+import { createThreadDebuggerFromEnv } from "./app/thread-debugger";
 import { createThreadLifecycleEventHandler } from "./app/thread-lifecycle-events";
 import { createThreadLifecycleOps } from "./app/thread-lifecycle-ops";
+import { createUserMessageHandler } from "./app/user-message-handler";
 import { createWorkerHeartbeatManagerFromEnv } from "./app/worker-heartbeat";
 import { ClaudeRunner } from "./claude/runner";
 import { SessionManager } from "./claude/session";
@@ -56,11 +57,21 @@ export async function startApp(
     config.activeRunWatchdogIntervalMs ?? ACTIVE_RUN_WATCHDOG_INTERVAL_MS;
   const stopController = new StopController();
   const runner = runtimeOverrides.createRunner?.() ?? new ClaudeRunner();
+  const threadDebugger = createThreadDebuggerFromEnv();
+  if (threadDebugger.isEnabled()) {
+    threadDebugger.log({
+      event: "runtime.thread_debugger_enabled",
+      detail: {
+        pid: process.pid,
+      },
+    });
+  }
   const runtimeState = createAppRuntimeState();
   const {
     pendingProjectSwitches,
     pendingDiffViews,
     pendingMessageRunsByChannel,
+    pendingRunAbortControllersByChannel,
     queuedNoticesByMessageId,
     liveToolTracesByChannel,
     liveToolExpandStateByChannel,
@@ -88,6 +99,33 @@ export async function startApp(
         `Discord dispatcher retry lane=${laneId} attempt=${attempt} wait=${retryAfterMs}ms`,
       );
     },
+    onEvent: (event) => {
+      const laneParts = event.laneId.split(":");
+      const laneType = laneParts[0];
+      const channelId =
+        laneType === "tool" ||
+        laneType === "channel" ||
+        laneType === "status" ||
+        laneType === "thread-lifecycle"
+          ? laneParts[1]
+          : undefined;
+      threadDebugger.log({
+        event: `dispatch.${event.type}`,
+        ...(channelId ? { channelId } : {}),
+        detail: {
+          laneId: event.laneId,
+          ...(event.type === "task_retry_wait"
+            ? {
+                attempt: event.attempt,
+                retryAfterMs: event.retryAfterMs,
+                message: event.message,
+              }
+            : event.type === "task_error"
+              ? { message: event.message }
+              : {}),
+        },
+      });
+    },
   });
   let shuttingDown = false;
   let discordClient: Awaited<ReturnType<typeof startDiscordClient>> | null = null;
@@ -108,6 +146,20 @@ export async function startApp(
       ? { worktreeBootstrapCommand: config.worktreeBootstrapCommand }
       : {}),
   };
+  const abortPendingRun = (channelId: string): boolean => {
+    const pendingAbortController = pendingRunAbortControllersByChannel.get(channelId);
+    if (!pendingAbortController) {
+      return false;
+    }
+    pendingAbortController.abort();
+    pendingRunAbortControllersByChannel.delete(channelId);
+    pendingMessageRunsByChannel.delete(channelId);
+    threadDebugger.log({
+      event: "run.pending_abort_requested",
+      channelId,
+    });
+    return true;
+  };
 
   const runtimeLifecycle = createRuntimeLifecycleManager({
     stopController,
@@ -126,6 +178,7 @@ export async function startApp(
     workerHeartbeatManager,
     getDiscordClient: () => discordClient,
     closeDatabase: () => database.close(),
+    threadDebugger,
   });
   const shutdown = runtimeLifecycle.shutdown;
 
@@ -133,6 +186,7 @@ export async function startApp(
     isShuttingDown: () => shuttingDown,
     suspendedChannels,
     pendingMessageRunsByChannel,
+    pendingRunAbortControllersByChannel,
     queuedNoticesByMessageId,
     liveToolTracesByChannel,
     liveToolExpandStateByChannel,
@@ -147,6 +201,7 @@ export async function startApp(
     config: worktreeConfig,
     runCommand,
     runBashCommand,
+    threadDebugger,
   });
 
   try {
@@ -185,6 +240,7 @@ export async function startApp(
         repository,
         discordDispatch,
         getDiscordClient: () => discordClient,
+        threadDebugger,
       }),
       onButtonInteraction: async (interaction) => {
         if (shuttingDown) {
@@ -214,6 +270,7 @@ export async function startApp(
           setToolExpanded,
           runner,
           stopController,
+          abortPendingRun,
         });
         if (handledCustomButton) {
           return;
@@ -244,6 +301,7 @@ export async function startApp(
           getActiveSessionId,
           setSessionPermissionMode,
           clearSessionPermissionMode,
+          abortPendingRun,
           config: {
             ...worktreeConfig,
             defaultRequireMention: config.requireMentionInMultiUserChannels,

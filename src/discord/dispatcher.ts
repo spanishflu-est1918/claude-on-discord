@@ -5,11 +5,34 @@ export type DiscordRateLimitEvent = {
   message?: string;
 };
 
+export type DiscordDispatchEvent =
+  | {
+      type: "task_start";
+      laneId: string;
+    }
+  | {
+      type: "task_success";
+      laneId: string;
+    }
+  | {
+      type: "task_error";
+      laneId: string;
+      message?: string;
+    }
+  | {
+      type: "task_retry_wait";
+      laneId: string;
+      attempt: number;
+      retryAfterMs: number;
+      message?: string;
+    };
+
 export interface DiscordDispatchQueueOptions {
   maxAttempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   onRateLimit?: (event: DiscordRateLimitEvent) => void;
+  onEvent?: (event: DiscordDispatchEvent) => void;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -85,10 +108,23 @@ export class DiscordDispatchQueue {
         // Keep lane progression alive even when a previous operation failed.
       })
       .then(async () => {
+        this.options.onEvent?.({
+          type: "task_start",
+          laneId,
+        });
         try {
           const value = await this.executeWithRetry(laneId, task);
+          this.options.onEvent?.({
+            type: "task_success",
+            laneId,
+          });
           resolveResult(value);
         } catch (error) {
+          this.options.onEvent?.({
+            type: "task_error",
+            laneId,
+            message: error instanceof Error ? error.message : String(error),
+          });
           rejectResult(error);
         }
       });
@@ -123,6 +159,13 @@ export class DiscordDispatchQueue {
           rateLimitDelayMs ?? computeBackoffMs(attempt, this.baseBackoffMs, this.maxBackoffMs);
 
         this.options.onRateLimit?.({
+          laneId,
+          attempt,
+          retryAfterMs,
+          message: error instanceof Error ? error.message : undefined,
+        });
+        this.options.onEvent?.({
+          type: "task_retry_wait",
           laneId,
           attempt,
           retryAfterMs,

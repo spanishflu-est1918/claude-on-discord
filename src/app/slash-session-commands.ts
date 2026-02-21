@@ -1,15 +1,15 @@
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { type ChatInputCommandInteraction, MessageFlags } from "discord.js";
 import type { ClaudeRunner } from "../claude/runner";
 import type { SessionManager } from "../claude/session";
 import type { StopController } from "../claude/stop";
-import type { Repository, ChannelMentionsMode } from "../db/repository";
+import type { ChannelMentionsMode, Repository } from "../db/repository";
 import type { ClaudePermissionMode } from "../types";
 import type { DiffContext } from "./diff-worktree";
-import { maybeInheritThreadContext } from "./thread-lifecycle";
-import type { SessionSlashCommandInput } from "./slash-commands/context";
 import { handleChannelSlashCommandRoute } from "./slash-channel-command-router";
-import { handleSessionSlashCommandRoute } from "./slash-session-command-router";
+import type { SessionSlashCommandInput } from "./slash-commands/context";
 import type { PendingProjectSwitch } from "./slash-commands/project-command";
+import { handleSessionSlashCommandRoute } from "./slash-session-command-router";
+import { maybeInheritThreadContext } from "./thread-lifecycle";
 
 export type HandleSessionSlashCommandsInput = SessionSlashCommandInput & {
   commandName: string;
@@ -50,6 +50,7 @@ export type HandleSlashCommandsInput = {
   getActiveSessionId: (channelId: string) => string | null;
   setSessionPermissionMode: (channelId: string, mode: ClaudePermissionMode | "default") => void;
   clearSessionPermissionMode: (channelId: string) => void;
+  abortPendingRun: (channelId: string) => boolean;
   config: {
     autoThreadWorktree: boolean;
     worktreeBootstrap: boolean;
@@ -108,7 +109,8 @@ export async function handleSlashCommands(input: HandleSlashCommandsInput): Prom
     clearGlobalSystemPrompt: () => input.repository.clearGlobalSystemPrompt(),
     setChannelMentionsMode: (targetChannelId, mode) =>
       input.repository.setChannelMentionsMode(targetChannelId, mode as ChannelMentionsMode),
-    clearChannelMentionsMode: (targetChannelId) => input.repository.clearChannelMentionsMode(targetChannelId),
+    clearChannelMentionsMode: (targetChannelId) =>
+      input.repository.clearChannelMentionsMode(targetChannelId),
     resetSessionId: (targetChannelId) => {
       input.clearSessionPermissionMode(targetChannelId);
       input.sessions.setSessionId(targetChannelId, null);
@@ -140,6 +142,7 @@ export async function handleSlashCommands(input: HandleSlashCommandsInput): Prom
     rememberDiffView: input.rememberDiffView,
     pendingProjectSwitches: input.pendingProjectSwitches,
     clearSessionPermissionMode: input.clearSessionPermissionMode,
+    abortPendingRun: input.abortPendingRun,
     config: {
       autoThreadWorktree: input.config.autoThreadWorktree,
       worktreeBootstrap: input.config.worktreeBootstrap,

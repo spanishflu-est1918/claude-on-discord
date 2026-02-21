@@ -1,6 +1,6 @@
+import { slashActionCatalog } from "../../app/command-actions/slash-action-catalog";
 import type { ChannelMentionsMode } from "../../db/repository";
 import type { ClaudePermissionMode } from "../../types";
-import { slashActionCatalog } from "../../app/command-actions/slash-action-catalog";
 import type { McpToolDefinition } from "./types";
 
 type SessionToolDeps = {
@@ -25,7 +25,10 @@ type SessionToolDeps = {
     mode: string;
     permissionMode: ClaudePermissionMode;
   };
-  getState: (channelId: string, guildId: string) => {
+  getState: (
+    channelId: string,
+    guildId: string,
+  ) => {
     channel: { workingDir: string };
     history: Array<{ role: "user" | "assistant"; content: string }>;
   };
@@ -33,14 +36,11 @@ type SessionToolDeps = {
     history: Array<{ role: "user" | "assistant"; content: string }>,
     maxLines?: number,
   ) => string;
-  appendTurn: (
-    channelId: string,
-    turn: { role: "assistant" | "user"; content: string },
-  ) => void;
+  appendTurn: (channelId: string, turn: { role: "assistant" | "user"; content: string }) => void;
   setSessionModel: (channelId: string, model: string) => void;
   stopControllerSetModel: (channelId: string, model: string) => Promise<void>;
   stopControllerIsActive: (channelId: string) => boolean;
-  stopControllerAbort: (channelId: string) => void;
+  stopControllerAbort: (channelId: string) => boolean;
   runBashCommand: (command: string, cwd: string) => Promise<{ exitCode: number; output: string }>;
 };
 
@@ -113,7 +113,8 @@ export function createSessionSlashMcpTools(
     },
     {
       name: "discord_compact",
-      description: "Compact channel context and reset session using the same action path as /compact.",
+      description:
+        "Compact channel context and reset session using the same action path as /compact.",
       inputSchema: {
         type: "object",
         properties: {
@@ -194,7 +195,8 @@ export function createSessionSlashMcpTools(
     },
     {
       name: "discord_bash",
-      description: "Run a shell command in the channel working directory via the shared /bash action.",
+      description:
+        "Run a shell command in the channel working directory via the shared /bash action.",
       inputSchema: {
         type: "object",
         properties: {

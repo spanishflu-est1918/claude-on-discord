@@ -1,6 +1,6 @@
 import process from "node:process";
-import { handleGuardianControlRequest } from "./control-api";
 import { isLoopbackAddress } from "./config";
+import { handleGuardianControlRequest } from "./control-api";
 import { getGuardianHeartbeatAgeMs } from "./heartbeat";
 import { buildGuardianMobileUrls } from "./mobile-urls";
 import { buildGuardianStatusSnapshot } from "./status-snapshot";
@@ -27,48 +27,65 @@ export class GuardianSupervisor {
   constructor(private readonly config: GuardianConfig) {}
 
   async start(): Promise<void> {
-    await this.startWorker("initial start", { force: true });
-    this.heartbeatTimer = setInterval(() => {
-      void this.checkWorkerHeartbeat();
-    }, this.config.heartbeatCheckIntervalMs);
-    this.heartbeatTimer.unref?.();
+    try {
+      await this.startWorker("initial start", { force: true });
+      this.heartbeatTimer = setInterval(() => {
+        void this.checkWorkerHeartbeat();
+      }, this.config.heartbeatCheckIntervalMs);
+      this.heartbeatTimer.unref?.();
 
-    this.server = Bun.serve({
-      hostname: this.config.controlBind,
-      port: this.config.controlPort,
-      fetch: (request) => this.handleRequest(request),
-    });
-    this.appendLog(
-      "guardian",
-      `Control API listening on http://${this.config.controlBind}:${this.server.port}`,
-    );
-    const mobileUrls = this.buildMobileUrls();
-    if (mobileUrls.length > 0) {
-      this.appendLog("guardian", "Mobile control URL:");
-      for (const mobileUrl of mobileUrls) {
-        this.appendLog("guardian", `  ${mobileUrl}`);
+      this.server = Bun.serve({
+        hostname: this.config.controlBind,
+        port: this.config.controlPort,
+        fetch: (request) => this.handleRequest(request),
+      });
+      this.appendLog(
+        "guardian",
+        `Control API listening on http://${this.config.controlBind}:${this.server.port}`,
+      );
+      const mobileUrls = this.buildMobileUrls();
+      if (mobileUrls.length > 0) {
+        this.appendLog("guardian", "Mobile control URL:");
+        for (const mobileUrl of mobileUrls) {
+          this.appendLog("guardian", `  ${mobileUrl}`);
+        }
       }
-    }
-    if (this.config.controlSecretSource === "generated") {
-      this.appendLog(
-        "guardian",
-        `Generated control secret and saved it to ${this.config.controlSecretFile}.`,
-      );
-    }
-    if (this.config.controlSecretSource === "file") {
-      this.appendLog("guardian", `Loaded control secret from ${this.config.controlSecretFile}.`);
-    }
-    if (this.config.controlSecretSource === "generated-ephemeral") {
-      this.appendLog(
-        "guardian",
-        "Generated an in-memory control secret because persistent secret file write failed.",
-      );
-    }
-    if (!isLoopbackAddress(this.config.controlBind)) {
-      this.appendLog(
-        "guardian",
-        "Warning: control API is bound to a non-loopback address. Keep GUARDIAN_CONTROL_SECRET private.",
-      );
+      if (this.config.controlSecretSource === "generated") {
+        this.appendLog(
+          "guardian",
+          `Generated control secret and saved it to ${this.config.controlSecretFile}.`,
+        );
+      }
+      if (this.config.controlSecretSource === "file") {
+        this.appendLog("guardian", `Loaded control secret from ${this.config.controlSecretFile}.`);
+      }
+      if (this.config.controlSecretSource === "generated-ephemeral") {
+        this.appendLog(
+          "guardian",
+          "Generated an in-memory control secret because persistent secret file write failed.",
+        );
+      }
+      if (!isLoopbackAddress(this.config.controlBind)) {
+        this.appendLog(
+          "guardian",
+          "Warning: control API is bound to a non-loopback address. Keep GUARDIAN_CONTROL_SECRET private.",
+        );
+      }
+    } catch (error) {
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+      if (this.server) {
+        try {
+          this.server.stop(true);
+        } catch {
+          // Ignore control server stop failures during startup rollback.
+        }
+        this.server = null;
+      }
+      await this.stopWorker("guardian startup rollback", { manual: true });
+      throw error;
     }
   }
 
