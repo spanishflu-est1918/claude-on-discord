@@ -33,6 +33,17 @@ function parseYesNo(input: string, fallback: boolean): boolean {
   return fallback;
 }
 
+function parseGuildIdList(input: string): string[] {
+  return Array.from(
+    new Set(
+      input
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 async function askYesNo(
   rl: ReturnType<typeof createInterface>,
   prompt: string,
@@ -85,7 +96,12 @@ async function main(): Promise<void> {
         "Discord public key (optional)",
         current.DISCORD_PUBLIC_KEY ?? "",
       ),
-      discordGuildId: await ask(rl, "Discord guild/server ID", current.DISCORD_GUILD_ID ?? ""),
+      discordGuildIds: await ask(
+        rl,
+        "Discord guild/server ID(s), comma-separated",
+        current.DISCORD_GUILD_IDS ?? current.DISCORD_GUILD_ID ?? "",
+      ),
+      discordGuildId: "",
       defaultWorkingDir: await ask(
         rl,
         "Default working directory",
@@ -125,9 +141,14 @@ async function main(): Promise<void> {
     };
 
     values.discordClientId = values.applicationId;
+    const parsedGuildIds = parseGuildIdList(values.discordGuildIds ?? "");
+    values.discordGuildId = parsedGuildIds[0] ?? "";
+    values.discordGuildIds = parsedGuildIds.join(",");
 
-    if (!values.discordToken || !values.applicationId || !values.discordGuildId) {
-      throw new Error("DISCORD_TOKEN, APPLICATION_ID, and DISCORD_GUILD_ID are required.");
+    if (!values.discordToken || !values.applicationId || parsedGuildIds.length === 0) {
+      throw new Error(
+        "DISCORD_TOKEN, APPLICATION_ID, and at least one Discord guild ID are required.",
+      );
     }
 
     await writeFile(envPath, renderEnvFile(values), "utf8");
@@ -149,7 +170,7 @@ async function main(): Promise<void> {
     }
 
     console.log("\nNext:");
-    console.log("1) Open invite URL and authorize bot for your server");
+    console.log("1) Open invite URL and authorize bot for your server(s)");
     console.log("2) bun run start");
   } finally {
     rl.close();

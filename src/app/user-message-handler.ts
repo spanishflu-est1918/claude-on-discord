@@ -138,7 +138,9 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function isAbortError(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (error instanceof Error && error.message.trim() === "Operation aborted.");
+  return (
+    signal.aborted || (error instanceof Error && error.message.trim() === "Operation aborted.")
+  );
 }
 
 async function awaitWithAbortTimeout<T>(input: {
@@ -222,9 +224,48 @@ export function createUserMessageHandler(input: {
   runCommand: (command: string[], cwd: string) => Promise<{ exitCode: number; output: string }>;
   runBashCommand: (command: string, cwd: string) => Promise<{ exitCode: number; output: string }>;
   threadDebugger?: ThreadDebugger;
-}): (message: Message) => Promise<void> {
-  return async (message: Message) => {
+}): (
+  message: Message,
+  context?: {
+    observedHumanUserCount: number;
+    observedNonClaudeUserCount: number;
+    participantNonClaudeUserCount: number | null;
+    sharedChannel: boolean;
+  },
+) => Promise<void> {
+  return async (
+    message: Message,
+    context?: {
+      observedHumanUserCount: number;
+      observedNonClaudeUserCount: number;
+      participantNonClaudeUserCount: number | null;
+      sharedChannel: boolean;
+    },
+  ) => {
     const channelId = message.channel.id;
+    const authorId =
+      typeof message.author?.id === "string" && message.author.id.length > 0
+        ? message.author.id
+        : null;
+    const contentChars = typeof message.content === "string" ? message.content.length : 0;
+    const attachmentCount =
+      typeof message.attachments?.size === "number" ? message.attachments.size : 0;
+    const observedNonClaudeUserCount =
+      context?.observedNonClaudeUserCount ?? context?.observedHumanUserCount ?? 1;
+    const sharedGuildChannel =
+      Boolean(message.guildId) &&
+      (typeof context?.sharedChannel === "boolean"
+        ? context.sharedChannel
+        : observedNonClaudeUserCount > 1);
+    const directedUserId = sharedGuildChannel ? authorId : null;
+    const directedPrefix = directedUserId ? `<@${directedUserId}> ` : "";
+    const directedAllowedMentions = directedUserId
+      ? ({
+          parse: [],
+          users: [directedUserId],
+          repliedUser: true,
+        } as const)
+      : undefined;
     const runAbortController = new AbortController();
     const runAbortSignal = runAbortController.signal;
     const runId = input.threadDebugger?.nextRunId(channelId) ?? "";
@@ -235,9 +276,12 @@ export function createUserMessageHandler(input: {
       detail: {
         messageId: message.id,
         guildId: message.guildId ?? "dm",
-        authorId: message.author.id,
-        contentChars: message.content.length,
-        attachments: message.attachments.size,
+        authorId: authorId ?? "unknown",
+        contentChars,
+        attachments: attachmentCount,
+        observedNonClaudeUserCount,
+        participantNonClaudeUserCount: context?.participantNonClaudeUserCount ?? null,
+        sharedGuildChannel,
       },
     });
     if (input.suspendedChannels.has(channelId)) {
@@ -273,7 +317,7 @@ export function createUserMessageHandler(input: {
       try {
         const noticeMsg = await queueChannelMessage({
           content: "⏳ Run in progress for this channel. Queued your message.",
-          components: buildQueueNoticeButtons(channelId, message.author.id),
+          components: buildQueueNoticeButtons(channelId, authorId ?? "unknown"),
         });
         steerNoticeMessageId = noticeMsg.id;
         input.queuedNoticesByMessageId.set(noticeMsg.id, steerInfo);
@@ -427,7 +471,9 @@ export function createUserMessageHandler(input: {
           stepName: "adding reaction",
           onFailure: (error) => {
             const msg = error instanceof Error ? error.message : String(error);
-            console.warn(`non-fatal pre-run step failed in channel ${channelId}: add reaction (${msg})`);
+            console.warn(
+              `non-fatal pre-run step failed in channel ${channelId}: add reaction (${msg})`,
+            );
             input.threadDebugger?.log({
               event: "run.non_fatal_step_failed",
               channelId,
@@ -467,8 +513,9 @@ export function createUserMessageHandler(input: {
         });
         const status = await input.discordDispatch.enqueue(`channel:${channelId}`, async () => {
           return await message.reply({
-            content: toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0]),
+            content: `${directedPrefix}${toStreamingPreview("", "", THINKING_SPINNER_FRAMES[0])}`,
             components: buildStopButtons(channelId),
+            ...(directedAllowedMentions ? { allowedMentions: directedAllowedMentions } : {}),
           });
         });
         input.threadDebugger?.log({
@@ -505,6 +552,8 @@ export function createUserMessageHandler(input: {
           channelId,
           status,
           discordDispatch: input.discordDispatch,
+          contentPrefix: directedPrefix,
+          ...(directedAllowedMentions ? { allowedMentions: directedAllowedMentions } : {}),
         });
         const liveToolMessages = createLiveToolMessageController({
           channelId,
@@ -786,7 +835,8 @@ export function createUserMessageHandler(input: {
               timeoutMs: NON_FATAL_PRE_RUN_STEP_TIMEOUT_MS,
               stepName: "setting thread status",
               onFailure: (statusError) => {
-                const msg = statusError instanceof Error ? statusError.message : String(statusError);
+                const msg =
+                  statusError instanceof Error ? statusError.message : String(statusError);
                 console.warn(
                   `non-fatal abort step failed in channel ${channelId}: set thread status (${msg})`,
                 );
@@ -820,6 +870,8 @@ export function createUserMessageHandler(input: {
             runawayStop: Boolean(runawayStopReason),
             status,
             discordDispatch: input.discordDispatch,
+            contentPrefix: directedPrefix,
+            ...(directedAllowedMentions ? { allowedMentions: directedAllowedMentions } : {}),
             queueChannelMessage: async (payload) => await queueChannelMessage(payload),
           });
           await removeReaction(message, "🧠");

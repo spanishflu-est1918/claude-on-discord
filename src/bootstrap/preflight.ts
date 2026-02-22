@@ -103,6 +103,16 @@ async function checkDiscordAccess(
   config: AppConfig,
   probe: DiscordProbe,
 ): Promise<PreflightCheck[]> {
+  const guildIds = (
+    config.discordGuildIds && config.discordGuildIds.length > 0
+      ? config.discordGuildIds
+      : [config.discordGuildId]
+  )
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const resolveGuildCheckName = (guildId: string): string =>
+    guildIds.length === 1 ? "Discord guild access" : `Discord guild access (${guildId})`;
+
   try {
     const botUser = await probe.getBotUser();
     const checks: PreflightCheck[] = [];
@@ -112,11 +122,13 @@ async function checkDiscordAccess(
         status: "fail",
         detail: `Token belongs to bot id ${botUser.id}, but DISCORD_CLIENT_ID/APPLICATION_ID is ${config.discordClientId}.`,
       });
-      checks.push({
-        name: "Discord guild access",
-        status: "warn",
-        detail: "Skipped guild check because app id does not match token.",
-      });
+      for (const guildId of guildIds) {
+        checks.push({
+          name: resolveGuildCheckName(guildId),
+          status: "warn",
+          detail: "Skipped guild check because app id does not match token.",
+        });
+      }
       return checks;
     }
 
@@ -126,23 +138,25 @@ async function checkDiscordAccess(
       detail: `Authenticated as bot ${botUser.username} (${botUser.id}).`,
     });
 
-    try {
-      const guild = await probe.getGuild(config.discordGuildId);
-      checks.push({
-        name: "Discord guild access",
-        status: "ok",
-        detail: `Bot can access guild ${guild.name} (${guild.id}).`,
-      });
-    } catch (error) {
-      const inviteUrl = buildInviteUrl({
-        applicationId: config.discordClientId,
-        guildId: config.discordGuildId,
-      });
-      checks.push({
-        name: "Discord guild access",
-        status: "fail",
-        detail: `Bot cannot access guild ${config.discordGuildId}: ${formatDiscordError(error)}. Re-invite: ${inviteUrl}`,
-      });
+    for (const guildId of guildIds) {
+      try {
+        const guild = await probe.getGuild(guildId);
+        checks.push({
+          name: resolveGuildCheckName(guildId),
+          status: "ok",
+          detail: `Bot can access guild ${guild.name} (${guild.id}).`,
+        });
+      } catch (error) {
+        const inviteUrl = buildInviteUrl({
+          applicationId: config.discordClientId,
+          guildId,
+        });
+        checks.push({
+          name: resolveGuildCheckName(guildId),
+          status: "fail",
+          detail: `Bot cannot access guild ${guildId}: ${formatDiscordError(error)}. Re-invite: ${inviteUrl}`,
+        });
+      }
     }
 
     return checks;
@@ -153,11 +167,14 @@ async function checkDiscordAccess(
         status: "fail",
         detail: `Bot token check failed: ${formatDiscordError(error)}`,
       },
-      {
-        name: "Discord guild access",
-        status: "warn",
-        detail: "Skipped guild check because authentication failed.",
-      },
+      ...guildIds.map(
+        (guildId) =>
+          ({
+            name: resolveGuildCheckName(guildId),
+            status: "warn",
+            detail: "Skipped guild check because authentication failed.",
+          }) satisfies PreflightCheck,
+      ),
     ];
   }
 }

@@ -10,6 +10,8 @@ const ARCH   = `${GITHUB}/blob/master/docs/ARCHITECTURE.md`;
 const features = [
   { title: 'thread-branching',     icon: '#', description: 'Threads inherit parent context. <code class="text-[#5865F2]">/diff</code>, <code class="text-[#5865F2]">/pr</code>, git worktrees. Full branch workflow.' },
   { title: 'per-channel-sessions', icon: '#', description: 'Working dir, model, history, system prompt &mdash; per channel. Switch projects by switching channels.' },
+  { title: 'multi-guild',          icon: '#', description: 'Register once, run across multiple Discord servers. Configure with <code class="text-[#5865F2]">DISCORD_GUILD_IDS</code>.' },
+  { title: 'shared-channel-guards', icon: '#', description: 'In shared guild channels, explicit mention is enforced before runs start. Bots can still steer by mentioning <code class="text-[#5865F2]">@hermes_claude</code>.' },
   { title: 'live-streaming',       icon: '#', description: 'Text and thinking stream into one message. <strong class="text-[#DBDEE1]">Interrupt</strong> or <strong class="text-[#DBDEE1]">Abort</strong> mid-run.' },
   { title: 'pr-management',        icon: '#', description: '<code class="text-[#5865F2]">/pr open</code>, <code class="text-[#5865F2]">draft</code>, <code class="text-[#5865F2]">status</code>, <code class="text-[#5865F2]">merge</code>. Full GitHub workflow, safety checks included.' },
   { title: 'system-prompts',       icon: '#', description: 'One channel is your Rails expert. Another is your TS reviewer. Prompts persist.' },

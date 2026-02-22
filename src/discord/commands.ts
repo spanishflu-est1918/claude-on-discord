@@ -276,22 +276,39 @@ export async function registerSlashCommands(input: {
   token: string;
   clientId: string;
   guildId?: string;
+  guildIds?: string[];
 }): Promise<void> {
   const rest = new REST({ version: "10" }).setToken(input.token);
   const body = getSlashCommandDefinitions();
+  const resolvedGuildIds = Array.from(
+    new Set(
+      (input.guildIds && input.guildIds.length > 0
+        ? input.guildIds
+        : input.guildId
+          ? [input.guildId]
+          : []
+      )
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
 
-  if (input.guildId) {
-    try {
-      await rest.put(Routes.applicationGuildCommands(input.clientId, input.guildId), { body });
-      console.log(`Registered ${body.length} guild slash command(s).`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Missing Access") || message.includes("50001")) {
-        throw new Error(
-          `Missing access to guild ${input.guildId}. Ensure the bot is invited to that server and has application.commands scope.`,
+  if (resolvedGuildIds.length > 0) {
+    for (const [index, guildId] of resolvedGuildIds.entries()) {
+      try {
+        await rest.put(Routes.applicationGuildCommands(input.clientId, guildId), { body });
+        console.log(
+          `Registered ${body.length} guild slash command(s) for ${guildId} (${index + 1}/${resolvedGuildIds.length}).`,
         );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("Missing Access") || message.includes("50001")) {
+          throw new Error(
+            `Missing access to guild ${guildId}. Ensure the bot is invited to that server and has application.commands scope.`,
+          );
+        }
+        throw error;
       }
-      throw error;
     }
     return;
   }

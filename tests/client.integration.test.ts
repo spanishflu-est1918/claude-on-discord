@@ -59,6 +59,68 @@ describe("Discord client integration routing", () => {
     client.destroy();
   });
 
+  test("accepts explicit mention from external bot authors", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: true, id: "other-bot" },
+      content: "<@bot-1> ping",
+      attachments: { size: 0 },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: {
+        has: () => true,
+        users: { has: (id: string) => id === "bot-1" },
+      },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["<@bot-1> ping"]);
+    client.destroy();
+  });
+
+  test("ignores Discord system/service messages", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false },
+      system: true,
+      type: 7,
+      content: "SPANISH FLU welcomes @hermes_claude",
+      attachments: { size: 0 },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false },
+      system: false,
+      type: 0,
+      content: "hello",
+      attachments: { size: 0 },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["hello"]);
+    client.destroy();
+  });
+
   test("deduplicates repeated messageCreate events with the same message id", async () => {
     const seen: string[] = [];
     const client = createDiscordClient({
@@ -86,7 +148,7 @@ describe("Discord client integration routing", () => {
     client.destroy();
   });
 
-  test("requires explicit mention in multi-user guild channels when enabled", async () => {
+  test("requires explicit mention in guild channels when shared-mention policy is enabled", async () => {
     const seen: string[] = [];
     const client = createDiscordClient({
       token: "unused",
@@ -103,7 +165,13 @@ describe("Discord client integration routing", () => {
       guildId: "guild-1",
       content,
       attachments: { size: 0 },
-      channel: { id: "channel-1" },
+      channel: {
+        id: "channel-1",
+        members: {
+          size: 3,
+          has: (id: string) => id === "bot-1" || id === "u1" || id === "u2",
+        },
+      },
       client: { user: { id: "bot-1" } },
       mentions: {
         has: () => mentionBot,
@@ -118,7 +186,145 @@ describe("Discord client integration routing", () => {
     emitEvent(client, "messageCreate", makeMessage("u1", "<@!bot-1> mentioned too", false));
 
     await Bun.sleep(0);
-    expect(seen).toEqual(["hello", "<@bot-1> mentioned", "<@!bot-1> mentioned too"]);
+    expect(seen).toEqual(["<@bot-1> mentioned", "<@!bot-1> mentioned too"]);
+    client.destroy();
+  });
+
+  test("defaults to strict mention requirement when participant data is unavailable", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: true,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "first from user",
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: {
+        has: () => false,
+        users: { has: () => false },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "<@bot-1> second with mention",
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: {
+        has: () => true,
+        users: { has: (id: string) => id === "bot-1" },
+      },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["<@bot-1> second with mention"]);
+    client.destroy();
+  });
+
+  test("passes observed and participant-based channel context to user message handler", async () => {
+    const counts: Array<{
+      humans: number;
+      nonClaude: number;
+      participantNonClaude: number | null;
+      shared: boolean;
+    }> = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: false,
+      onUserMessage: async (_message, context) => {
+        counts.push({
+          humans: context?.observedHumanUserCount ?? -1,
+          nonClaude: context?.observedNonClaudeUserCount ?? -1,
+          participantNonClaude: context?.participantNonClaudeUserCount ?? null,
+          shared: context?.sharedChannel ?? false,
+        });
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "hello",
+      attachments: { size: 0 },
+      channel: {
+        id: "channel-ctx",
+        members: { size: 3, has: (id: string) => id === "bot-1" || id === "u1" || id === "u2" },
+      },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: { has: () => false, users: { has: () => false } },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: true, id: "other-bot" },
+      guildId: "guild-1",
+      content: "<@bot-1> ping",
+      attachments: { size: 0 },
+      channel: {
+        id: "channel-ctx",
+        members: {
+          size: 4,
+          has: (id: string) => id === "bot-1" || id === "u1" || id === "u2" || id === "other-bot",
+        },
+      },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: { has: () => true, users: { has: (id: string) => id === "bot-1" } },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(counts).toEqual([
+      { humans: 1, nonClaude: 1, participantNonClaude: null, shared: true },
+      { humans: 1, nonClaude: 2, participantNonClaude: null, shared: true },
+    ]);
+    client.destroy();
+  });
+
+  test("uses thread participant count to skip mention requirement when only one non-Claude participant exists", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: true,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "thread hello",
+      attachments: { size: 0 },
+      channel: {
+        id: "thread-1",
+        isThread: () => true,
+        memberCount: 2,
+      },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: { has: () => false, users: { has: () => false } },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["thread hello"]);
     client.destroy();
   });
 
@@ -154,6 +360,106 @@ describe("Discord client integration routing", () => {
 
     await Bun.sleep(0);
     expect(seen).toEqual(["first", "second"]);
+    client.destroy();
+  });
+
+  test("enforces immediate mention when callback returns always", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      shouldRequireMentionForMessage: () => "always",
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    const makeMessage = (content: string, mentionBot: boolean) => ({
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content,
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1" } },
+      mentions: {
+        has: () => mentionBot,
+        users: { has: (id: string) => mentionBot && id === "bot-1" },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", makeMessage("plain hello", false));
+    emitEvent(client, "messageCreate", makeMessage("<@bot-1> hello", true));
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["<@bot-1> hello"]);
+    client.destroy();
+  });
+
+  test("enforces mention when inGuild() is true even if guildId is missing", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      shouldRequireMentionForMessage: () => "always",
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    const makeMessage = (content: string, mentionBot: boolean) => ({
+      author: { bot: false, id: "u1" },
+      guildId: null,
+      inGuild: () => true,
+      content,
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1" } },
+      mentions: {
+        has: () => mentionBot,
+        users: { has: (id: string) => mentionBot && id === "bot-1" },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", makeMessage("plain hello", false));
+    emitEvent(client, "messageCreate", makeMessage("<@bot-1> hello", true));
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["<@bot-1> hello"]);
+    client.destroy();
+  });
+
+  test("accepts @username text mention fallback when mention objects are unavailable", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      shouldRequireMentionForMessage: () => true,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "@hermes_claude please check this",
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: {
+        has: () => false,
+        users: { has: () => false },
+      },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["@hermes_claude please check this"]);
     client.destroy();
   });
 

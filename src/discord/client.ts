@@ -6,16 +6,25 @@ import {
   GatewayIntentBits,
   type Message,
   MessageFlags,
+  MessageType,
   Partials,
 } from "discord.js";
 
 export interface DiscordClientOptions {
   token: string;
-  onUserMessage: (message: Message) => Promise<void>;
+  onUserMessage: (
+    message: Message,
+    context?: {
+      observedHumanUserCount: number;
+      observedNonClaudeUserCount: number;
+      participantNonClaudeUserCount: number | null;
+      sharedChannel: boolean;
+    },
+  ) => Promise<void>;
   onSlashCommand: (interaction: ChatInputCommandInteraction) => Promise<void>;
   onButtonInteraction: (interaction: ButtonInteraction) => Promise<void>;
   requireMentionInMultiUserChannels?: boolean;
-  shouldRequireMentionForMessage?: (message: Message) => boolean;
+  shouldRequireMentionForMessage?: (message: Message) => boolean | "always";
   onGatewayDisconnect?: (code: number) => void;
   onGatewayReconnecting?: () => void;
   onGatewayResume?: (replayedEvents: number) => void;
@@ -61,10 +70,103 @@ function hasExplicitBotMention(message: Message, botId: string | null): boolean 
     }
   }
   if (!botId) {
+    // Fall through to @username style text mention checks.
+  } else {
+    const mentionPattern = new RegExp(`<@!?${escapeRegExp(botId)}>`);
+    if (mentionPattern.test(message.content)) {
+      return true;
+    }
+  }
+
+  const botUser =
+    (
+      message as unknown as {
+        client?: { user?: { username?: string; globalName?: string | null } };
+      }
+    ).client?.user ?? {};
+  const candidateNames = [botUser.username, botUser.globalName]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+  const content = message.content;
+  for (const name of candidateNames) {
+    const atNamePattern = new RegExp(`(^|\\s)@${escapeRegExp(name)}(\\b|\\s|$)`, "i");
+    if (atNamePattern.test(content)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isGuildMessage(message: Message): boolean {
+  if (typeof message.inGuild === "function") {
+    try {
+      return message.inGuild();
+    } catch {
+      // Fall through to guildId check.
+    }
+  }
+  return typeof message.guildId === "string" && message.guildId.length > 0;
+}
+
+function collectionSize(value: unknown): number | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const typed = value as { size?: unknown };
+  if (typeof typed.size === "number") {
+    return typed.size;
+  }
+  return null;
+}
+
+function collectionHasUser(value: unknown, userId: string | null): boolean {
+  if (!userId || !value || typeof value !== "object") {
     return false;
   }
-  const mentionPattern = new RegExp(`<@!?${escapeRegExp(botId)}>`);
-  return mentionPattern.test(message.content);
+  const typed = value as { has?: (id: string) => boolean };
+  if (typeof typed.has !== "function") {
+    return false;
+  }
+  try {
+    return typed.has(userId);
+  } catch {
+    return false;
+  }
+}
+
+function estimateNonClaudeParticipantCount(message: Message, selfId: string | null): number | null {
+  const channel = message.channel as unknown as {
+    isThread?: () => boolean;
+    memberCount?: number | null;
+    members?: unknown;
+  };
+
+  if (typeof channel.isThread === "function") {
+    try {
+      if (channel.isThread()) {
+        if (typeof channel.memberCount === "number") {
+          return Math.max(0, channel.memberCount - 1);
+        }
+        const threadMembers =
+          (
+            channel.members as
+              | { cache?: unknown; has?: (id: string) => boolean; size?: number }
+              | undefined
+          )?.cache ?? channel.members;
+        const threadMemberCount = collectionSize(threadMembers);
+        if (threadMemberCount !== null) {
+          const selfAdjustment = selfId && collectionHasUser(threadMembers, selfId) ? 1 : 0;
+          return Math.max(0, threadMemberCount - selfAdjustment);
+        }
+      }
+    } catch {
+      // Fall through to unknown participant count.
+    }
+  }
+  // For regular guild text channels we don't have reliable participant counts
+  // without privileged member intent, so force strict mention mode via null.
+  return null;
 }
 
 export function createDiscordClient(options: DiscordClientOptions): Client {
@@ -104,6 +206,7 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
   });
 
   const observedHumanSendersByChannel = new Map<string, Set<string>>();
+  const observedNonClaudeSendersByChannel = new Map<string, Set<string>>();
   const recentlySeenMessageIds = new Map<string, number>();
 
   const shouldSkipDuplicateMessage = (messageId: string): boolean => {
@@ -130,42 +233,80 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
   };
 
   client.on("messageCreate", async (message) => {
+    const channelId =
+      typeof message.channel?.id === "string" && message.channel.id.length > 0
+        ? message.channel.id
+        : "unknown";
+    const selfId =
+      typeof client.user?.id === "string"
+        ? client.user.id
+        : typeof message.client?.user?.id === "string"
+          ? message.client.user.id
+          : null;
+    const authorId = typeof message.author.id === "string" ? message.author.id : null;
+    if (authorId && authorId !== selfId) {
+      const observedNonClaude =
+        observedNonClaudeSendersByChannel.get(channelId) ?? new Set<string>();
+      observedNonClaude.add(authorId);
+      observedNonClaudeSendersByChannel.set(channelId, observedNonClaude);
+
+      if (!message.author.bot) {
+        const observedHumans = observedHumanSendersByChannel.get(channelId) ?? new Set<string>();
+        observedHumans.add(authorId);
+        observedHumanSendersByChannel.set(channelId, observedHumans);
+      }
+    }
+
     if (message.author.bot) {
+      if (selfId && authorId === selfId) {
+        return;
+      }
+      // Allow bot-to-bot steering only when explicitly mentioned.
+      if (!hasExplicitBotMention(message, selfId)) {
+        return;
+      }
+    }
+    // Ignore Discord system/service events (join/welcome/pins/boost/etc.).
+    const isSystemOrServiceMessage =
+      message.system ||
+      (typeof message.type === "number" &&
+        message.type !== MessageType.Default &&
+        message.type !== MessageType.Reply);
+    if (isSystemOrServiceMessage) {
       return;
     }
     if (typeof message.id === "string" && shouldSkipDuplicateMessage(message.id)) {
       return;
     }
+    const observedHumanUserCount = observedHumanSendersByChannel.get(channelId)?.size ?? 0;
+    const observedNonClaudeUserCount = observedNonClaudeSendersByChannel.get(channelId)?.size ?? 0;
+    const participantNonClaudeUserCount = isGuildMessage(message)
+      ? estimateNonClaudeParticipantCount(message, selfId)
+      : null;
+    const sharedChannel =
+      isGuildMessage(message) &&
+      (participantNonClaudeUserCount === null ? true : participantNonClaudeUserCount > 1);
     const content = message.content.trim();
     if (!content && message.attachments.size === 0) {
       return;
     }
-    const requireMention =
+    const mentionPolicy =
       options.shouldRequireMentionForMessage?.(message) ??
       options.requireMentionInMultiUserChannels;
-    if (requireMention && message.guildId) {
-      const senderId = typeof message.author.id === "string" ? message.author.id : "";
-      if (senderId) {
-        const seenInChannel = observedHumanSendersByChannel.get(message.channel.id) ?? new Set();
-        seenInChannel.add(senderId);
-        observedHumanSendersByChannel.set(message.channel.id, seenInChannel);
-
-        if (seenInChannel.size > 1) {
-          const botId =
-            typeof client.user?.id === "string"
-              ? client.user.id
-              : typeof message.client.user?.id === "string"
-                ? message.client.user.id
-                : null;
-          if (!hasExplicitBotMention(message, botId)) {
-            return;
-          }
-        }
+    const requireMention = mentionPolicy === "always" || (mentionPolicy === true && sharedChannel);
+    if (requireMention && isGuildMessage(message)) {
+      if (!hasExplicitBotMention(message, selfId)) {
+        return;
       }
     }
 
     try {
-      await options.onUserMessage(message);
+      await options.onUserMessage(message, {
+        observedHumanUserCount,
+        observedNonClaudeUserCount,
+        participantNonClaudeUserCount,
+        sharedChannel,
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`message handler failed: ${detail}`);

@@ -102,7 +102,8 @@ Copy `.env.example` → `.env`:
 # Required
 DISCORD_TOKEN=            # Discord bot token
 APPLICATION_ID=           # Discord application ID
-DISCORD_GUILD_ID=         # Your server ID
+DISCORD_GUILD_IDS=        # Comma-separated server IDs (preferred)
+DISCORD_GUILD_ID=         # Single server ID fallback (legacy)
 
 # Optional guardian control overrides
 GUARDIAN_CONTROL_SECRET=
@@ -190,7 +191,6 @@ Security notes:
 - `→` MCP parity for slash commands — expose every slash command as an MCP tool backed by the same action/service implementation
 - `→` Agent-guided `/fork` tool — Claude proposes and creates a new thread lane after explicit user confirmation
 - `→` PR review conductor — structured review buttons with targeted prompts
-- `→` Multi-guild support
 - `→` Orphan process reaper — detect/kill stale Claude subprocesses and clear stuck channel run state
 - `→` Codex support — run OpenAI Codex CLI as an alternative agent, per channel
 

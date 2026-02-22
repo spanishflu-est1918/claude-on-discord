@@ -211,12 +211,21 @@ export async function startApp(
       token: config.discordToken,
       clientId: config.discordClientId,
       guildId: config.discordGuildId,
+      guildIds: config.discordGuildIds,
     });
 
     discordClient = await startDiscordClientImpl({
       token: config.discordToken,
-      shouldRequireMentionForMessage: (message) =>
-        resolveMentionRequirementForChannel(message.channel.id).requireMention,
+      shouldRequireMentionForMessage: (message) => {
+        const mentionPolicy = resolveMentionRequirementForChannel(message.channel.id);
+        if (mentionPolicy.mode === "required") {
+          return "always";
+        }
+        if (mentionPolicy.mode === "off") {
+          return false;
+        }
+        return config.requireMentionInMultiUserChannels;
+      },
       onGatewayDisconnect: (code) => {
         if (shuttingDown) {
           return;

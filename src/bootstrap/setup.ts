@@ -6,6 +6,7 @@ export type SetupValues = {
   discordClientId?: string;
   discordPublicKey?: string;
   discordGuildId: string;
+  discordGuildIds?: string;
   defaultWorkingDir: string;
   databasePath: string;
   defaultModel: string;
@@ -55,12 +56,14 @@ export function parseEnvFile(content: string): Record<string, string> {
 }
 
 export function renderEnvFile(values: SetupValues): string {
+  const normalizedGuildIds = values.discordGuildIds?.trim() || values.discordGuildId;
   const rows = [
     "# claude-on-discord runtime configuration",
     `DISCORD_TOKEN=${values.discordToken}`,
     `APPLICATION_ID=${values.applicationId}`,
     `DISCORD_CLIENT_ID=${values.discordClientId ?? values.applicationId}`,
     `DISCORD_PUBLIC_KEY=${values.discordPublicKey ?? ""}`,
+    `DISCORD_GUILD_IDS=${normalizedGuildIds}`,
     `DISCORD_GUILD_ID=${values.discordGuildId}`,
     `DEFAULT_WORKING_DIR=${values.defaultWorkingDir}`,
     `DATABASE_PATH=${values.databasePath}`,

@@ -97,4 +97,46 @@ describe("startup preflight", () => {
       ),
     ).toBe(true);
   });
+
+  test("checks every configured guild id in multi-guild mode", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "preflight-multi-"));
+    const workingDir = path.join(root, "work");
+    const databasePath = path.join(root, "data", "bot.sqlite");
+    await mkdir(workingDir, { recursive: true });
+
+    const requestedGuildIds: string[] = [];
+    const report = await runPreflightChecks(
+      createConfig({
+        defaultWorkingDir: workingDir,
+        databasePath,
+        discordGuildId: "g1",
+        discordGuildIds: ["g1", "g2"],
+      }),
+      {
+        discordProbe: {
+          getBotUser: async () => ({ id: "123", username: "hermes" }),
+          getGuild: async (guildId) => {
+            requestedGuildIds.push(guildId);
+            if (guildId === "g2") {
+              throw new Error("Missing Access");
+            }
+            return { id: guildId, name: `Guild ${guildId}` };
+          },
+        },
+      },
+    );
+
+    expect(requestedGuildIds).toEqual(["g1", "g2"]);
+    expect(report.hasFailures).toBe(true);
+    expect(
+      report.checks.some(
+        (check) => check.name === "Discord guild access (g1)" && check.status === "ok",
+      ),
+    ).toBe(true);
+    expect(
+      report.checks.some(
+        (check) => check.name === "Discord guild access (g2)" && check.status === "fail",
+      ),
+    ).toBe(true);
+  });
 });

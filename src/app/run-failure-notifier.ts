@@ -11,15 +11,28 @@ export async function notifyRunFailure(input: {
   runawayStop: boolean;
   status: EditableStatusMessage;
   discordDispatch: DiscordDispatchQueue;
+  contentPrefix?: string;
+  allowedMentions?: MessageEditOptions["allowedMentions"];
   queueChannelMessage: (payload: string) => Promise<unknown>;
 }): Promise<void> {
-  const { channelId, msg, runawayStop, status, discordDispatch, queueChannelMessage } = input;
+  const {
+    channelId,
+    msg,
+    runawayStop,
+    status,
+    discordDispatch,
+    queueChannelMessage,
+    contentPrefix,
+    allowedMentions,
+  } = input;
+  const responseContent = `${contentPrefix ?? ""}${runawayStop ? "⚠️" : "❌"} ${msg}`;
   let surfacedByStatus = false;
   try {
     await discordDispatch.enqueue(`status:${channelId}`, async () => {
       await status.edit({
-        content: `${runawayStop ? "⚠️" : "❌"} ${msg}`,
+        content: responseContent,
         components: [],
+        ...(allowedMentions ? { allowedMentions } : {}),
       });
     });
     surfacedByStatus = true;
@@ -28,7 +41,7 @@ export async function notifyRunFailure(input: {
   }
   if (!surfacedByStatus) {
     try {
-      await queueChannelMessage(`${runawayStop ? "⚠️" : "❌"} ${msg}`);
+      await queueChannelMessage(responseContent);
     } catch (notifyError) {
       const detail = notifyError instanceof Error ? notifyError.message : String(notifyError);
       console.error(`failed to send failure notice for ${channelId}: ${detail}`);

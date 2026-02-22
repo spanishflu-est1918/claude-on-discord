@@ -7,7 +7,8 @@ const envSchema = z.object({
   APPLICATION_ID: z.string().trim().optional(),
   DISCORD_CLIENT_ID: z.string().trim().optional(),
   DISCORD_PUBLIC_KEY: z.string().trim().optional(),
-  DISCORD_GUILD_ID: z.string().trim().min(1, "DISCORD_GUILD_ID is required"),
+  DISCORD_GUILD_ID: z.string().trim().optional(),
+  DISCORD_GUILD_IDS: z.string().trim().optional(),
   DEFAULT_WORKING_DIR: z.string().trim().default("~/www"),
   DATABASE_PATH: z.string().trim().default("./data/claude-on-discord.sqlite"),
   DEFAULT_MODEL: z.string().trim().default("sonnet"),
@@ -29,6 +30,7 @@ export type AppConfig = {
   discordClientId: string;
   discordPublicKey?: string;
   discordGuildId: string;
+  discordGuildIds?: string[];
   defaultWorkingDir: string;
   databasePath: string;
   defaultModel: string;
@@ -96,6 +98,22 @@ function expandHome(inputPath: string): string {
   return path.join(home, inputPath.slice(2));
 }
 
+function parseGuildIds(input: { DISCORD_GUILD_ID?: string; DISCORD_GUILD_IDS?: string }): string[] {
+  const parsed = [
+    ...(input.DISCORD_GUILD_IDS?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean) ?? []),
+    ...(input.DISCORD_GUILD_ID?.trim() ? [input.DISCORD_GUILD_ID.trim()] : []),
+  ];
+  const deduped = Array.from(new Set(parsed));
+  if (deduped.length === 0) {
+    throw new Error(
+      "Invalid environment configuration: DISCORD_GUILD_IDS (or DISCORD_GUILD_ID) is required",
+    );
+  }
+  return deduped;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
@@ -108,6 +126,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!discordClientId) {
     throw new Error(
       "Invalid environment configuration: APPLICATION_ID (or DISCORD_CLIENT_ID) is required",
+    );
+  }
+  const discordGuildIds = parseGuildIds(value);
+  const discordGuildId = discordGuildIds[0];
+  if (!discordGuildId) {
+    throw new Error(
+      "Invalid environment configuration: DISCORD_GUILD_IDS (or DISCORD_GUILD_ID) is required",
     );
   }
 
@@ -154,7 +179,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     discordToken: value.DISCORD_TOKEN,
     discordClientId,
     ...(value.DISCORD_PUBLIC_KEY ? { discordPublicKey: value.DISCORD_PUBLIC_KEY } : {}),
-    discordGuildId: value.DISCORD_GUILD_ID,
+    discordGuildId,
+    discordGuildIds,
     defaultWorkingDir: resolvedWorkingDir,
     databasePath: resolvedDbPath,
     defaultModel: value.DEFAULT_MODEL,

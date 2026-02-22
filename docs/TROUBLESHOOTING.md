@@ -5,7 +5,7 @@
 Checks:
 
 1. Confirm bot is invited with `bot` and `applications.commands` scopes.
-2. Confirm `DISCORD_GUILD_ID` matches the target server.
+2. Confirm `DISCORD_GUILD_IDS` includes the target server (or `DISCORD_GUILD_ID` matches if using legacy single-guild config).
 3. Restart bot to re-register commands.
 4. If needed, re-run `bun run init` and re-invite with fresh URL.
 

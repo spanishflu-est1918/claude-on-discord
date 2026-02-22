@@ -45,6 +45,7 @@ Sensitive identifiers (not secret but should be handled carefully):
 
 - `APPLICATION_ID`
 - `DISCORD_PUBLIC_KEY`
+- `DISCORD_GUILD_IDS`
 - `DISCORD_GUILD_ID`
 
 ## Incident Response

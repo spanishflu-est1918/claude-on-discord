@@ -34,6 +34,7 @@ describe("bootstrap setup helpers", () => {
       discordClientId: "app",
       discordPublicKey: "pub",
       discordGuildId: "guild",
+      discordGuildIds: "guild,guild-2",
       defaultWorkingDir: "~/www",
       databasePath: "./data/db.sqlite",
       defaultModel: "sonnet",
@@ -46,6 +47,7 @@ describe("bootstrap setup helpers", () => {
     const content = renderEnvFile(values);
     expect(content).toContain("DISCORD_TOKEN=token");
     expect(content).toContain("APPLICATION_ID=app");
+    expect(content).toContain("DISCORD_GUILD_IDS=guild,guild-2");
     expect(content).toContain("DISCORD_GUILD_ID=guild");
     expect(content).toContain("AUTO_THREAD_WORKTREE=false");
     expect(content).toContain("REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=true");

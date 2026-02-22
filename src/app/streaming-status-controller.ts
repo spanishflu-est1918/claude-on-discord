@@ -16,8 +16,12 @@ export function createStreamingStatusController(input: {
   channelId: string;
   status: EditableStatusMessage;
   discordDispatch: DiscordDispatchQueue;
+  contentPrefix?: string;
+  allowedMentions?: MessageEditOptions["allowedMentions"];
 }) {
   const { channelId, status, discordDispatch } = input;
+  const contentPrefix = input.contentPrefix ?? "";
+  const allowedMentions = input.allowedMentions;
   let streamedText = "";
   let streamedThinking = "";
   let closed = false;
@@ -29,8 +33,15 @@ export function createStreamingStatusController(input: {
   let pendingStatusEdit: StatusEdit | null = null;
   let closePromise: Promise<void> | null = null;
 
+  const withPrefix = (content: string): string => {
+    if (!contentPrefix) {
+      return content;
+    }
+    return `${contentPrefix}${content}`;
+  };
+
   const queueStatusEdit = (content: string, includeButtons: boolean): Promise<void> => {
-    pendingStatusEdit = { content, includeButtons };
+    pendingStatusEdit = { content: withPrefix(content), includeButtons };
     if (statusEditInFlight) {
       return statusEditQueue;
     }
@@ -45,6 +56,7 @@ export function createStreamingStatusController(input: {
             await status.edit({
               content: edit.content,
               components: edit.includeButtons ? buildStopButtons(channelId) : [],
+              ...(allowedMentions ? { allowedMentions } : {}),
             });
           });
         } catch {
@@ -111,7 +123,7 @@ export function createStreamingStatusController(input: {
       scheduleStreamPreview();
     },
     buildFinalPreview(finalText: string): string {
-      return toStreamingPreview(finalText, streamedThinking);
+      return withPrefix(toStreamingPreview(finalText, streamedThinking));
     },
     async close(options: { drain?: boolean } = {}): Promise<void> {
       if (closePromise) {

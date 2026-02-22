@@ -35,11 +35,11 @@ In your new application, go to the **Bot** tab on the left sidebar.
 - Go to the **General Information** tab
 - Copy **Application ID** — this is your `APPLICATION_ID`
 
-**Server (Guild) ID:**
+**Server (Guild) ID(s):**
 - Open Discord, go to your server
 - Right-click the server name → **Copy Server ID**
 - (If you don't see this option: Settings → Advanced → enable Developer Mode first)
-- This is your `DISCORD_GUILD_ID`
+- This is your `DISCORD_GUILD_ID` (single server) or part of `DISCORD_GUILD_IDS` (comma-separated list)
 
 ---
 
@@ -55,7 +55,7 @@ bun run setup
 The setup wizard will ask for:
 - Discord bot token → paste from step 2
 - Application ID → paste from step 3
-- Guild/server ID → paste from step 3
+- Guild/server ID(s) → paste from step 3 (comma-separated for multiple servers)
 - Default working directory → your projects folder (e.g. `~/www` or `~/code`)
 
 It writes a `.env` file and prints an invite URL.
