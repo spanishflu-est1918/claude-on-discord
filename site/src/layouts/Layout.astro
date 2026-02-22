@@ -22,9 +22,15 @@ const {
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+      @font-face {
+        font-family: 'Geist';
+        src: url('/fonts/GeistVariable.woff2') format('woff2');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
+    </style>
   </head>
   <body class="bg-[#1E1F22] text-[#DBDEE1] font-sans antialiased">
     <slot />
@@ -51,7 +57,7 @@ const {
 
   * { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
 
-  body { font-family: 'Inter', 'gg sans', 'Noto Sans', sans-serif; }
+  body { font-family: 'Geist', 'gg sans', 'Noto Sans', sans-serif; }
 
   code, pre, .mono {
     font-family: 'Fira Code', 'Consolas', ui-monospace, monospace;
