@@ -1,0 +1,65 @@
+# claude-on-discord
+
+Claude Code running in Discord. Send messages in a channel, Claude executes on your local machine and streams output back. Each channel is an independent session with its own working directory, model, and system prompt.
+
+## What it is
+
+- A Discord bot that wraps the Claude Agent SDK
+- Claude Code runs locally — your code never leaves your machine
+- No extra API cost — reuses your existing Claude Code credentials
+- MIT licensed, self-hosted
+
+## Prerequisites
+
+- [Bun](https://bun.sh) runtime
+- [Claude Code](https://claude.ai/code) installed and authenticated
+- A Discord bot token (free to create at discord.com/developers)
+
+## Install
+
+```bash
+git clone https://github.com/spanishflu-est1918/claude-on-discord
+cd claude-on-discord && bun install
+bun run setup   # interactive wizard: writes .env, prints bot invite URL
+bun start
+```
+
+## Core concepts
+
+- **Channel = project** — each channel has its own working directory and session
+- **Thread = branch** — `/fork` creates a thread that inherits parent context; optionally attaches a git worktree
+- **Session continuity** — conversation history persists per channel across restarts
+- **Global persona** — `/persona set <text>` applies a system prompt across all channels
+
+## Slash commands
+
+| Command | Description |
+|---------|-------------|
+| `/project <path>` | Switch working directory for this channel |
+| `/fork [title]` | Fork into a new thread branch |
+| `/merge` | Merge fork back to parent (auto-commit + worktree cleanup) |
+| `/branches` | List active thread branches |
+| `/model <name>` | Switch Claude model for this channel |
+| `/system <text>` | Set a system prompt for this channel |
+| `/persona set\|show\|clear` | Manage global system prompt (all channels) |
+| `/stop` | Abort the current run |
+| `/bash <cmd>` | Run a shell command directly (no Claude) |
+| `/diff` | Get current git patch as a .diff file |
+| `/new` | Reset the Claude session for this channel |
+
+## Configuration
+
+Key `.env` variables:
+
+```
+DISCORD_BOT_TOKEN=        # your bot token
+DISCORD_GUILD_IDS=        # comma-separated guild IDs (optional, restricts to specific servers)
+DEFAULT_WORKING_DIR=      # default cwd for new channels (e.g. ~/www)
+AUTO_THREAD_WORKTREE=     # true to auto-create git worktrees for thread forks
+```
+
+## Docs
+
+- [Setup guide](https://github.com/spanishflu-est1918/claude-on-discord/blob/master/docs/SETUP.md)
+- [Architecture](https://github.com/spanishflu-est1918/claude-on-discord/blob/master/docs/ARCHITECTURE.md)
+- [GitHub](https://github.com/spanishflu-est1918/claude-on-discord)
