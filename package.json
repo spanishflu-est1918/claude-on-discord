@@ -13,6 +13,8 @@
     "start": "bun src/guardian.ts",
     "worker": "bun src/index.ts",
     "guardian": "bun src/guardian.ts",
+    "deploy:site:check": "bash ./scripts/deploy-site-prod.sh --check",
+    "deploy:site": "bash ./scripts/deploy-site-prod.sh",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "lint": "bunx biome check .",

@@ -205,6 +205,17 @@ bun run lint       # Biome
 bun test           # Tests
 ```
 
+### Website Deploy (Guarded)
+
+Use the guarded deploy script so production deploys always target the linked `claude-on-discord` Vercel project:
+
+```bash
+bun run deploy:site:check  # verifies target/linkage only
+bun run deploy:site        # production deploy
+```
+
+If target validation fails, re-link from repo root with `vercel link` and select `claude-on-discord`.
+
 Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
 
 ---
