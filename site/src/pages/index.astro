@@ -8,30 +8,66 @@ const SETUP  = `${GITHUB}/blob/master/docs/SETUP.md`;
 const ARCH   = `${GITHUB}/blob/master/docs/ARCHITECTURE.md`;
 
 const features = [
-  { title: 'thread-branching',     icon: '#', description: 'Threads inherit parent context. <code class="text-[#5865F2]">/diff</code>, <code class="text-[#5865F2]">/pr</code>, git worktrees. Full branch workflow.' },
-  { title: 'per-channel-sessions', icon: '#', description: 'Working dir, model, history, system prompt &mdash; per channel. Switch projects by switching channels.' },
-  { title: 'multi-guild',          icon: '#', description: 'Register once, run across multiple Discord servers. Configure with <code class="text-[#5865F2]">DISCORD_GUILD_IDS</code>.' },
-  { title: 'shared-channel-guards', icon: '#', description: 'In shared guild channels, explicit mention is enforced before runs start. Bots can still steer by mentioning <code class="text-[#5865F2]">@hermes_claude</code>.' },
-  { title: 'live-streaming',       icon: '#', description: 'Text and thinking stream into one message. <strong class="text-[#DBDEE1]">Interrupt</strong> or <strong class="text-[#DBDEE1]">Abort</strong> mid-run.' },
-  { title: 'pr-management',        icon: '#', description: '<code class="text-[#5865F2]">/pr open</code>, <code class="text-[#5865F2]">draft</code>, <code class="text-[#5865F2]">status</code>, <code class="text-[#5865F2]">merge</code>. Full GitHub workflow, safety checks included.' },
-  { title: 'system-prompts',       icon: '#', description: 'One channel is your Rails expert. Another is your TS reviewer. Prompts persist.' },
-  { title: 'mcp-support',          icon: '#', description: 'Loads <code class="text-[#5865F2]">.claude/mcp.json</code> automatically. Your existing tools work out of the box.' },
-  { title: 'direct-shell',         icon: '#', description: '<code class="text-[#5865F2]">/bash</code> for raw command execution. <code class="text-[#5865F2]">/worktree</code> for git branch management.' },
-  { title: 'native-diff',          icon: '#', description: '<code class="text-[#5865F2]">/diff</code> sends the current patch as a <code class="text-[#5865F2]">.diff</code> attachment. Review changes on your phone, no terminal required.' },
+  { title: 'thread branches',      icon: '#', description: 'Create a thread and keep parent context. Optional worktree for clean parallel changes.' },
+  { title: 'channel sessions',     icon: '#', description: 'Each channel keeps its own working dir, model, history, and system prompt.' },
+  { title: 'multi-guild',          icon: '#', description: 'One bot, multiple servers. Configure with <code class="text-[#5865F2]">DISCORD_GUILD_IDS</code>.' },
+  { title: 'mention guardrails',   icon: '#', description: 'In shared guild channels, runs require explicit mention. No random wakeups.' },
+  { title: 'live status',          icon: '#', description: 'Stream output in one message with <strong class="text-[#DBDEE1]">Interrupt</strong> and <strong class="text-[#DBDEE1]">Abort</strong> controls.' },
+  { title: 'pr workflow',          icon: '#', description: '<code class="text-[#5865F2]">/pr open</code>, <code class="text-[#5865F2]">draft</code>, <code class="text-[#5865F2]">status</code>, <code class="text-[#5865F2]">merge</code> from Discord.' },
+  { title: 'role prompts',         icon: '#', description: 'Set different behavior per channel and keep it persistent.' },
+  { title: 'mcp loading',          icon: '#', description: 'Automatically loads <code class="text-[#5865F2]">.claude/mcp.json</code> from your project.' },
+  { title: 'direct shell',         icon: '#', description: '<code class="text-[#5865F2]">/bash</code> and <code class="text-[#5865F2]">!command</code> for direct command execution.' },
+  { title: 'diff delivery',        icon: '#', description: '<code class="text-[#5865F2]">/diff</code> sends a patch file so review works cleanly on mobile.' },
 ];
 
 const roadmapShipped = [
-  { slug: 'thinking-mode',       icon: '🧠' },
-  { slug: 'worktree-per-thread', icon: '🌿' },
+  {
+    icon: '🌐',
+    title: 'Multi-guild support',
+    detail: 'One bot can run across multiple Discord servers with DISCORD_GUILD_IDS.',
+  },
+  {
+    icon: '🛡️',
+    title: 'Shared-channel mention guardrails',
+    detail: 'In shared guild channels, runs require an explicit @hermes_claude mention.',
+  },
+  {
+    icon: '🌿',
+    title: 'Thread worktrees',
+    detail: 'Thread-level git worktrees for isolated parallel work.',
+  },
 ];
 const roadmapPlanned = [
-  { slug: 'interview-mode',   icon: '🎤' },
-  { slug: 'npx-distribution', icon: '📦' },
-  { slug: 'tmux-attach',      icon: '🖥️'  },
-  { slug: 'cost-tracking',    icon: '💰' },
-  { slug: 'codex-support',    icon: '⚡' },
-  { slug: 'channel-webhooks', icon: '🪝' },
-  { slug: 'agent-guided-fork', icon: '🧭' },
+  {
+    icon: '🎤',
+    title: 'Interview mode before execution',
+    detail: 'Collect key constraints first, then run with a clear plan.',
+  },
+  {
+    icon: '📦',
+    title: 'npx install flow',
+    detail: 'Install and bootstrap without cloning the repo.',
+  },
+  {
+    icon: '⚡',
+    title: 'Codex as alternate runner',
+    detail: 'Optional OpenAI Codex backend per channel.',
+  },
+  {
+    icon: '🧭',
+    title: 'Guided fork flow',
+    detail: 'Suggest and create thread forks based on task size and risk.',
+  },
+  {
+    icon: '🪝',
+    title: 'Channel webhooks',
+    detail: 'Route signed external events directly into target channels.',
+  },
+  {
+    icon: '💰',
+    title: 'Cost and usage dashboard',
+    detail: 'Track spend and turn volume by server, channel, and model.',
+  },
 ];
 ---
 
@@ -53,7 +89,7 @@ const roadmapPlanned = [
           <span class="text-gradient">In Discord.</span>
         </h1>
         <p class="text-[17px] text-[#96989D] max-w-md mb-10 leading-relaxed">
-          Full Claude Code, running on your machine &mdash; reachable from any channel, on any device.
+          Run Claude Code from Discord. It executes on your machine and stays reachable from any channel.
         </p>
         <div class="flex flex-wrap gap-3">
           <a href={GITHUB} class="btn-blurple px-6 py-3 rounded font-bold text-white text-sm inline-flex items-center gap-1.5">
@@ -180,7 +216,7 @@ const roadmapPlanned = [
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Origin</div>
       <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
-        Built in a day.<br />Because Discord was<br />already the hub.
+        Built for daily use.<br />Not for demos.
       </h2>
 
       <div class="grid lg:grid-cols-2 gap-14 items-start mt-10">
@@ -188,13 +224,13 @@ const roadmapPlanned = [
         <!-- Story -->
         <div class="space-y-6">
           <p class="text-[#96989D] text-lg leading-relaxed">
-            It started with a post about running Claude Code over Telegram. Loved the concept &mdash; but leaned Discord immediately. If you're running agents, Telegram's topic model breaks the moment you have more than one project: everything lands in <span class="text-[#DBDEE1]">#general</span>, navigation falls apart. Discord channels <em>are</em> first-class. That's the whole argument.
+            The Telegram version proved remote coding could work. But once you have more than one project, one chat becomes noise. Discord already solves that with channels and threads.
           </p>
           <p class="text-[#96989D] text-lg leading-relaxed">
-            The thread-branching thing wasn't planned. It emerged from architecture. Create a thread &rarr; inherit the parent context &rarr; optionally get your own worktree. Several features in parallel, no context switching, no re-explaining the codebase. The structure led there.
+            Thread branching came from the architecture, not a gimmick. Start a thread, inherit parent context, and optionally attach a worktree. Parallel tasks stay separate without losing context.
           </p>
           <p class="text-[#96989D] text-lg leading-relaxed">
-            Discord is <span class="text-[#DBDEE1] font-semibold">the best surface for agentic work right now.</span> Not because of any single feature. Because of the whole stack: native channels, threads, mobile, notifications, persistent search, slash commands. If you're already running agents in Discord &mdash; Claude Code belongs there too. Same surface. Deeper capability.
+            The goal is simple: keep coding operations where your team already communicates. Same channels, same notifications, same search, with direct repo access.
           </p>
           <a href="https://x.com/gripe1918/status/2024191324241510728" target="_blank" rel="noopener" class="inline-flex items-center gap-2 text-[#5865F2] hover:text-[#7289DA] text-sm font-medium transition-colors">
             <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.259 5.63 5.905-5.63Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
@@ -267,7 +303,7 @@ const roadmapPlanned = [
               <a href="https://openclaw.dev" target="_blank" rel="noopener" class="ml-auto text-[#5865F2] hover:text-[#7289DA] text-[11px] font-semibold transition-colors shrink-0">openclaw.dev &rarr;</a>
             </div>
             <p class="text-[#80848E] text-sm leading-relaxed">
-              Already running bots in your server? OpenClaw handles the agents. claude-on-discord handles Claude Code. Same server, one surface. Invite your OpenClaw and steer Claude Code together &mdash; or let them run in parallel across different channels.
+              If your server already runs bots, this fits in cleanly. Keep planning, research, deploy bots, and Claude Code in one workspace instead of splitting across tools.
             </p>
           </div>
 
@@ -281,26 +317,26 @@ const roadmapPlanned = [
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Why Discord</div>
       <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
-        Not just always open.<br />The right interface.
+        Why Discord works.
       </h2>
       <p class="text-[#96989D] text-lg max-w-xl mb-14 leading-relaxed">
-        Telegram has topics. But topics break the moment you have multiple agents and projects &mdash; everything lands in #general, navigation falls apart, nothing is first-class. Discord channels <em>are</em> first-class. Threads, slash commands, search, mobile, notifications. The structure that makes async agent work actually manageable.
+        This workflow needs structure. Discord gives you channels, threads, commands, search, and notifications in one place. That makes async coding work manageable.
       </p>
       <div class="grid sm:grid-cols-3 gap-3">
         <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] blurple-glow card-hover">
           <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none"># channel</div>
           <div class="text-white font-bold text-xl mb-2">= Project</div>
-          <p class="text-[#80848E] text-sm leading-relaxed">Own working dir, session, model, system prompt. Switch projects by switching channels.</p>
+          <p class="text-[#80848E] text-sm leading-relaxed">Each project gets its own working directory, session, and settings.</p>
         </div>
         <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] card-hover">
           <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none">&#x1F4AC; thread</div>
           <div class="text-white font-bold text-xl mb-2">= Branch</div>
-          <p class="text-[#80848E] text-sm leading-relaxed">Create a thread, get a parallel coding lane. Context inherited. Optional git worktree.</p>
+          <p class="text-[#80848E] text-sm leading-relaxed">Create a thread to branch work without dropping parent context.</p>
         </div>
         <div class="bg-[#2B2D31] rounded-md p-6 border border-[#383A40] card-hover">
           <div class="text-[#5865F2] font-black text-sm mb-2 mono leading-none">&#x1F4F1; mobile</div>
           <div class="text-white font-bold text-xl mb-2">= Your terminal</div>
-          <p class="text-[#80848E] text-sm leading-relaxed">Leave your laptop at home. Kick off a task from your phone, get notified when it's done. The agent runs. You don't have to be there.</p>
+          <p class="text-[#80848E] text-sm leading-relaxed">Start from phone, get notified on completion, and review results anywhere.</p>
         </div>
       </div>
     </div>
@@ -311,38 +347,38 @@ const roadmapPlanned = [
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Claude Code</div>
       <h2 class="text-4xl md:text-5xl font-black mb-10 leading-[1.05] text-white">
-        Not a chatbot.<br />An agent.
+        Real repo access.<br />Not canned chat.
       </h2>
 
       <div class="grid md:grid-cols-2 gap-12 items-start">
         <!-- Left: what it does -->
         <div>
           <p class="text-[#96989D] text-lg leading-relaxed mb-6">
-            Reads your entire codebase. Runs shell commands. Manages git, installs packages, runs tests, opens PRs. The kind of depth you need for a real refactor &mdash; not just a suggestion.
+            Claude Code reads the codebase, runs commands, manages git, and executes tests. This is execution, not generic suggestions.
           </p>
           <p class="text-[#96989D] text-lg leading-relaxed">
-            claude-on-discord puts it where you already work. Kick off a task, close your laptop, check back on your phone. The work continues. You don't have to babysit a terminal.
+            claude-on-discord puts that capability in the same place your team already works. Start a task, check progress later, continue from any device.
           </p>
         </div>
 
         <!-- Right: agent-native angle -->
         <div class="space-y-4">
           <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
-            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Discord is already your agent hub</div>
+            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Works with your existing bots</div>
             <p class="text-[#80848E] text-sm leading-relaxed">
-              If you run <a href="https://openclaw.dev" class="text-[#5865F2] hover:underline">OpenClaw</a> or other bots, your server is already a coordination layer. <span class="text-[#DBDEE1]">#api-rewrite</span> is Claude Code. <span class="text-[#DBDEE1]">#research</span> is a search agent. <span class="text-[#DBDEE1]">#deploys</span> is your CI bot. One surface. Everything talks.
+              Keep Claude Code alongside research, deploy, and ops bots in the same server. Clear lanes, less tool switching.
             </p>
           </div>
           <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
-            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Threads as parallel experiments</div>
+            <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Threads for safe parallel work</div>
             <p class="text-[#80848E] text-sm leading-relaxed">
-              Spin up a thread for a risky refactor. If it works, merge. If it doesn't, abandon. No branch cleanup, no stash juggling &mdash; just open threads and close the ones that didn't pan out.
+              Try risky work in a thread first. Keep it, merge it, or drop it without destabilizing the main lane.
             </p>
           </div>
           <div class="bg-[#313338] rounded-md p-5 border border-[#383A40]">
             <div class="text-[#DBDEE1] font-semibold text-sm mb-2">Async by default</div>
             <p class="text-[#80848E] text-sm leading-relaxed">
-              Claude Code runs to completion on your machine. You get notified when it's done. You can interrupt if it's going wrong. The flow is async &mdash; like code review, not like pair programming.
+              Runs continue on your machine until complete. You get updates in Discord and can interrupt when needed.
             </p>
           </div>
         </div>
@@ -355,16 +391,16 @@ const roadmapPlanned = [
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Work Anywhere</div>
       <h2 class="text-4xl md:text-5xl font-black mb-5 leading-[1.05] text-white">
-        Leave your laptop<br />at home.
+        Work away from your desk.
       </h2>
       <p class="text-[#96989D] text-lg max-w-2xl mb-14 leading-relaxed">
-        SSH, Mosh, Tmux, Termius &mdash; you're still staring at a terminal. Still need a keyboard. Still babysitting a session that dies the moment your connection drops. Discord is already on your phone, already sends notifications, already handles reconnects. It's a better interface for async agent work than any terminal tool ever will be.
+        SSH and terminal apps still expect constant attention. Discord is already on your phone, handles reconnects, and pushes notifications. It fits async work better.
       </p>
 
       <div class="grid sm:grid-cols-2 gap-4 max-w-2xl">
         <!-- Old way -->
         <div class="bg-[#2B2D31] rounded-lg p-6 border border-[#383A40]">
-          <div class="text-[#80848E] font-bold text-sm mb-5 line-through decoration-[#F23F42]/60">SSH / Tmux / Mosh / Termius</div>
+          <div class="text-[#80848E] font-bold text-sm mb-5 line-through decoration-[#F23F42]/60">Terminal-first remote workflow</div>
           <ul class="space-y-3 text-sm">
             <li class="flex items-start gap-2.5 text-[#80848E]">
               <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
@@ -380,7 +416,7 @@ const roadmapPlanned = [
             </li>
             <li class="flex items-start gap-2.5 text-[#80848E]">
               <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
-              Phone is useless for real input
+              Mobile input is awkward for command-heavy workflows
             </li>
             <li class="flex items-start gap-2.5 text-[#80848E]">
               <span class="text-[#F23F42] shrink-0 mt-0.5 font-bold">✗</span>
@@ -395,11 +431,11 @@ const roadmapPlanned = [
           <ul class="space-y-3 text-sm">
             <li class="flex items-start gap-2.5 text-[#DBDEE1]">
               <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
-              Type a task from your phone. Done.
+              Send a task from phone in seconds
             </li>
             <li class="flex items-start gap-2.5 text-[#DBDEE1]">
               <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
-              Agent runs on your machine, unattended
+              Run continues on your machine unattended
             </li>
             <li class="flex items-start gap-2.5 text-[#DBDEE1]">
               <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
@@ -407,7 +443,7 @@ const roadmapPlanned = [
             </li>
             <li class="flex items-start gap-2.5 text-[#DBDEE1]">
               <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
-              Read the full output on the subway
+              Review output from anywhere
             </li>
             <li class="flex items-start gap-2.5 text-[#DBDEE1]">
               <span class="text-[#23A55A] shrink-0 mt-0.5 font-bold">✓</span>
@@ -423,7 +459,7 @@ const roadmapPlanned = [
   <section class="border-b border-[#2B2D31] px-6 py-20">
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Features</div>
-      <h2 class="text-4xl font-black mb-10 text-white">Everything. From Discord.</h2>
+      <h2 class="text-4xl font-black mb-10 text-white">Core capabilities.</h2>
       <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         {features.map((f) => (
           <FeatureCard title={f.title} description={f.description} icon={f.icon} />
@@ -490,41 +526,46 @@ const roadmapPlanned = [
   <section class="border-b border-[#2B2D31] px-6 py-20">
     <div class="max-w-5xl mx-auto">
       <div class="section-label">Roadmap</div>
-      <h2 class="text-4xl font-black mb-10 text-white">Where it's going.</h2>
+      <h2 class="text-4xl font-black mb-5 text-white">Clear next steps.</h2>
+      <p class="text-[#96989D] text-lg max-w-2xl mb-10 leading-relaxed">
+        This section is intentionally specific: what is live now, and what is next.
+      </p>
 
-      <div class="bg-[#2B2D31] rounded-xl border border-[#1E1F22] overflow-hidden max-w-sm blurple-glow">
-        <!-- Server header -->
-        <div class="px-5 py-4 border-b border-[#1E1F22] bg-[#232428] flex items-center gap-3">
-          <div class="w-8 h-8 rounded-xl bg-[#5865F2] flex items-center justify-center text-white font-black text-sm shrink-0">C</div>
-          <div>
-            <div class="text-[#DBDEE1] text-sm font-bold tracking-tight">claude-on-discord</div>
-            <div class="text-[#80848E] text-[11px]">roadmap</div>
+      <div class="grid lg:grid-cols-2 gap-4">
+        <div class="bg-[#2B2D31] rounded-xl border border-[#1E1F22] overflow-hidden">
+          <div class="px-5 py-3 border-b border-[#1E1F22] bg-[#232428] flex items-center justify-between">
+            <div class="text-[#DBDEE1] text-sm font-bold tracking-tight">Shipped</div>
+            <span class="text-[11px] font-semibold text-[#23A55A] bg-[#23A55A]/10 px-2 py-0.5 rounded-full">Live</span>
+          </div>
+          <div class="p-3 space-y-2">
+            {roadmapShipped.map((item) => (
+              <div class="rounded-md border border-[#383A40] bg-[#313338] px-3 py-3">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
+                  <span class="text-[#DBDEE1] text-sm font-semibold">{item.title}</span>
+                </div>
+                <p class="text-[#96989D] text-xs leading-relaxed">{item.detail}</p>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div class="px-3 py-4">
-          <!-- Shipped -->
-          <div class="flex items-center gap-1.5 px-2 mb-2">
-            <span class="text-[#80848E] text-[10px] font-bold uppercase tracking-widest">&#9660; Shipped</span>
+        <div class="bg-[#2B2D31] rounded-xl border border-[#1E1F22] overflow-hidden">
+          <div class="px-5 py-3 border-b border-[#1E1F22] bg-[#232428] flex items-center justify-between">
+            <div class="text-[#DBDEE1] text-sm font-bold tracking-tight">Planned</div>
+            <span class="text-[11px] font-semibold text-[#5865F2] bg-[#5865F2]/10 px-2 py-0.5 rounded-full">Next</span>
           </div>
-          {roadmapShipped.map((item) => (
-            <div class="flex items-center gap-3 px-3 py-2 rounded-[4px] cursor-default group mb-0.5">
-              <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
-              <span class="text-[#80848E] line-through text-[13px] flex-1">{item.slug}</span>
-              <span class="text-[11px] font-semibold text-[#23A55A] bg-[#23A55A]/10 px-2 py-0.5 rounded-full shrink-0">✓</span>
-            </div>
-          ))}
-
-          <!-- Planned -->
-          <div class="flex items-center gap-1.5 px-2 mb-2 mt-5">
-            <span class="text-[#80848E] text-[10px] font-bold uppercase tracking-widest">&#9660; Planned</span>
+          <div class="p-3 space-y-2">
+            {roadmapPlanned.map((item) => (
+              <div class="rounded-md border border-[#383A40] bg-[#313338] px-3 py-3">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
+                  <span class="text-[#DBDEE1] text-sm font-semibold">{item.title}</span>
+                </div>
+                <p class="text-[#96989D] text-xs leading-relaxed">{item.detail}</p>
+              </div>
+            ))}
           </div>
-          {roadmapPlanned.map((item) => (
-            <div class="flex items-center gap-3 px-3 py-2 rounded-[4px] hover:bg-[#35373C] cursor-default group transition-colors duration-75 mb-0.5">
-              <span class="text-base w-5 text-center shrink-0">{item.icon}</span>
-              <span class="text-[#80848E] group-hover:text-[#DBDEE1] text-[13px] transition-colors">{item.slug}</span>
-            </div>
-          ))}
         </div>
       </div>
     </div>
