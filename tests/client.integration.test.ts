@@ -190,7 +190,7 @@ describe("Discord client integration routing", () => {
     client.destroy();
   });
 
-  test("defaults to strict mention requirement when participant data is unavailable", async () => {
+  test("requires mention only after channel appears shared when participant data is unavailable", async () => {
     const seen: string[] = [];
     const client = createDiscordClient({
       token: "unused",
@@ -217,6 +217,20 @@ describe("Discord client integration routing", () => {
     });
 
     emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u2" },
+      guildId: "guild-1",
+      content: "second user without mention",
+      attachments: { size: 0 },
+      channel: { id: "channel-1" },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: {
+        has: () => false,
+        users: { has: () => false },
+      },
+      reply: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
       author: { bot: false, id: "u1" },
       guildId: "guild-1",
       content: "<@bot-1> second with mention",
@@ -231,7 +245,7 @@ describe("Discord client integration routing", () => {
     });
 
     await Bun.sleep(0);
-    expect(seen).toEqual(["<@bot-1> second with mention"]);
+    expect(seen).toEqual(["first from user", "<@bot-1> second with mention"]);
     client.destroy();
   });
 
@@ -290,8 +304,8 @@ describe("Discord client integration routing", () => {
 
     await Bun.sleep(0);
     expect(counts).toEqual([
-      { humans: 1, nonClaude: 1, participantNonClaude: null, shared: true },
-      { humans: 1, nonClaude: 2, participantNonClaude: null, shared: true },
+      { humans: 1, nonClaude: 1, participantNonClaude: 2, shared: true },
+      { humans: 1, nonClaude: 2, participantNonClaude: 3, shared: true },
     ]);
     client.destroy();
   });
@@ -325,6 +339,40 @@ describe("Discord client integration routing", () => {
 
     await Bun.sleep(0);
     expect(seen).toEqual(["thread hello"]);
+    client.destroy();
+  });
+
+  test("skips mention requirement in guild channels with only one non-Claude participant", async () => {
+    const seen: string[] = [];
+    const client = createDiscordClient({
+      token: "unused",
+      requireMentionInMultiUserChannels: true,
+      onUserMessage: async (message) => {
+        seen.push(message.content);
+      },
+      onSlashCommand: async () => {},
+      onButtonInteraction: async () => {},
+    });
+
+    emitEvent(client, "messageCreate", {
+      author: { bot: false, id: "u1" },
+      guildId: "guild-1",
+      content: "solo lane hello",
+      attachments: { size: 0 },
+      channel: {
+        id: "channel-solo",
+        members: {
+          size: 2,
+          has: (id: string) => id === "bot-1" || id === "u1",
+        },
+      },
+      client: { user: { id: "bot-1", username: "hermes_claude" } },
+      mentions: { has: () => false, users: { has: () => false } },
+      reply: async () => {},
+    });
+
+    await Bun.sleep(0);
+    expect(seen).toEqual(["solo lane hello"]);
     client.destroy();
   });
 

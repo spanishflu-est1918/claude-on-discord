@@ -82,6 +82,11 @@ async function main(): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout });
   try {
     console.log("claude-on-discord setup\n");
+    const useClaudeLoginInsteadOfApiKey = await askYesNo(
+      rl,
+      "Use Claude login flow (bypass Anthropic API key prompt)",
+      true,
+    );
 
     const values: SetupValues = {
       discordToken: await ask(rl, "Discord bot token", current.DISCORD_TOKEN ?? ""),
@@ -167,6 +172,11 @@ async function main(): Promise<void> {
     console.log("2) Start the bot:");
     console.log("   npx claude-on-discord@latest start");
     console.log("   (from a git checkout, you can also use: bun start)");
+    if (useClaudeLoginInsteadOfApiKey) {
+      console.log("3) If prompted for Anthropic API key, run `claude` once and choose account login.");
+    } else {
+      console.log("3) Set ANTHROPIC_API_KEY in your shell environment before starting.");
+    }
   } finally {
     rl.close();
   }

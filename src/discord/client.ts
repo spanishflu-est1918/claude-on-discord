@@ -164,8 +164,13 @@ function estimateNonClaudeParticipantCount(message: Message, selfId: string | nu
       // Fall through to unknown participant count.
     }
   }
-  // For regular guild text channels we don't have reliable participant counts
-  // without privileged member intent, so force strict mention mode via null.
+  const channelMembers = channel.members;
+  const channelMemberCount = collectionSize(channelMembers);
+  if (channelMemberCount !== null) {
+    const selfAdjustment = selfId && collectionHasUser(channelMembers, selfId) ? 1 : 0;
+    return Math.max(0, channelMemberCount - selfAdjustment);
+  }
+
   return null;
 }
 
@@ -283,9 +288,12 @@ export function createDiscordClient(options: DiscordClientOptions): Client {
     const participantNonClaudeUserCount = isGuildMessage(message)
       ? estimateNonClaudeParticipantCount(message, selfId)
       : null;
+    const sharedByObservedSenders = observedNonClaudeUserCount > 1;
     const sharedChannel =
       isGuildMessage(message) &&
-      (participantNonClaudeUserCount === null ? true : participantNonClaudeUserCount > 1);
+      (participantNonClaudeUserCount === null
+        ? sharedByObservedSenders
+        : participantNonClaudeUserCount > 1);
     const content = message.content.trim();
     if (!content && message.attachments.size === 0) {
       return;
