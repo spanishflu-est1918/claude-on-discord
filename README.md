@@ -49,6 +49,17 @@ If you're already running agents in Discord — OpenClaw or otherwise — Claude
 
 **Requires**: [Bun](https://bun.sh) · [Claude Code](https://claude.ai/code) (installed + authenticated) · a Discord account
 
+Option A (`npx`, no manual clone):
+
+```bash
+npx claude-on-discord setup
+npx claude-on-discord start
+```
+
+`npx` auto-installs runtime into `~/.claude-on-discord` on first run (override with `CLAUDE_ON_DISCORD_HOME`).
+
+Option B (git clone):
+
 ```bash
 git clone https://github.com/spanishflu-est1918/claude-on-discord
 cd claude-on-discord
@@ -86,6 +97,8 @@ bun start
 | `/status` | Channel status, session, branch info |
 | `/branches` | Active thread branches with worktree info |
 | `/compact` | Compact context and reset session |
+| `install [path]` (CLI) | Install/update runtime (default `~/.claude-on-discord`) |
+| `setup` (CLI) | Run setup wizard (auto-installs runtime if missing) |
 | `start` (CLI) | Start self-healing supervisor + secure control API (recommended) |
 | `worker` (CLI) | Start bridge directly without supervisor (advanced/debug) |
 | `guardian` (CLI) | Alias for `start` |
@@ -205,7 +218,7 @@ bun run lint       # Biome
 bun test           # Tests
 ```
 
-Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
+Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [DISTRIBUTION](docs/DISTRIBUTION.md)
 
 ---
 

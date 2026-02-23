@@ -45,6 +45,16 @@ In your new application, go to the **Bot** tab on the left sidebar.
 
 ## 4. Install and Configure
 
+Option A (`npx`, recommended):
+
+```bash
+npx claude-on-discord setup
+```
+
+This installs/updates runtime into `~/.claude-on-discord` automatically, then runs setup.
+
+Option B (git clone):
+
 ```bash
 git clone https://github.com/spanishflu-est1918/claude-on-discord
 cd claude-on-discord

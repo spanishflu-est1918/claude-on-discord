@@ -1,10 +1,38 @@
 {
   "name": "claude-on-discord",
+  "version": "0.1.0",
+  "description": "Run Claude Code from Discord channels and threads.",
   "module": "src/index.ts",
   "type": "module",
-  "private": true,
   "bin": {
     "claude-on-discord": "bin/claude-on-discord.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "scripts/install.sh",
+    ".env.example",
+    "README.md",
+    "docs/SETUP.md",
+    "docs/TROUBLESHOOTING.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spanishflu-est1918/claude-on-discord.git"
+  },
+  "homepage": "https://github.com/spanishflu-est1918/claude-on-discord#readme",
+  "bugs": {
+    "url": "https://github.com/spanishflu-est1918/claude-on-discord/issues"
+  },
+  "keywords": [
+    "claude",
+    "discord",
+    "agent",
+    "cli",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "init": "bun src/init.ts",
@@ -18,7 +46,9 @@
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "lint": "bunx biome check .",
-    "format": "bunx biome check --write ."
+    "format": "bunx biome check --write .",
+    "dist:check": "bash ./scripts/release/check-package.sh",
+    "dist:brew:formula": "bash ./scripts/release/generate-homebrew-formula.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.2",
