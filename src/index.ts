@@ -1,6 +1,6 @@
 import { startApp } from "./app";
 import { renderPreflightReport, runPreflightChecks } from "./bootstrap/preflight";
-import { sanitizeAnthropicApiKeyEnv } from "./claude/auth-policy";
+import { describeAnthropicAuthMode, sanitizeAnthropicApiKeyEnv } from "./claude/auth-policy";
 import { loadConfig } from "./config";
 
 process.on("unhandledRejection", (reason) => {
@@ -15,10 +15,20 @@ process.on("uncaughtException", (error) => {
 
 async function main() {
   const config = loadConfig();
-  sanitizeAnthropicApiKeyEnv({
-    allowApiKey: config.useAnthropicApiKey === true,
+  const allowApiKey = config.useAnthropicApiKey === true;
+  console.log(
+    describeAnthropicAuthMode({
+      allowApiKey,
+      context: "worker startup",
+    }),
+  );
+  const sanitizeResult = sanitizeAnthropicApiKeyEnv({
+    allowApiKey,
     context: "worker startup",
   });
+  if (!allowApiKey && !sanitizeResult.hadApiKey) {
+    console.log("[auth] worker startup: no ANTHROPIC_API_KEY present.");
+  }
   const preflight = await runPreflightChecks(config);
   console.log(renderPreflightReport(preflight));
   if (preflight.hasFailures) {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  describeAnthropicAuthMode,
   isAnthropicCreditBalanceError,
   sanitizeAnthropicApiKeyEnv,
   shouldUseAnthropicApiKey,
@@ -27,6 +28,7 @@ describe("auth policy", () => {
       log: (line) => logs.push(line),
     });
 
+    expect(result.hadApiKey).toBe(true);
     expect(result.removed).toBe(true);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(logs.some((line) => line.includes("ignoring ANTHROPIC_API_KEY"))).toBe(true);
@@ -43,6 +45,7 @@ describe("auth policy", () => {
       context: "test",
     });
 
+    expect(result.hadApiKey).toBe(true);
     expect(result.removed).toBe(false);
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-test");
   });
@@ -51,5 +54,15 @@ describe("auth policy", () => {
     expect(isAnthropicCreditBalanceError("credit balance too low")).toBe(true);
     expect(isAnthropicCreditBalanceError("billing required for this key")).toBe(true);
     expect(isAnthropicCreditBalanceError("some other error")).toBe(false);
+  });
+
+  test("describes auth mode with key presence", () => {
+    const summary = describeAnthropicAuthMode({
+      allowApiKey: false,
+      env: { ANTHROPIC_API_KEY: "sk-ant-test" },
+      context: "worker startup",
+    });
+    expect(summary).toContain("mode=claude-login");
+    expect(summary).toContain("apiKeyPresent=true");
   });
 });

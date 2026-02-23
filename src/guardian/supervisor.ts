@@ -1,5 +1,5 @@
 import process from "node:process";
-import { shouldUseAnthropicApiKey } from "../claude/auth-policy";
+import { describeAnthropicAuthMode, shouldUseAnthropicApiKey } from "../claude/auth-policy";
 import { isLoopbackAddress } from "./config";
 import { handleGuardianControlRequest } from "./control-api";
 import { getGuardianHeartbeatAgeMs } from "./heartbeat";
@@ -174,12 +174,22 @@ export class GuardianSupervisor {
       workerEnv[key] = value;
     }
     const allowApiKey = shouldUseAnthropicApiKey(workerEnv);
+    this.appendLog(
+      "guardian",
+      describeAnthropicAuthMode({
+        allowApiKey,
+        env: workerEnv,
+        context: "worker env",
+      }),
+    );
     if (!allowApiKey && typeof workerEnv.ANTHROPIC_API_KEY === "string") {
       delete workerEnv.ANTHROPIC_API_KEY;
       this.appendLog(
         "guardian",
         "Ignoring ANTHROPIC_API_KEY for worker (set USE_ANTHROPIC_API_KEY=true to enable API-key mode).",
       );
+    } else if (!allowApiKey) {
+      this.appendLog("guardian", "No ANTHROPIC_API_KEY found in worker env.");
     }
     workerEnv.WORKER_HEARTBEAT_FILE = this.config.workerHeartbeatFile;
     workerEnv.WORKER_HEARTBEAT_INTERVAL_SECONDS = String(
