@@ -40,4 +40,25 @@ describe("loadConfig guild parsing", () => {
       "DISCORD_GUILD_IDS (or DISCORD_GUILD_ID) is required",
     );
   });
+
+  test("defaults require mention in multi-user channels to true", () => {
+    const config = loadConfig(
+      createEnv({
+        DISCORD_GUILD_ID: "guild-only",
+      }),
+    );
+
+    expect(config.requireMentionInMultiUserChannels).toBe(true);
+  });
+
+  test("allows disabling mention requirement via env override", () => {
+    const config = loadConfig(
+      createEnv({
+        DISCORD_GUILD_ID: "guild-only",
+        REQUIRE_MENTION_IN_MULTI_USER_CHANNELS: "false",
+      }),
+    );
+
+    expect(config.requireMentionInMultiUserChannels).toBe(false);
+  });
 });

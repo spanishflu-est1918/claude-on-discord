@@ -1,6 +1,6 @@
 {
   "name": "claude-on-discord",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run Claude Code from Discord channels and threads.",
   "module": "src/index.ts",
   "type": "module",

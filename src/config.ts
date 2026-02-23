@@ -145,7 +145,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   );
   const requireMentionInMultiUserChannels = parseEnvBoolean(
     value.REQUIRE_MENTION_IN_MULTI_USER_CHANNELS,
-    false,
+    true,
     "REQUIRE_MENTION_IN_MULTI_USER_CHANNELS",
   );
   const worktreeBootstrap = parseEnvBoolean(value.WORKTREE_BOOTSTRAP, true, "WORKTREE_BOOTSTRAP");

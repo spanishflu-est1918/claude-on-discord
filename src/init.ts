@@ -121,18 +121,11 @@ async function main(): Promise<void> {
       requireMentionInMultiUserChannels: await ask(
         rl,
         "Require @mention in multi-user channels (true/false)",
-        current.REQUIRE_MENTION_IN_MULTI_USER_CHANNELS ?? "false",
+        current.REQUIRE_MENTION_IN_MULTI_USER_CHANNELS ?? "true",
       ),
-      worktreeBootstrap: await ask(
-        rl,
-        "Bootstrap new worktrees automatically (true/false)",
-        current.WORKTREE_BOOTSTRAP ?? "true",
-      ),
-      worktreeBootstrapCommand: await ask(
-        rl,
-        "Custom worktree bootstrap command (optional)",
-        current.WORKTREE_BOOTSTRAP_COMMAND ?? "",
-      ),
+      // Keep bootstrap defaults stable without adding extra setup prompts.
+      worktreeBootstrap: current.WORKTREE_BOOTSTRAP ?? "true",
+      worktreeBootstrapCommand: current.WORKTREE_BOOTSTRAP_COMMAND ?? "",
       claudePermissionMode: await ask(
         rl,
         "Claude permission mode",
@@ -171,7 +164,9 @@ async function main(): Promise<void> {
 
     console.log("\nNext:");
     console.log("1) Open invite URL and authorize bot for your server(s)");
-    console.log("2) bun run start");
+    console.log("2) Start the bot:");
+    console.log("   npx claude-on-discord@latest start");
+    console.log("   (from a git checkout, you can also use: bun start)");
   } finally {
     rl.close();
   }
