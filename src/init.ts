@@ -87,6 +87,14 @@ async function main(): Promise<void> {
       "Use Claude login flow (bypass Anthropic API key prompt)",
       true,
     );
+    let anthropicApiKeyForEnv = "";
+    if (!useClaudeLoginInsteadOfApiKey) {
+      anthropicApiKeyForEnv = await ask(
+        rl,
+        "Anthropic API key (optional, persisted to .env when provided)",
+        current.ANTHROPIC_API_KEY ?? "",
+      );
+    }
 
     const values: SetupValues = {
       discordToken: await ask(rl, "Discord bot token", current.DISCORD_TOKEN ?? ""),
@@ -136,6 +144,7 @@ async function main(): Promise<void> {
         "Claude permission mode",
         current.CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
       ),
+      anthropicApiKey: anthropicApiKeyForEnv.trim() || undefined,
     };
 
     values.discordClientId = values.applicationId;
@@ -173,9 +182,16 @@ async function main(): Promise<void> {
     console.log("   npx claude-on-discord@latest start");
     console.log("   (from a git checkout, you can also use: bun start)");
     if (useClaudeLoginInsteadOfApiKey) {
-      console.log("3) If prompted for Anthropic API key, run `claude` once and choose account login.");
+      if ((current.ANTHROPIC_API_KEY ?? "").trim().length > 0) {
+        console.log("3) Removed ANTHROPIC_API_KEY from .env (using Claude login mode by default).");
+      }
+      console.log("4) If prompted for Anthropic API key, run `claude` once and choose account login.");
     } else {
-      console.log("3) Set ANTHROPIC_API_KEY in your shell environment before starting.");
+      if (values.anthropicApiKey) {
+        console.log("3) Saved ANTHROPIC_API_KEY to .env (explicit API-key mode).");
+      } else {
+        console.log("3) No ANTHROPIC_API_KEY saved to .env. Export it in your shell before starting.");
+      }
     }
   } finally {
     rl.close();
