@@ -16,6 +16,7 @@ export type SetupValues = {
   worktreeBootstrapCommand?: string;
   claudePermissionMode: string;
   anthropicApiKey?: string;
+  useAnthropicApiKey?: string;
 };
 
 export function buildInviteUrl(input: {
@@ -59,6 +60,7 @@ export function parseEnvFile(content: string): Record<string, string> {
 export function renderEnvFile(values: SetupValues): string {
   const normalizedGuildIds = values.discordGuildIds?.trim() || values.discordGuildId;
   const anthropicApiKey = values.anthropicApiKey?.trim() ?? "";
+  const useAnthropicApiKey = values.useAnthropicApiKey?.trim().toLowerCase() === "true";
   const rows = [
     "# claude-on-discord runtime configuration",
     `DISCORD_TOKEN=${values.discordToken}`,
@@ -75,6 +77,7 @@ export function renderEnvFile(values: SetupValues): string {
     `WORKTREE_BOOTSTRAP=${values.worktreeBootstrap}`,
     `WORKTREE_BOOTSTRAP_COMMAND=${values.worktreeBootstrapCommand ?? ""}`,
     `CLAUDE_PERMISSION_MODE=${values.claudePermissionMode}`,
+    ...(useAnthropicApiKey ? ["USE_ANTHROPIC_API_KEY=true"] : []),
     ...(anthropicApiKey ? [`ANTHROPIC_API_KEY=${anthropicApiKey}`] : []),
     "",
   ];

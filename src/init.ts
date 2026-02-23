@@ -145,6 +145,7 @@ async function main(): Promise<void> {
         current.CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
       ),
       anthropicApiKey: anthropicApiKeyForEnv.trim() || undefined,
+      useAnthropicApiKey: useClaudeLoginInsteadOfApiKey ? "false" : "true",
     };
 
     values.discordClientId = values.applicationId;
@@ -185,12 +186,21 @@ async function main(): Promise<void> {
       if ((current.ANTHROPIC_API_KEY ?? "").trim().length > 0) {
         console.log("3) Removed ANTHROPIC_API_KEY from .env (using Claude login mode by default).");
       }
-      console.log("4) If prompted for Anthropic API key, run `claude` once and choose account login.");
+      if ((current.USE_ANTHROPIC_API_KEY ?? "").trim().length > 0) {
+        console.log("4) Removed USE_ANTHROPIC_API_KEY override from .env.");
+      }
+      console.log(
+        "5) If prompted for Anthropic API key, run `claude` once and choose account login.",
+      );
     } else {
       if (values.anthropicApiKey) {
-        console.log("3) Saved ANTHROPIC_API_KEY to .env (explicit API-key mode).");
+        console.log(
+          "3) Saved USE_ANTHROPIC_API_KEY=true and ANTHROPIC_API_KEY to .env (explicit API-key mode).",
+        );
       } else {
-        console.log("3) No ANTHROPIC_API_KEY saved to .env. Export it in your shell before starting.");
+        console.log(
+          "3) Saved USE_ANTHROPIC_API_KEY=true to .env. Export ANTHROPIC_API_KEY in your shell before starting.",
+        );
       }
     }
   } finally {

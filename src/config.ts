@@ -20,6 +20,7 @@ const envSchema = z.object({
   SESSION_TURN_MAX_CHARS: z.string().trim().optional(),
   ACTIVE_RUN_MAX_AGE_MINUTES: z.string().trim().optional(),
   ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS: z.string().trim().optional(),
+  USE_ANTHROPIC_API_KEY: z.string().trim().optional(),
   CLAUDE_PERMISSION_MODE: z
     .enum(["default", "plan", "acceptEdits", "bypassPermissions", "delegate", "dontAsk"])
     .default("bypassPermissions"),
@@ -42,6 +43,7 @@ export type AppConfig = {
   sessionTurnMaxChars?: number;
   activeRunMaxAgeMs?: number;
   activeRunWatchdogIntervalMs?: number;
+  useAnthropicApiKey?: boolean;
   claudePermissionMode: ClaudePermissionMode;
 };
 
@@ -174,6 +176,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "ACTIVE_RUN_WATCHDOG_INTERVAL_SECONDS",
     { min: 5, max: 3600 },
   );
+  const useAnthropicApiKey = parseEnvBoolean(
+    value.USE_ANTHROPIC_API_KEY,
+    false,
+    "USE_ANTHROPIC_API_KEY",
+  );
 
   return {
     discordToken: value.DISCORD_TOKEN,
@@ -192,6 +199,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     sessionTurnMaxChars,
     activeRunMaxAgeMs: activeRunMaxAgeMinutes * 60 * 1000,
     activeRunWatchdogIntervalMs: activeRunWatchdogIntervalSeconds * 1000,
+    useAnthropicApiKey,
     claudePermissionMode: value.CLAUDE_PERMISSION_MODE,
   };
 }

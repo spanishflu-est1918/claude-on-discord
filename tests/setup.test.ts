@@ -52,6 +52,7 @@ describe("bootstrap setup helpers", () => {
     expect(content).toContain("AUTO_THREAD_WORKTREE=false");
     expect(content).toContain("REQUIRE_MENTION_IN_MULTI_USER_CHANNELS=true");
     expect(content).toContain("WORKTREE_BOOTSTRAP=true");
+    expect(content).not.toContain("USE_ANTHROPIC_API_KEY=");
     expect(content).not.toContain("ANTHROPIC_API_KEY=");
   });
 
@@ -72,9 +73,11 @@ describe("bootstrap setup helpers", () => {
       worktreeBootstrapCommand: "",
       claudePermissionMode: "bypassPermissions",
       anthropicApiKey: "sk-ant-test",
+      useAnthropicApiKey: "true",
     };
 
     const content = renderEnvFile(values);
+    expect(content).toContain("USE_ANTHROPIC_API_KEY=true");
     expect(content).toContain("ANTHROPIC_API_KEY=sk-ant-test");
   });
 });

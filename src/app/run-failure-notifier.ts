@@ -1,4 +1,5 @@
 import type { MessageEditOptions } from "discord.js";
+import { isAnthropicCreditBalanceError, shouldUseAnthropicApiKey } from "../claude/auth-policy";
 import type { DiscordDispatchQueue } from "../discord/dispatcher";
 
 type EditableStatusMessage = {
@@ -25,7 +26,18 @@ export async function notifyRunFailure(input: {
     contentPrefix,
     allowedMentions,
   } = input;
-  const responseContent = `${contentPrefix ?? ""}${runawayStop ? "⚠️" : "❌"} ${msg}`;
+  const apiCreditFailure = isAnthropicCreditBalanceError(msg);
+  if (apiCreditFailure) {
+    const apiModeEnabled = shouldUseAnthropicApiKey();
+    const apiKeyPresent = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+    console.error(
+      `[auth] Anthropic credit error detected in ${channelId}. apiModeEnabled=${apiModeEnabled} apiKeyPresent=${apiKeyPresent}`,
+    );
+  }
+  const authHint = apiCreditFailure
+    ? "\nTip: run setup and keep Claude login mode (default). Use API mode only if you explicitly want Anthropic API billing."
+    : "";
+  const responseContent = `${contentPrefix ?? ""}${runawayStop ? "⚠️" : "❌"} ${msg}${authHint}`;
   let surfacedByStatus = false;
   try {
     await discordDispatch.enqueue(`status:${channelId}`, async () => {

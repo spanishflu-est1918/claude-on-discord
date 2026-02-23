@@ -61,4 +61,25 @@ describe("loadConfig guild parsing", () => {
 
     expect(config.requireMentionInMultiUserChannels).toBe(false);
   });
+
+  test("defaults USE_ANTHROPIC_API_KEY to false", () => {
+    const config = loadConfig(
+      createEnv({
+        DISCORD_GUILD_ID: "guild-only",
+      }),
+    );
+
+    expect(config.useAnthropicApiKey).toBe(false);
+  });
+
+  test("parses USE_ANTHROPIC_API_KEY=true", () => {
+    const config = loadConfig(
+      createEnv({
+        DISCORD_GUILD_ID: "guild-only",
+        USE_ANTHROPIC_API_KEY: "true",
+      }),
+    );
+
+    expect(config.useAnthropicApiKey).toBe(true);
+  });
 });

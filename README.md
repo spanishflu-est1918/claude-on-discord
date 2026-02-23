@@ -117,6 +117,7 @@ DISCORD_TOKEN=            # Discord bot token
 APPLICATION_ID=           # Discord application ID
 DISCORD_GUILD_IDS=        # Comma-separated server IDs (preferred)
 DISCORD_GUILD_ID=         # Single server ID fallback (legacy)
+USE_ANTHROPIC_API_KEY=    # Optional, default false (ignores ANTHROPIC_API_KEY unless true)
 
 # Optional guardian control overrides
 GUARDIAN_CONTROL_SECRET=

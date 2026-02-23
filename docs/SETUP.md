@@ -6,7 +6,7 @@
 - **[Claude Code](https://claude.ai/code)** — installed and authenticated (`claude` in your PATH)
 - **A Discord account**
 
-> **Note on auth**: claude-on-discord uses Claude Code's existing credentials by default — no separate API key required. Setup strips `ANTHROPIC_API_KEY` from `.env` unless you explicitly choose API-key mode.
+> **Note on auth**: claude-on-discord uses Claude Code's existing credentials by default — no separate API key required. Setup strips `ANTHROPIC_API_KEY` and keeps `USE_ANTHROPIC_API_KEY` unset/false unless you explicitly choose API-key mode.
 
 ---
 

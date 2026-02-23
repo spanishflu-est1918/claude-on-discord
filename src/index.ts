@@ -1,5 +1,6 @@
 import { startApp } from "./app";
 import { renderPreflightReport, runPreflightChecks } from "./bootstrap/preflight";
+import { sanitizeAnthropicApiKeyEnv } from "./claude/auth-policy";
 import { loadConfig } from "./config";
 
 process.on("unhandledRejection", (reason) => {
@@ -14,6 +15,10 @@ process.on("uncaughtException", (error) => {
 
 async function main() {
   const config = loadConfig();
+  sanitizeAnthropicApiKeyEnv({
+    allowApiKey: config.useAnthropicApiKey === true,
+    context: "worker startup",
+  });
   const preflight = await runPreflightChecks(config);
   console.log(renderPreflightReport(preflight));
   if (preflight.hasFailures) {
