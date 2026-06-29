@@ -1,226 +1,249 @@
-# claude-on-discord
+# Claude on Discord
 
-Claude Code in Discord. Real filesystem. Real tools. No SSH required.
+Run Claude Code from Discord channels and threads. Real filesystem. Real tools. Real local repos. No SSH required.
 
-> Inspired by [claude-code-telegram](https://github.com/punkpeye/claude-code-telegram) — built on Discord because Discord has threads.
+This is a local-first bridge between Discord and Claude Code. Each channel becomes a coding lane with its own working directory, model, session, history, system prompt, and cost tracking. Each Discord thread can become a branch of the parent lane, optionally backed by its own git worktree.
 
----
+Inspired by [`claude-code-telegram`](https://github.com/punkpeye/claude-code-telegram), but built around Discord because Discord has channels, threads, buttons, slash commands, and a collaboration surface people already use.
 
-## Thread Branching
+## What It Proves
 
-Create a Discord thread and it becomes a parallel coding lane — automatically.
+- Practical agent workflow design, not just a chatbot.
+- Claude Code exposed through a collaborative interface with lanes, threads, buttons, slash commands, and status surfaces.
+- Real filesystem and git workflows from Discord: worktrees, diffs, shell commands, PR helpers, generated files, and screenshots.
+- Local-first operational thinking: SQLite state, guardian supervisor, preflight checks, crash-loop protection, control API, and troubleshooting docs.
+- Product judgment around agent UX: stream tool events, interrupt/abort buttons, per-channel prompts, permission modes, and channel policies.
 
-The new thread inherits everything from the parent channel: working directory, model, conversation history, and system prompt. No setup. No context loss. Just branch and go.
+## Core Model
 
-Enable `AUTO_THREAD_WORKTREE=true` and each thread also gets its own git worktree, fully bootstrapped (`bun install` / `pnpm install` / etc. runs automatically). Real parallel branches, not just separate chats.
-
----
-
-## Per-Channel System Prompts
-
-Every channel can have its own system prompt. One channel is your Rails expert. Another is your senior TypeScript reviewer. Another speaks only in bash one-liners.
-
+```text
+Discord channel
+  -> coding lane
+  -> local working directory
+  -> Claude Code session
+  -> streamed status/tool events
+  -> files, diffs, comments, PRs, screenshots
 ```
-/systemprompt set You are a senior Rails developer. Be terse. No explanations unless asked.
+
+```text
+Discord thread
+  -> inherited parent context
+  -> optional git worktree
+  -> parallel branch of work
 ```
 
-System prompts persist per channel and survive session resets. Switch projects, the prompt stays.
+## Highlights
 
----
-
-## Claude Code vs other AI tools
-
-Claude Code goes deeper than general-purpose AI assistants. It reads your entire codebase, runs shell commands, manages git history, installs packages, runs tests, opens PRs. It's built for the kind of work that actually requires understanding a real codebase — complex refactors, architectural decisions, features that have to land right.
-
-If you're already running agents in Discord — OpenClaw or otherwise — Claude Code belongs there too. Same surface. Different depth. Use the right tool for the task.
-
----
-
-## How It Works
-
-- **Channel = coding lane** — each channel has its own working directory, model, and Claude session
-- **Thread = branch** — inherits full parent context, optionally gets its own git worktree
-- **Streams everything** — partial text, thinking previews, tool events, live-edited in a single message
-- **Your machine** — files are real, tools are real, Claude Code runs locally
-
----
+- **Channel = coding lane**: each channel has its own working directory, model, session, system prompt, and permission mode.
+- **Thread = branch**: a Discord thread inherits parent context and can optionally get a real git worktree.
+- **Live streaming**: answer deltas, thinking previews, tool events, and status updates render into Discord.
+- **Real tools**: Claude Code can read the repo, edit files, run commands, manage git, and attach generated files.
+- **Operator controls**: interrupt, abort, status, cost, diff, branch, PR, and guardian controls are available from Discord.
+- **Local-first state**: SQLite stores channel/session metadata, settings, thread branch metadata, conversation turns, and spend tracking.
+- **Guardian mode**: self-healing supervisor with heartbeat checks, restart backoff, and a secure control API for mobile/remote operation.
 
 ## Quick Start
 
-**Requires**: [Bun](https://bun.sh) · [Claude Code](https://claude.ai/code) (installed + authenticated) · a Discord account
+Requires:
 
-Option A (`npx`, no manual clone):
+- [Bun](https://bun.sh)
+- [Claude Code](https://claude.ai/code), installed and authenticated
+- a Discord account and Discord application
+
+Option A, npx distribution:
 
 ```bash
 npx claude-on-discord setup
 npx claude-on-discord start
 ```
 
-`npx` auto-installs runtime into `~/.claude-on-discord` on first run (override with `CLAUDE_ON_DISCORD_HOME`).
+`npx` installs the runtime into `~/.claude-on-discord` on first run. Override with `CLAUDE_ON_DISCORD_HOME`.
 
-Option B (git clone):
+Option B, git checkout:
 
 ```bash
 git clone https://github.com/spanishflu-est1918/claude-on-discord
 cd claude-on-discord
 bun install
-bun run setup    # interactive: writes .env, prints Discord invite URL
+bun run setup
 ```
 
-Invite the bot to your server, then:
+The setup wizard writes `.env` and prints a Discord invite URL.
+
+Start the recommended guardian runtime:
 
 ```bash
 bun start
 ```
 
-**First time?** See the [full setup guide](docs/SETUP.md) — it walks through creating the Discord app, getting your credentials, and first run.
-
----
+Full setup guide: [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Commands
 
 | Command | What it does |
-|---------|-------------|
-| `/project [path]` | Switch working directory — no path on macOS opens Finder picker |
-| `/new` | Reset session and history |
-| `/fork [title]` | Create a new thread from the current channel (conversation fork) |
-| `/model <name>` | Switch Claude model |
-| `/bash <command>` | Run shell command directly in current project |
-| `!<command>` | Direct shell shortcut from any channel message |
-| `/systemprompt set/show/clear` | Per-channel system prompt |
-| `/mode set/show/clear` | Per-session Claude permission mode (including `plan`) |
-| `/worktree create/list/remove/thread` | Git worktree management |
-| `/pr open/draft/status/merge` | GitHub PR workflow (requires `gh` CLI) |
-| `/diff` | Current lane patch as a `.diff` attachment |
-| `/screenshot [url]` | Webpage screenshot via agent-browser |
-| `/cost` | Per-channel spend and turn count |
-| `/status` | Channel status, session, branch info |
-| `/branches` | Active thread branches with worktree info |
-| `/compact` | Compact context and reset session |
-| `install [path]` (CLI) | Install/update runtime (default `~/.claude-on-discord`) |
-| `setup` (CLI) | Run setup wizard (auto-installs runtime if missing) |
-| `start` (CLI) | Start self-healing supervisor + secure control API (recommended) |
-| `worker` (CLI) | Start bridge directly without supervisor (advanced/debug) |
-| `guardian` (CLI) | Alias for `start` |
+| --- | --- |
+| `/project [path]` | Switch working directory. On macOS, no path opens a Finder picker. |
+| `/new` | Reset session and history. |
+| `/fork [title]` | Create a new thread from the current channel. |
+| `/model <name>` | Switch Claude model. |
+| `/bash <command>` | Run a shell command directly in the current project. |
+| `!<command>` | Direct shell shortcut from any channel message. |
+| `/systemprompt set/show/clear` | Manage the per-channel system prompt. |
+| `/mode set/show/clear` | Manage per-session Claude permission mode, including `plan`. |
+| `/worktree create/list/remove/thread` | Manage git worktrees. |
+| `/pr open/draft/status/merge` | Use GitHub PR workflow helpers, requires `gh`. |
+| `/diff` | Send the current lane patch as a `.diff` attachment. |
+| `/screenshot [url]` | Capture a webpage screenshot through agent-browser. |
+| `/cost` | Show per-channel spend and turn count. |
+| `/status` | Show channel status, session, and branch info. |
+| `/branches` | Show active thread branches and worktree info. |
+| `/compact` | Compact context and reset session. |
 
-While Claude is running, **Interrupt** (soft stop) and **Abort** (hard stop) buttons appear inline.
+CLI commands:
 
----
+| Command | What it does |
+| --- | --- |
+| `claude-on-discord install [path]` | Install or update runtime. Defaults to `~/.claude-on-discord`. |
+| `claude-on-discord setup` | Run setup wizard. |
+| `claude-on-discord start` | Start guardian supervisor and secure control API. |
+| `claude-on-discord worker` | Start the Discord bridge directly, mainly for debugging. |
+
+While Claude is running, Discord shows inline **Interrupt** and **Abort** buttons.
 
 ## Configuration
 
-Copy `.env.example` → `.env`:
+Copy `.env.example` to `.env`:
 
 ```env
-# Required
-DISCORD_TOKEN=            # Discord bot token
-APPLICATION_ID=           # Discord application ID
-DISCORD_GUILD_IDS=        # Comma-separated server IDs (preferred)
-DISCORD_GUILD_ID=         # Single server ID fallback (legacy)
-USE_ANTHROPIC_API_KEY=    # Optional, default false (ignores ANTHROPIC_API_KEY unless true)
+DISCORD_TOKEN=
+APPLICATION_ID=
+DISCORD_GUILD_IDS=
+DISCORD_GUILD_ID=
+USE_ANTHROPIC_API_KEY=
 
-# Optional guardian control overrides
 GUARDIAN_CONTROL_SECRET=
 GUARDIAN_CONTROL_BIND=0.0.0.0
 ```
 
-Minimal starter template: [.env.example](.env.example)
+Minimal template: [`.env.example`](.env.example).
 
-Advanced overrides are still supported (worktree behavior, session limits, watchdog tuning, restart backoff, auth skew/nonce windows), but intentionally omitted from the default template to reduce setup friction.
+Advanced overrides are supported for worktree behavior, session limits, watchdog tuning, restart backoff, auth skew/nonce windows, and tracing. The default template stays small to reduce setup friction.
 
-For deep thread/run diagnostics, enable internal tracing with `THREAD_DEBUG_TRACE=1` (optional file sink: `THREAD_DEBUG_TRACE_FILE=./data/thread-debug.log`). See [Troubleshooting](docs/TROUBLESHOOTING.md).
+For deep thread/run diagnostics:
 
-### Guardian mode (default `start`, recommended for mobile reliability)
+```env
+THREAD_DEBUG_TRACE=1
+THREAD_DEBUG_TRACE_FILE=./data/thread-debug.log
+```
 
-Run with self-healing supervision and a remote control surface:
+Troubleshooting guide: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+
+## Guardian Mode
+
+Guardian mode is the recommended default:
 
 ```bash
 bun start
 ```
 
-Equivalent aliases:
+It adds:
 
-```bash
-bun run guardian
-claude-on-discord start
+- worker restart with backoff and crash-loop protection
+- heartbeat-based stale-process detection
+- startup preflight checks
+- mobile-friendly control URL
+- control API endpoints for health, status, restart, stop, start, and log tailing
+
+Control API auth options:
+
+- Bearer token: `Authorization: Bearer $GUARDIAN_CONTROL_SECRET`
+- HMAC headers: `x-guardian-ts`, `x-guardian-nonce`, `x-guardian-signature`
+- Query token for mobile links: `?token=$GUARDIAN_CONTROL_SECRET`
+
+If `GUARDIAN_CONTROL_SECRET` is empty, guardian generates and persists a strong secret.
+
+Security note: bot access is equivalent to shell access on the configured workspace. Use trusted servers/channels, keep `.env` local, and do not expose the guardian API publicly without an authenticated tunnel or reverse proxy.
+
+## Architecture
+
+Key components:
+
+```text
+src/app.ts                         Discord event orchestration and Claude run lifecycle
+src/discord/client.ts              Discord client init and event routing
+src/discord/commands.ts            slash command registration
+src/discord/buttons.ts             stop/project switch buttons
+src/claude/runner.ts               Claude SDK query wrapper, retries, streaming extraction
+src/claude/session.ts              per-channel state lifecycle and project switching
+src/db/repository.ts               SQLite persistence for channels, settings, turns, costs
+src/discord/thread-branch.ts       thread metadata and branch-awareness prompt context
+src/guardian/*                     supervisor, control API, auth, heartbeat, log tailing
 ```
 
-On startup, guardian prints a ready-to-open mobile control URL (already tokenized), so you can open it directly on your phone.
+Message flow:
 
-What it adds:
+1. User sends a Discord message.
+2. The bot resolves channel state: working directory, model, session, prompt policy, thread branch metadata.
+3. Attachments are staged to local temp files and appended to the prompt context.
+4. Claude Code runs with cwd, optional session resume, streaming enabled, and the configured permission mode.
+5. Status, thinking previews, tool events, generated files, costs, and final text are posted back to Discord.
 
-- automatic worker restart with backoff/cooldown crash-loop protection
-- heartbeat-based stale-process detection and restart
-- control API for phone/remote actions:
-  - `GET /healthz`
-  - `GET /status`
-  - `POST /restart`
-  - `POST /stop`
-  - `POST /start`
-  - `GET /logs?tail=200`
+Docs:
 
-Auth options for control API:
-
-1. Bearer token (simple): `Authorization: Bearer $GUARDIAN_CONTROL_SECRET`
-2. HMAC headers (replay-protected): `x-guardian-ts`, `x-guardian-nonce`, `x-guardian-signature`
-3. Query token for mobile/browser links: `?token=$GUARDIAN_CONTROL_SECRET`
-
-If `GUARDIAN_CONTROL_SECRET` is empty, guardian auto-generates a strong secret and persists it to `GUARDIAN_CONTROL_SECRET_FILE`.
-
-Example (Bearer):
-
-```bash
-curl -sS http://127.0.0.1:8787/status \
-  -H "Authorization: Bearer $GUARDIAN_CONTROL_SECRET"
-```
-
-Security notes:
-
-- default bind is `0.0.0.0` for easier phone access; set `127.0.0.1` if you want local-only control
-- if binding non-loopback, keep the auto-generated secret file private (or set your own long `GUARDIAN_CONTROL_SECRET`)
-- never expose this API publicly without an authenticated tunnel/reverse proxy
-
----
-
-## More Features
-
-- **MCP support** — loads `.claude/mcp.json` from your project directory automatically
-- **Attachment I/O** — send files in, Claude can send files back to Discord
-- **Multi-user mention policy** — require `@bot` mention in shared channels (global + per-channel)
-- **Cost tracking** — SQLite-backed per-channel spend and turn counts
-- **Startup preflight** — checks working dir, database, and Discord auth before boot
-
----
-
-## Roadmap
-
-- `→` Interview mode — Claude asks structured clarifying questions (with choices) before starting a task, mirroring Claude Code's native interview behavior
-- `→` Plan mode — proposal-first workflow with explicit approval before tool execution
-- `→` Thinking mode — extended thinking per channel for deep analysis and architectural work
-- `→` `npx` distribution — `npx claude-on-discord setup`, no clone required
-- `→` tmux attach — attach to running tmux sessions from Discord, monitor builds and dev servers from your phone
-- `→` Fix double threads — deduplicate thread creation events at the gateway level
-- `→` Worktree per thread, fully automatic
-- `→` Webhooks into channels — map signed webhook endpoints to Discord channels for work automation
-- `→` MCP parity for slash commands — expose every slash command as an MCP tool backed by the same action/service implementation
-- `→` Agent-guided `/fork` tool — Claude proposes and creates a new thread lane after explicit user confirmation
-- `→` PR review conductor — structured review buttons with targeted prompts
-- `→` Orphan process reaper — detect/kill stale Claude subprocesses and clear stuck channel run state
-- `→` Codex support — run OpenAI Codex CLI as an alternative agent, per channel
-
----
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/SECURITY.md`](docs/SECURITY.md)
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
+- [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)
 
 ## Development
 
 ```bash
-bun run dev        # Watch mode
-bun run typecheck  # TypeScript
-bun run lint       # Biome
-bun test           # Tests
+bun install
+bun run dev
+bun run typecheck
+bun run lint
+bun test
 ```
 
-Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [DISTRIBUTION](docs/DISTRIBUTION.md)
+Release/package checks:
 
----
+```bash
+bun run dist:check
+```
 
-Built with [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) + [discord.js](https://discord.js.org)
+## Status
+
+Working:
+
+- Discord channel-to-session mapping.
+- Thread branching with inherited context.
+- Optional worktree-per-thread behavior.
+- Per-channel system prompts.
+- Session permission modes, including plan mode.
+- Shell shortcuts and slash commands.
+- Diff, status, cost, branch, PR, screenshot, and compact commands.
+- Guardian supervisor and control API.
+- SQLite-backed settings, history, and cost tracking.
+- Test coverage across app commands, lifecycle, guardian, sessions, worktrees, PR helpers, and routing.
+
+Needs more public packaging:
+
+- Move or mirror into `gorkamolero`.
+- Add screenshots from a sanitized test server.
+- Add a short architecture diagram to the README.
+- Add a concise demo video showing thread branching and tool streaming.
+
+## Portfolio Context
+
+This is one of the strongest agentic-tooling projects in the portfolio. It shows how to turn a powerful local coding agent into an operational collaboration surface with real state, real files, real controls, and a workflow model that maps naturally to Discord.
+
+## Prior Art
+
+Inspired by [`claude-code-telegram`](https://github.com/punkpeye/claude-code-telegram).
+
+## Built With
+
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk)
+- [discord.js](https://discord.js.org)
+- Bun
+- SQLite
